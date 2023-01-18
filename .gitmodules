@@ -1,0 +1,6 @@
+[submodule "thirdparty/oneDNN"]
+	path = thirdparty/oneDNN
+	url = https://github.com/oneapi-src/oneDNN.git
+[submodule "thirdparty/CLI11"]
+	path = thirdparty/CLI11
+	url = https://github.com/CLIUtils/CLI11.git
