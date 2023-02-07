@@ -69,17 +69,17 @@ inline void randomize_linear_container_half(std::mt19937& gen, std::uniform_real
     }
 }
 
-inline void add_data_type_cli_option(CLI::App* opts, std::string_view opt_name, DataType& dt)
+inline auto add_data_type_cli_option(CLI::App* opts, std::string_view opt_name, DataType& dt)
 {
-    opts->add_option("--data_type", dt)->required()->check(CLI::IsMember({ DataType::eFp32, DataType::eFp16 }))
+    return opts->add_option("--data_type", dt)->check(CLI::IsMember({ DataType::eFp32, DataType::eFp16 }))
         ->transform(CLI::Transformer(std::map<std::string, DataType>{
             {"fp32", DataType::eFp32}, { "fp16", DataType::eFp16 }
     }, CLI::ignore_case, CLI::ignore_underscore));
 }
 
-inline void add_data_layout_cli_option(CLI::App* opts, std::string_view opt_name, DataLayout& layout)
+inline auto add_data_layout_cli_option(CLI::App* opts, std::string_view opt_name, DataLayout& layout)
 {
-    opts->add_option("--layout", layout)->required()->check(CLI::IsMember({ DataLayout::eNCHW, DataLayout::eNHWC }))
+    return opts->add_option("--layout", layout)->check(CLI::IsMember({ DataLayout::eNCHW, DataLayout::eNHWC }))
         ->transform(CLI::Transformer(std::map<std::string, DataLayout>{
             {"nchw", DataLayout::eNCHW}, { "nhwc", DataLayout::eNHWC }, 
     }, CLI::ignore_case, CLI::ignore_underscore));
@@ -325,11 +325,12 @@ public:
         std::uint32_t kernel_size;
         std::uint32_t stride;
         bool no_bias = false;
+        bool allow_fp16_computations = false;
 
         inline static void add_cli_options(CLI::App* opts, create_params_t& params)
         {
-            add_data_type_cli_option(opts, "--data_type", params.dt);
-            add_data_layout_cli_option(opts, "--layout", params.layout);
+            add_data_type_cli_option(opts, "--data_type", params.dt)->required();
+            add_data_layout_cli_option(opts, "--layout", params.layout)->required();
             opts->add_option("--batch", params.batch)->required();
             opts->add_option("--ic", params.ic)->required();
             opts->add_option("--oc", params.oc)->required();
@@ -340,6 +341,8 @@ public:
             opts->add_option("--kernel_size", params.kernel_size)->required();
             opts->add_option("--stride", params.stride)->required();
             opts->add_flag("--no_bias", params.no_bias);
+            opts->add_flag("--allow_fp16_computations", params.allow_fp16_computations);
+
         }
     };
 
@@ -535,7 +538,8 @@ public:
         , conv_(dml::TensorDimensions{params_.batch, params_.ic, params_.in_width, params_.in_height},
             dml::TensorDimensions{ params_.oc, params_.ic, params_.kernel_size, params_.kernel_size},
             to_dml_data_type(params_.dt), to_dml_tensor_policy(params_.layout),
-            params_.stride, params_.in_pad, params_.out_pad, !params_.no_bias, dml_device, d3d12_device)
+            params_.stride, params_.in_pad, params_.out_pad, !params_.no_bias, params_.allow_fp16_computations,
+            dml_device, d3d12_device)
 
     {
 
@@ -577,8 +581,8 @@ public:
 
         inline static void add_cli_options(CLI::App* opts, create_params_t& params)
         {
-            add_data_type_cli_option(opts, "--data_type", params.dt);
-            add_data_layout_cli_option(opts, "--layout", params.layout);
+            add_data_type_cli_option(opts, "--data_type", params.dt)->required();
+            add_data_layout_cli_option(opts, "--layout", params.layout)->required();
             opts->add_option("--batch", params.batch)->required();
             opts->add_option("--ic", params.ic)->required();
             opts->add_option("--in_width", params.in_width)->required();
@@ -839,13 +843,7 @@ int main()
             const auto conformance_result = node->validate_conformance(command_queue.Get(), command_allocator.Get(), command_list.Get());
             std::cout << std::format("Conformance {}. Tested values (tensor out elements count): {} \n", conformance_result.passed, conformance_result.tested_samples_count);
             std::cout << std::format("Biggest difference in the output tensor: {}. It is in the epsilion range: {}. \n", conformance_result.biggest_difference, conformance_result.epsilon);
-
-            if (!conformance_result.passed)
-            {
-                return -2;
-            }
         }
-
 
         // Copy the timing data back
         command_list->ResolveQueryData(

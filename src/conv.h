@@ -9,7 +9,8 @@ class Convolution : public DirectMlBaseNode
 public:
     Convolution(const dml::TensorDimensions& input_dims, const dml::TensorDimensions& filter_dims,
         const DML_TENSOR_DATA_TYPE data_type, const dml::TensorPolicy& tensor_policy,
-            std::uint32_t stride, std::uint32_t input_pad, std::uint32_t output_pad, bool use_bias,   
+            std::uint32_t stride, std::uint32_t input_pad, std::uint32_t output_pad,
+            bool use_bias, bool allow_fp16_computations, 
             IDMLDevice* dml_device, ID3D12Device* d3d12_device)
         : DirectMlBaseNode(dml_device, d3d12_device)
     {
@@ -121,32 +122,11 @@ public:
         dml_operator_desc.Type = DML_OPERATOR_CONVOLUTION;
         dml_operator_desc.Desc = &desc;
 
-        //graph_.SetTensorPolicy(tensor_policy);
-        ////dml::Tensor
-        //tensor_input_ = dml::InputTensor(graph_, 0, dml::TensorDesc(data_type, input_dims, tensor_policy));
-        //tensor_filter_ = dml::InputTensor(graph_, 1, dml::TensorDesc(data_type, filter_dims, tensor_policy));
-        //if (use_bias)
-        //{
-        //    tensor_bias_ = dml::InputTensor(graph_, 2, dml::TensorDesc(data_type, dml::TensorDimensions{ 1, filter_dims[0], 1, 1 }, tensor_policy));
-        //}
-
-        //tensor_out_ = dml::ConvolutionBuilder(tensor_input_, tensor_filter_, tensor_bias_)
-        //    .Strides(strides)
-        //    .StartPadding(start_pad)
-        //    .EndPadding(end_pad)
-        //    .OutputPadding(out_pad)
-        //    .Build();
-
-        //// compiled operator
-        //DML_EXECUTION_FLAGS exec_flags = DML_EXECUTION_FLAG_NONE;
-        //std::vector<dml::Expression> graph_outputs{ tensor_out_ };
-        //dml_op_executor_ = graph_.Compile(exec_flags, graph_outputs);
-
         throw_if_failed(dml_device->CreateOperator(
             &dml_operator_desc, IID_PPV_ARGS(dml_operator_.ReleaseAndGetAddressOf())), "create convolution operator");
 
         DML_EXECUTION_FLAGS exec_flags = DML_EXECUTION_FLAG_DESCRIPTORS_VOLATILE;
-        if (data_type == DML_TENSOR_DATA_TYPE::DML_TENSOR_DATA_TYPE_FLOAT16)
+        if (allow_fp16_computations)
         {
             exec_flags |= DML_EXECUTION_FLAG_ALLOW_HALF_PRECISION_COMPUTATION;
         }
