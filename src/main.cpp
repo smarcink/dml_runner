@@ -10,11 +10,12 @@
 #include <format>
 #include <random>
 #include <chrono>
+#include <sstream>
+#include <string>
 
 #include "CLI/App.hpp"
 #include "CLI/Formatter.hpp"
 #include "CLI/Config.hpp"
-
 
 template<typename TimeType>
 inline void print_performance_stats(const std::vector<TimeType>& timings)
@@ -137,7 +138,8 @@ inline ConformanceResult run_conformance_check(const std::vector<std::byte>& gpu
 enum class NodeType
 {
     eGemm,
-    eConv,
+    eConvDml,
+    eConvCm,
     eSoftmax,
     eCount
 };
@@ -146,8 +148,8 @@ class NodeDispatcher
 {
 public:
     virtual std::uint32_t get_total_descriptor_count() = 0;
-    virtual void initialize(IDMLCommandRecorder* dml_cmd_recorder, ID3D12GraphicsCommandList* cmd_list, D3D12_CPU_DESCRIPTOR_HANDLE cpu_handle, D3D12_GPU_DESCRIPTOR_HANDLE gpu_handle) = 0;
-    virtual void execute(IDMLCommandRecorder* dml_cmd_recorder, ID3D12GraphicsCommandList* cmd_list) = 0;
+    virtual void initialize(ID3D12GraphicsCommandList* cmd_list, D3D12_CPU_DESCRIPTOR_HANDLE cpu_handle, D3D12_GPU_DESCRIPTOR_HANDLE gpu_handle) = 0;
+    virtual void execute(ID3D12GraphicsCommandList* cmd_list) = 0;
 
     virtual ConformanceResult validate_conformance(ID3D12CommandQueue* command_queue,
         ID3D12CommandAllocator* command_allocator, ID3D12GraphicsCommandList* command_list) = 0;
@@ -172,8 +174,9 @@ public:
         }
     };
 public:
-    GemmDispatcher(create_params_t&& params, ID3D12Device* d3d12_device, IDMLDevice* dml_device, ID3D12GraphicsCommandList* cmd_list)
+    GemmDispatcher(create_params_t&& params, ID3D12Device* d3d12_device, IDMLDevice* dml_device, IDMLCommandRecorder* dml_cmd_recorder, ID3D12GraphicsCommandList* cmd_list)
         : params_(std::move(params))
+        , dml_cmd_recorder_(dml_cmd_recorder)
         , gemm_(dml::TensorDimensions{ 1, 1, params_.M, params_.K }, dml::TensorDimensions{ 1, 1, params_.K, params_.N }, dml_device, d3d12_device)
         , d3d12_device_(d3d12_device)
         , input_data_a_(params_.M * params_.K)
@@ -233,17 +236,17 @@ public:
         return gemm_.get_total_descriptor_count();
     }
 
-    void initialize(IDMLCommandRecorder* dml_cmd_recorder, ID3D12GraphicsCommandList* cmd_list, D3D12_CPU_DESCRIPTOR_HANDLE cpu_handle, D3D12_GPU_DESCRIPTOR_HANDLE gpu_handle)
+    void initialize(ID3D12GraphicsCommandList* cmd_list, D3D12_CPU_DESCRIPTOR_HANDLE cpu_handle, D3D12_GPU_DESCRIPTOR_HANDLE gpu_handle)
     {
         gemm_.create_binding_tables(cpu_handle, gpu_handle);
 
         // Record execution of the operator initializer.
-        gemm_.record_initialize(dml_cmd_recorder, cmd_list);
+        gemm_.record_initialize(dml_cmd_recorder_, cmd_list);
     }
 
-    void execute(IDMLCommandRecorder* dml_cmd_recorder, ID3D12GraphicsCommandList* cmd_list)
+    void execute(ID3D12GraphicsCommandList* cmd_list)
     {
-        gemm_.record_execute(dml_cmd_recorder, cmd_list, output_buffer_.Get(), input_buffer_a_.Get(), input_buffer_b_.Get());
+        gemm_.record_execute(dml_cmd_recorder_, cmd_list, output_buffer_.Get(), input_buffer_a_.Get(), input_buffer_b_.Get());
     }
 
     ConformanceResult validate_conformance(ID3D12CommandQueue* command_queue,
@@ -299,6 +302,7 @@ private:
     create_params_t params_;
     gpu_op::Gemm gemm_;
     ID3D12Device* d3d12_device_;
+    IDMLCommandRecorder* dml_cmd_recorder_;
 
     std::vector<float> input_data_a_;
     ComPtr<ID3D12Resource> input_buffer_a_;
@@ -533,8 +537,9 @@ class ConvolutionDirectMLDispatcher : public ConvolutionBaseDispatcher
 {
 public:
 
-    ConvolutionDirectMLDispatcher(create_params_t&& params, ID3D12Device* d3d12_device, IDMLDevice* dml_device, ID3D12GraphicsCommandList* cmd_list)
+    ConvolutionDirectMLDispatcher(create_params_t&& params, ID3D12Device* d3d12_device, IDMLDevice* dml_device, IDMLCommandRecorder* dml_cmd_recorder, ID3D12GraphicsCommandList* cmd_list)
         : ConvolutionBaseDispatcher(std::move(params), d3d12_device, cmd_list)
+        , dml_cmd_recorder_(dml_cmd_recorder)
         , conv_(dml::TensorDimensions{params_.batch, params_.ic, params_.in_width, params_.in_height},
             dml::TensorDimensions{ params_.oc, params_.ic, params_.kernel_size, params_.kernel_size},
             to_dml_data_type(params_.dt), to_dml_tensor_policy(params_.layout),
@@ -550,20 +555,262 @@ public:
         return conv_.get_total_descriptor_count();
     }
 
-    void initialize(IDMLCommandRecorder* dml_cmd_recorder, ID3D12GraphicsCommandList* cmd_list, D3D12_CPU_DESCRIPTOR_HANDLE cpu_handle, D3D12_GPU_DESCRIPTOR_HANDLE gpu_handle) override
+    void initialize(ID3D12GraphicsCommandList* cmd_list, D3D12_CPU_DESCRIPTOR_HANDLE cpu_handle, D3D12_GPU_DESCRIPTOR_HANDLE gpu_handle) override
     {
         conv_.create_binding_tables(cpu_handle, gpu_handle);
-        conv_.record_initialize(dml_cmd_recorder, cmd_list);
+        conv_.record_initialize(dml_cmd_recorder_, cmd_list);
     }
 
-    void execute(IDMLCommandRecorder* dml_cmd_recorder, ID3D12GraphicsCommandList* cmd_list) override
+    void execute(ID3D12GraphicsCommandList* cmd_list) override
     {
-        conv_.record_execute(dml_cmd_recorder, cmd_list, output_buffer_.Get(), input_buffer_.Get(), filter_buffer_.Get(), bias_buffer_.Get());
+        conv_.record_execute(dml_cmd_recorder_, cmd_list, output_buffer_.Get(), input_buffer_.Get(), filter_buffer_.Get(), bias_buffer_.Get());
     }
 
 private:
     gpu_op::Convolution conv_;
+    IDMLCommandRecorder* dml_cmd_recorder_;
+};
 
+class ConvolutionCmDispatcher : public ConvolutionBaseDispatcher
+{
+public:
+    struct conv_cm_params_t
+    {
+        bool dump_asm;
+        bool large_grf;
+        bool print_reg_usage;
+        std::array<std::uint32_t, 3> lws{ 1u, 1u, 1u };
+
+        inline static void add_cli_options(CLI::App* opts, conv_cm_params_t& params)
+        {
+            opts->add_flag("--dump_asm", params.dump_asm)->default_val(false);
+            opts->add_flag("--large_grf", params.large_grf)->default_val(false);
+            opts->add_flag("--print_reg_usage", params.print_reg_usage)->default_val(false);
+            opts->add_option("--lws", params.lws)->delimiter(',');  // pass it like this: --lws=8,4,1
+        }
+    };
+public:
+    ConvolutionCmDispatcher(create_params_t&& params, conv_cm_params_t&& cm_params, IntelExtension& intc_ext, ID3D12Device* d3d12_device, ID3D12GraphicsCommandList* cmd_list)
+        : ConvolutionBaseDispatcher(std::move(params), d3d12_device, cmd_list)
+        , intc_ext_(intc_ext)
+        , d3d12_device_(d3d12_device)
+
+    {
+        // root signature
+        {
+            const auto bindings_size = get_total_descriptor_count();
+            std::vector<D3D12_DESCRIPTOR_RANGE1> ranges;
+            std::vector<CD3DX12_ROOT_PARAMETER1> root_params;
+            ranges.reserve(bindings_size);
+            root_params.reserve(bindings_size + 1); // + 1 beacuse of the CM driver path
+
+            std::uint32_t srv_range_reg = 0;
+            std::uint32_t uav_range_reg = 0;
+            std::uint32_t cbv_range_reg = 0;
+
+            {
+                // driver thing
+                CD3DX12_ROOT_PARAMETER1 rp{};
+                rp.InitAsConstants(1, cbv_range_reg++); 
+                root_params.push_back(rp);
+            }
+            enum class DescType
+            {
+                eSrv,
+                eUav
+            };
+            auto add_desc_table = [&](DescType type)
+            {
+                if (type == DescType::eSrv)
+                {
+                    ranges.push_back({ D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, srv_range_reg++, 0, D3D12_DESCRIPTOR_RANGE_FLAG_DESCRIPTORS_VOLATILE });
+                }
+                else
+                {
+                    ranges.push_back({ D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, uav_range_reg++, 0, D3D12_DESCRIPTOR_RANGE_FLAG_DATA_VOLATILE });
+                }
+                CD3DX12_ROOT_PARAMETER1 rp{};
+                rp.InitAsDescriptorTable(1u, &ranges.back());
+                root_params.push_back(rp);
+            };
+
+            // input
+            add_desc_table(DescType::eSrv);
+            // filter
+            add_desc_table(DescType::eSrv);
+            if (!params_.no_bias)
+            {
+                // bias
+                add_desc_table(DescType::eSrv);
+            }   
+            // output uav
+            add_desc_table(DescType::eUav);
+
+            if (root_params.size() == 0)
+            {
+                throw std::runtime_error("Something gone wrong. Why kernel has 0 root params?");
+            }
+
+            CD3DX12_VERSIONED_ROOT_SIGNATURE_DESC compute_root_signature_desc;
+            compute_root_signature_desc.Init_1_1(static_cast<UINT>(root_params.size()), root_params.data(), 0, nullptr);
+
+            ComPtr<ID3DBlob> signature;
+            ComPtr<ID3DBlob> error;
+            throw_if_failed(D3DX12SerializeVersionedRootSignature(
+                &compute_root_signature_desc,
+                D3D_ROOT_SIGNATURE_VERSION_1_1,
+                &signature,
+                &error), "D3DX12SerializeVersionedRootSignature failed.");
+
+            if (error)
+            {
+                throw_with_msg("Failed to create root signature, error:" + std::string((LPCSTR)error->GetBufferPointer()));
+            }
+            throw_if_failed(d3d12_device_->CreateRootSignature(
+                0,
+                signature->GetBufferPointer(),
+                signature->GetBufferSize(),
+                IID_PPV_ARGS(&root_signature_)), "CreateRootSignature(...) failed.");
+        }
+
+
+        // kernel compilation
+        std::string build_options = " ";
+        const auto dump_asm_str = cm_params_.dump_asm ? " -mdump_asm" : "";
+        const auto large_grf_str = cm_params_.large_grf ? " -Qxcm_doubleGRF" : "";
+        const auto print_reg_str = cm_params_.print_reg_usage ? " -mCM_printregusage" : "";
+        const auto lws_x = " -DLWS_SIZE_X=" + std::to_string(cm_params_.lws[0]);
+        const auto lws_y = " -DLWS_SIZE_Y=" + std::to_string(cm_params_.lws[1]);
+        const auto lws_z = " -DLWS_SIZE_Z=" + std::to_string(cm_params_.lws[2]);
+        const auto build_options_final = " -I \" \" " + build_options + dump_asm_str + large_grf_str + print_reg_str + lws_x + lws_y + lws_z;
+
+        auto kernel_source_content = []()
+        {
+            const auto path = "kernel_convolution_nchw_1x1.cpp";
+            std::fstream file(path);
+            if (!file.is_open())
+            {
+                const auto msg = std::format("Kernel file cant be opened:{} \n.", path);
+                throw std::runtime_error(msg);
+            }
+            return std::string((std::istreambuf_iterator<char>(file)), (std::istreambuf_iterator<char>()));
+        }();
+
+        CD3DX12_SHADER_BYTECODE byte_code;
+        byte_code.pShaderBytecode = kernel_source_content.data();
+        byte_code.BytecodeLength = kernel_source_content.size();
+        pso_ = intc_ext_.create_pipeline(byte_code, build_options_final, root_signature_.Get());
+    }
+
+    std::uint32_t get_total_descriptor_count() override
+    {
+        // input, weights, output
+        std::uint32_t descriptor_count = 3;
+        if (!params_.no_bias)
+        {
+            descriptor_count++;
+        }
+        return descriptor_count;
+    }
+
+    void initialize(ID3D12GraphicsCommandList* cmd_list, D3D12_CPU_DESCRIPTOR_HANDLE cpu_handle, D3D12_GPU_DESCRIPTOR_HANDLE gpu_handle) override
+    {
+        const auto desc_heap_incrs_size = d3d12_device_->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+        // i.e. add weights reorder
+
+
+        const auto base_cpu_handle = CD3DX12_CPU_DESCRIPTOR_HANDLE{ cpu_handle };
+        const auto base_gpu_handle = CD3DX12_GPU_DESCRIPTOR_HANDLE{ gpu_handle };
+
+        enum class ViewType
+        {
+            eSrv = 0,
+            eUav = 1
+        };
+
+        std::vector<std::pair<ViewType, ID3D12Resource*>> resources_list;
+        resources_list.reserve(get_total_descriptor_count());
+        resources_list.push_back({ ViewType::eSrv, input_buffer_.Get() });
+        resources_list.push_back({ ViewType::eSrv, filter_buffer_.Get() });
+        if (bias_buffer_)
+        {
+            resources_list.push_back({ ViewType::eSrv, bias_buffer_.Get() });
+        }
+        resources_list.push_back({ ViewType::eUav, output_buffer_.Get() });
+
+        // reserve handles
+        gpu_handles_.reserve(get_total_descriptor_count());
+        // create handles
+
+        for (std::size_t i = 0; i < resources_list.size(); i++)
+        {
+            auto cpu_handle = CD3DX12_CPU_DESCRIPTOR_HANDLE(base_cpu_handle, static_cast<int32_t>(i), desc_heap_incrs_size);
+            gpu_handles_.push_back(CD3DX12_GPU_DESCRIPTOR_HANDLE(base_gpu_handle, static_cast<int32_t>(i), desc_heap_incrs_size));
+
+            auto& resource_view_type = resources_list[i].first;
+            auto& resource = resources_list[i].second;
+            const auto res_desc = resource->GetDesc();
+            assert(res_desc.Dimension == D3D12_RESOURCE_DIMENSION::D3D12_RESOURCE_DIMENSION_BUFFER);
+
+            if (resource_view_type == ViewType::eSrv)
+            {
+                D3D12_SHADER_RESOURCE_VIEW_DESC desc{};
+                desc.Format = DXGI_FORMAT_R8_UINT;
+                desc.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
+                desc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+
+                desc.Buffer.StructureByteStride = 0;
+                desc.Buffer.NumElements = static_cast<UINT>(res_desc.Width);
+                desc.Buffer.FirstElement = 0;
+                desc.Buffer.Flags = D3D12_BUFFER_SRV_FLAG_NONE;
+
+                d3d12_device_->CreateShaderResourceView(resource, &desc, cpu_handle);
+            }
+            else
+            {
+                D3D12_UNORDERED_ACCESS_VIEW_DESC desc{};
+                desc.Format = DXGI_FORMAT_R8_UINT;
+                desc.ViewDimension = D3D12_UAV_DIMENSION_BUFFER;
+
+                desc.Buffer.StructureByteStride = 0;
+                desc.Buffer.NumElements = static_cast<UINT>(res_desc.Width);
+                desc.Buffer.FirstElement = 0;
+                desc.Buffer.Flags = D3D12_BUFFER_UAV_FLAG_NONE;
+
+                d3d12_device_->CreateUnorderedAccessView(resource, nullptr, &desc, cpu_handle);
+            }
+        }
+    }
+
+    void execute(ID3D12GraphicsCommandList* cmd_list) override
+    {
+        cmd_list->SetComputeRootSignature(root_signature_.Get());
+        cmd_list->SetPipelineState(pso_.Get());
+
+        uint32_t root_index = 1; // start with 1, beacuse Cross compiler CM driver path needs that
+        for (uint32_t i = 0; i < gpu_handles_.size(); i++)
+        {
+            const auto gpu_heap_handle = gpu_handles_[i];
+            cmd_list->SetComputeRootDescriptorTable(root_index++, gpu_heap_handle);
+        }
+        const auto gws_x = 1;
+        const auto gws_y = 1;
+        const auto gws_z = 1;
+
+        const auto thg_x = gws_x / cm_params_.lws[0];
+        const auto thg_y = gws_y / cm_params_.lws[1];
+        const auto thg_z = gws_z / cm_params_.lws[2];
+        cmd_list->Dispatch(thg_x, thg_y, thg_z);
+    }
+
+private:
+    conv_cm_params_t cm_params_;
+    ID3D12Device* d3d12_device_;
+    IntelExtension& intc_ext_;
+    std::vector<CD3DX12_GPU_DESCRIPTOR_HANDLE> gpu_handles_;
+
+    ComPtr<ID3D12PipelineState> pso_;
+    ComPtr<ID3D12RootSignature> root_signature_;
 };
 
 class SoftmaxDispatcher : public NodeDispatcher
@@ -591,8 +838,9 @@ public:
         }
     };
 public:
-    SoftmaxDispatcher(create_params_t&& params, ID3D12Device* d3d12_device, IDMLDevice* dml_device, ID3D12GraphicsCommandList* cmd_list)
+    SoftmaxDispatcher(create_params_t&& params, ID3D12Device* d3d12_device, IDMLDevice* dml_device, IDMLCommandRecorder* dml_cmd_recorder, ID3D12GraphicsCommandList* cmd_list)
         : params_(std::move(params))
+        , dml_cmd_recorder_(dml_cmd_recorder)
         , softmax_(params_.axis, dml::TensorDimensions{ params_.batch, params_.ic, params_.in_width, params.in_height },
             to_dml_data_type(params_.dt), to_dml_tensor_policy(params_.layout), dml_device, d3d12_device)
         , d3d12_device_(d3d12_device)
@@ -647,15 +895,15 @@ public:
         return softmax_.get_total_descriptor_count();
     }
 
-    void initialize(IDMLCommandRecorder* dml_cmd_recorder, ID3D12GraphicsCommandList* cmd_list, D3D12_CPU_DESCRIPTOR_HANDLE cpu_handle, D3D12_GPU_DESCRIPTOR_HANDLE gpu_handle)
+    void initialize(ID3D12GraphicsCommandList* cmd_list, D3D12_CPU_DESCRIPTOR_HANDLE cpu_handle, D3D12_GPU_DESCRIPTOR_HANDLE gpu_handle)
     {
         softmax_.create_binding_tables(cpu_handle, gpu_handle);
-        softmax_.record_initialize(dml_cmd_recorder, cmd_list);
+        softmax_.record_initialize(dml_cmd_recorder_, cmd_list);
     }
 
-    void execute(IDMLCommandRecorder* dml_cmd_recorder, ID3D12GraphicsCommandList* cmd_list)
+    void execute(ID3D12GraphicsCommandList* cmd_list)
     {
-        softmax_.record_execute(dml_cmd_recorder, cmd_list, output_buffer_.Get(), input_buffer_.Get());
+        softmax_.record_execute(dml_cmd_recorder_, cmd_list, output_buffer_.Get(), input_buffer_.Get());
     }
 
     ConformanceResult validate_conformance(ID3D12CommandQueue* command_queue,
@@ -698,6 +946,7 @@ private:
     create_params_t params_;
     gpu_op::Softmax softmax_;
     ID3D12Device* d3d12_device_;
+    IDMLCommandRecorder* dml_cmd_recorder_;
 
     std::vector<std::byte> input_data_;
 
@@ -712,9 +961,13 @@ struct CliOptions
     std::uint32_t dispatch_iterations = 1;
     bool no_conformance_check = false;
 
+    // generic type of layers params
     GemmDispatcher::create_params_t gemm_opts{};
     ConvolutionBaseDispatcher::create_params_t conv_opts{};
     SoftmaxDispatcher::create_params_t softmax_opts{};
+
+    // specific for implementation
+    ConvolutionCmDispatcher::conv_cm_params_t conv_cm_params{};
 };
 
 int main()
@@ -724,21 +977,27 @@ int main()
     CliOptions opts;
     CLI::App dml_runner_app{ "App to microbenchmark and developer dml kernels.", "DirectML runner." };
     dml_runner_app.add_option("--type", opts.node_type, "Name of the type of layer to run.")
-        ->required()->check(CLI::IsMember({NodeType::eConv, NodeType::eGemm, NodeType::eSoftmax }))->
+        ->required()->check(CLI::IsMember({ NodeType::eConvDml, NodeType::eConvCm , NodeType::eGemm, NodeType::eSoftmax }))->
         transform(CLI::Transformer(std::map<std::string, NodeType>{
-            { "conv", NodeType::eConv },
+            { "conv_dml", NodeType::eConvDml },
+            { "conv_cm", NodeType::eConvCm },
             { "gemm", NodeType::eGemm },
             { "softmax", NodeType::eSoftmax }
     }, CLI::ignore_case, CLI::ignore_underscore));
     dml_runner_app.add_option("--iters", opts.dispatch_iterations, "How many iterations to run.")->check(CLI::Range(1u, MAX_ITERATIONS));
     dml_runner_app.add_flag("--no_conform", opts.no_conformance_check);
 
+    // generic type of layers options
     auto gemm_option_groups = dml_runner_app.add_subcommand("gemm_opts", "Options for genn layer.");
     GemmDispatcher::create_params_t::add_cli_options(gemm_option_groups, opts.gemm_opts);
     auto conv_option_groups = dml_runner_app.add_subcommand("conv_opts", "Options for convolution layer.");
     ConvolutionBaseDispatcher::create_params_t::add_cli_options(conv_option_groups, opts.conv_opts);
     auto softmax_option_groups = dml_runner_app.add_subcommand("softmax_opts", "Options for softmax layer.");
     SoftmaxDispatcher::create_params_t::add_cli_options(softmax_option_groups, opts.softmax_opts);
+
+    // specific for implementation
+    auto conv_cm_option_groups = dml_runner_app.add_subcommand("conv_cm_opts", "Options for convolution layer with CM implementation.");
+    ConvolutionCmDispatcher::conv_cm_params_t::add_cli_options(conv_cm_option_groups, opts.conv_cm_params);
 
     try {
         dml_runner_app.parse();
@@ -751,7 +1010,8 @@ int main()
     std::cout << std::format("Running app with config:\n {}", dumped_config);
 
     assert(opts.node_type != NodeType::eCount);
-    if (opts.node_type == NodeType::eConv && !conv_option_groups->parsed())
+    if ((opts.node_type == NodeType::eConvCm || opts.node_type == NodeType::eConvCm)
+        && !conv_option_groups->parsed())
     {
         std::cout << "Convoltion options not set.\n";
         return -1;
@@ -778,6 +1038,7 @@ int main()
         assert(opts.dispatch_iterations < MAX_ITERATIONS);
         auto performance_collector = initialize_d3d12_performance_collector(d3d12_device.Get(), MAX_ITERATIONS);
 
+        auto intel_extension_d3d12 = IntelExtension(d3d12_device.Get());
         // The command recorder is a stateless object that records Dispatches into an existing Direct3D 12 command list.
         ComPtr<IDMLCommandRecorder> dml_command_recorder;
         throw_if_failed(dml_device->CreateCommandRecorder(IID_PPV_ARGS(dml_command_recorder.ReleaseAndGetAddressOf())), "create dml command recorder");
@@ -785,15 +1046,23 @@ int main()
         std::unique_ptr<NodeDispatcher> node;
         if (opts.node_type == NodeType::eGemm)
         {
-            node = std::make_unique<GemmDispatcher>(std::move(opts.gemm_opts), d3d12_device.Get(), dml_device.Get(), command_list.Get());
+            node = std::make_unique<GemmDispatcher>(std::move(opts.gemm_opts), 
+                d3d12_device.Get(), dml_device.Get(), dml_command_recorder.Get(), command_list.Get());
         }
-        else if (opts.node_type == NodeType::eConv)
+        else if (opts.node_type == NodeType::eConvDml)
         {
-            node = std::make_unique<ConvolutionDirectMLDispatcher>(std::move(opts.conv_opts), d3d12_device.Get(), dml_device.Get(), command_list.Get());
+            node = std::make_unique<ConvolutionDirectMLDispatcher>(std::move(opts.conv_opts),
+                d3d12_device.Get(), dml_device.Get(), dml_command_recorder.Get(), command_list.Get());
+        }
+        else if (opts.node_type == NodeType::eConvCm)
+        {
+            node = std::make_unique<ConvolutionCmDispatcher>(std::move(opts.conv_opts), std::move(opts.conv_cm_params),
+                intel_extension_d3d12, d3d12_device.Get(), command_list.Get());
         }
         else if (opts.node_type == NodeType::eSoftmax)
         {
-            node = std::make_unique<SoftmaxDispatcher>(std::move(opts.softmax_opts), d3d12_device.Get(), dml_device.Get(), command_list.Get());
+            node = std::make_unique<SoftmaxDispatcher>(std::move(opts.softmax_opts),
+                d3d12_device.Get(), dml_device.Get(), dml_command_recorder.Get(), command_list.Get());
         }
         else
         {
@@ -810,8 +1079,7 @@ int main()
 
 
         // initalize
-        node->initialize(dml_command_recorder.Get(), command_list.Get(),
-            descriptor_heap->GetCPUDescriptorHandleForHeapStart(), descriptor_heap->GetGPUDescriptorHandleForHeapStart());
+        node->initialize(command_list.Get(), descriptor_heap->GetCPUDescriptorHandleForHeapStart(), descriptor_heap->GetGPUDescriptorHandleForHeapStart());
         close_execute_reset_wait(d3d12_device.Get(), command_queue.Get(), command_allocator.Get(), command_list.Get());
 
         // 
@@ -823,7 +1091,7 @@ int main()
         for (std::uint32_t i = 0; i < opts.dispatch_iterations; ++i)
         {
             performance_collector.add_timestamp(command_list.Get());
-            node->execute(dml_command_recorder.Get(), command_list.Get());
+            node->execute(command_list.Get());
             performance_collector.add_timestamp(command_list.Get());
         }
         close_execute_reset_wait(d3d12_device.Get(), command_queue.Get(), command_allocator.Get(), command_list.Get());

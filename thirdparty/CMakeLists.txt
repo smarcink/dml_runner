@@ -15,6 +15,21 @@ set(ONEDNN_BUILD_TESTS OFF)
 set(ONEDNN_ENABLE_WORKLOAD INFERENCE)
 add_subdirectory(oneDNN)
 
+#igdext
+add_library(cfgmgr UNKNOWN IMPORTED)
+set_property(TARGET cfgmgr PROPERTY IMPORTED_LOCATION ${CMAKE_CURRENT_SOURCE_DIR}/igdext/lib/cfgmgr32.lib)
+
+add_library(setupapi UNKNOWN IMPORTED)
+set_property(TARGET setupapi PROPERTY IMPORTED_LOCATION ${CMAKE_CURRENT_SOURCE_DIR}/igdext/lib/SetupAPI.lib)
+
+add_library(ShLwApi UNKNOWN IMPORTED)
+set_property(TARGET ShLwApi PROPERTY IMPORTED_LOCATION ${CMAKE_CURRENT_SOURCE_DIR}/igdext/lib/ShLwApi.lib)
+
+add_library(igdext STATIC IMPORTED GLOBAL)
+set_property(TARGET igdext PROPERTY INTERFACE_INCLUDE_DIRECTORIES ${CMAKE_CURRENT_SOURCE_DIR}/igdext/include)
+set_property(TARGET igdext PROPERTY IMPORTED_LOCATION ${CMAKE_CURRENT_SOURCE_DIR}/igdext/lib/igdext64.lib)
+set_property(TARGET igdext PROPERTY INTERFACE_LINK_LIBRARIES cfgmgr setupapi ShLwApi)
+  
 #dml
 add_library(dml SHARED IMPORTED GLOBAL)
 set_property(TARGET dml PROPERTY INTERFACE_INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}/dml/include")

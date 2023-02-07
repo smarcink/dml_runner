@@ -16,6 +16,9 @@
 #undef max
 #undef min
 
+#define INTC_IGDEXT_D3D12
+#include <igdext.h>
+
 using Microsoft::WRL::ComPtr;
 using Half = DirectX::PackedVector::HALF;
 
@@ -85,6 +88,99 @@ inline void initalize_d3d12(ComPtr<ID3D12Device>& d3D12_device, ComPtr<ID3D12Com
         nullptr, IID_PPV_ARGS(command_list.ReleaseAndGetAddressOf())), "create command list");
 
 }
+
+class IntelExtension
+{
+public:
+    IntelExtension(ID3D12Device* d3d12_device)
+        :ext_ctx_(nullptr)
+    {
+        assert(d3d12_device != nullptr);
+
+        // create extension    
+        throw_if_failed(INTC_LoadExtensionsLibrary(true), "Intel Plugin Extension ERROR: INTC_LoadExtensionsLibrary failed");
+
+
+        uint32_t supported_ext_version_count = 0;
+        throw_if_failed(INTC_D3D12_GetSupportedVersions(d3d12_device, nullptr, &supported_ext_version_count), "Intel Plugin Extension ERROR: GetSupportedVersions");
+
+        //Next, use returned value for supported_ext_version_count to allocate space for the supported extensions
+        std::vector<INTCExtensionVersion> supported_ext_versions(supported_ext_version_count);
+        const INTCExtensionVersion required_version = { 1,2,0 }; //version 1.2.0
+        INTCExtensionInfo intc_extension_info = {};
+
+        throw_if_failed(INTC_D3D12_GetSupportedVersions(d3d12_device, supported_ext_versions.data(), &supported_ext_version_count),
+            "Intel Plugin Extension ERROR: GetSupportedVersions");
+
+        for (uint32_t i = 0; i < supported_ext_version_count; i++)
+        {
+            if ((supported_ext_versions[i].HWFeatureLevel >= required_version.HWFeatureLevel) &&
+                (supported_ext_versions[i].APIVersion >= required_version.APIVersion) &&
+                (supported_ext_versions[i].Revision >= required_version.Revision))
+            {
+                intc_extension_info.RequestedExtensionVersion = supported_ext_versions[i];
+                break;
+            }
+        }
+
+        throw_if_failed(INTC_D3D12_CreateDeviceExtensionContext(d3d12_device, &ext_ctx_, &intc_extension_info, nullptr),
+            "Intel Plugin Extension ERROR: CreateExtensionContext failed");
+    }
+    IntelExtension(const IntelExtension& rhs) = delete;
+    IntelExtension(IntelExtension&& rhs) 
+    {
+        std::swap(ext_ctx_, rhs.ext_ctx_);
+    }
+    IntelExtension& operator=(const IntelExtension& rhs) = delete;
+    IntelExtension& operator=(IntelExtension&& rhs)
+    {
+        if (this != &rhs)
+        {
+            std::swap(ext_ctx_, rhs.ext_ctx_);
+        }
+        return *this;
+    }
+
+    ~IntelExtension()
+    {
+        if (ext_ctx_)
+        {
+            throw_if_failed(INTC_DestroyDeviceExtensionContext(&ext_ctx_), "Intel Plugin Extension ERROR: DestroyDeviceExtensionContext failed");
+        }
+    }
+
+    INTCExtensionContext* get() { return ext_ctx_; }
+
+    ComPtr<ID3D12PipelineState> create_pipeline(const CD3DX12_SHADER_BYTECODE& shader_byte_code, std::string_view build_opts, ID3D12RootSignature* root_signature)
+    {
+        if (!ext_ctx_)
+        {
+            throw_with_msg("Intel extension context is missing. Cant create pipeline.");
+        }
+
+        D3D12_COMPUTE_PIPELINE_STATE_DESC compute_pso_desc = {};
+        compute_pso_desc.pRootSignature = root_signature;
+        compute_pso_desc.CS = CD3DX12_SHADER_BYTECODE(nullptr, 0);
+
+        INTC_D3D12_COMPUTE_PIPELINE_STATE_DESC pso_desc_csext = {};
+        pso_desc_csext.pD3D12Desc = &compute_pso_desc;
+
+        pso_desc_csext.CS = shader_byte_code;
+        pso_desc_csext.CompileOptions = (void*)build_opts.data();
+        pso_desc_csext.InternalOptions = nullptr;// driver folks addes (void*)"-xess"; in xefx //ToDo: what it gives?
+        pso_desc_csext.ShaderInputType = INTC_D3D12_SHADER_INPUT_TYPE::CM;
+
+        ComPtr<ID3D12PipelineState> ret;
+        throw_if_failed(INTC_D3D12_CreateComputePipelineState(ext_ctx_, &pso_desc_csext, IID_PPV_ARGS(&ret)),
+            "INTC_D3D12_CreateComputePipelineState failed. Most probably compilation issue or root signature with kernels args mismatch!");
+        //ret->SetName(name);  //ToDo: add naming
+        return ret;
+    }
+
+
+private:
+    INTCExtensionContext* ext_ctx_{nullptr};
+};
 
 inline ComPtr<IDMLDevice> create_dml_device(ID3D12Device* d3d12_device)
 {
