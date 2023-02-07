@@ -2,6 +2,32 @@
 #include "dx12_utils.h"
 #include "layers_utils.h"
 
+namespace
+{
+    inline static dml::TensorProperties compute_nchw_tensor_policy(
+        DML_TENSOR_DATA_TYPE dataType,
+        DML_TENSOR_FLAGS /*flags*/,
+        std::span<const uint32_t> sizes)
+    {
+        uint32_t dimension_count = static_cast<uint32_t>(sizes.size());
+        dml::TensorStrides strides(dimension_count);
+
+        uint32_t stride = 1;
+        for (std::uint32_t i = dimension_count; i > 0; i--)
+        {
+            strides[i - 1] = stride;
+            stride *= sizes[i - 1];
+        }
+
+        dml::TensorProperties props;
+        props.strides = std::move(strides);
+        props.totalTensorSizeInBytes = DMLCalcBufferTensorSize(dataType, dimension_count, sizes.data(), props.strides->data());
+        props.guaranteedBaseOffsetAlignment = 0;
+        return props;
+    }
+
+}
+
 inline DML_TENSOR_DATA_TYPE to_dml_data_type(DataType dt)
 {
     switch (dt)
@@ -18,7 +44,7 @@ inline dml::TensorPolicy to_dml_tensor_policy(DataLayout layout)
 {
     switch (layout)
     {
-    case DataLayout::eNCHW: return dml::TensorPolicy::Default();
+    case DataLayout::eNCHW: return dml::TensorPolicy(&compute_nchw_tensor_policy);
     case DataLayout::eNHWC: return dml::TensorPolicy::InterleavedChannel();
     default:
         assert(false && "Unknown data layout.");

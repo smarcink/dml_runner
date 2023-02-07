@@ -706,6 +706,7 @@ struct CliOptions
 {
     NodeType node_type = NodeType::eCount;
     std::uint32_t dispatch_iterations = 1;
+    bool no_conformance_check = false;
 
     GemmDispatcher::create_params_t gemm_opts{};
     ConvolutionBaseDispatcher::create_params_t conv_opts{};
@@ -718,14 +719,15 @@ int main()
 
     CliOptions opts;
     CLI::App dml_runner_app{ "App to microbenchmark and developer dml kernels.", "DirectML runner." };
-    dml_runner_app.add_option("type, -t, --type", opts.node_type, "Name of the type of layer to run.")
+    dml_runner_app.add_option("--type", opts.node_type, "Name of the type of layer to run.")
         ->required()->check(CLI::IsMember({NodeType::eConv, NodeType::eGemm, NodeType::eSoftmax }))->
         transform(CLI::Transformer(std::map<std::string, NodeType>{
             { "conv", NodeType::eConv },
             { "gemm", NodeType::eGemm },
             { "softmax", NodeType::eSoftmax }
     }, CLI::ignore_case, CLI::ignore_underscore));
-    dml_runner_app.add_option("iters, -i, --iters", opts.dispatch_iterations, "How many iterations to run.")->check(CLI::Range(1u, MAX_ITERATIONS));
+    dml_runner_app.add_option("--iters", opts.dispatch_iterations, "How many iterations to run.")->check(CLI::Range(1u, MAX_ITERATIONS));
+    dml_runner_app.add_flag("--no_conform", opts.no_conformance_check);
 
     auto gemm_option_groups = dml_runner_app.add_subcommand("gemm_opts", "Options for genn layer.");
     GemmDispatcher::create_params_t::add_cli_options(gemm_option_groups, opts.gemm_opts);
@@ -822,15 +824,28 @@ int main()
         }
         close_execute_reset_wait(d3d12_device.Get(), command_queue.Get(), command_allocator.Get(), command_list.Get());
 
-
-        const auto conformance_result = node->validate_conformance(command_queue.Get(), command_allocator.Get(), command_list.Get());
-        std::cout << std::format("Conformance {}. Tested values (tensor out elements count): {} \n", conformance_result.passed, conformance_result.tested_samples_count);
-        std::cout << std::format("Biggest difference in the output tensor: {}. It is in the epsilion range: {}. \n", conformance_result.biggest_difference, conformance_result.epsilon);
-
-        if (!conformance_result.passed)
+        const auto device_remove_reason = d3d12_device->GetDeviceRemovedReason();
+        if (device_remove_reason != S_OK)
         {
-            return -2;
+            std::cout << std::format("Device removal. Reason: {}\n", device_remove_reason);
         }
+
+        if (opts.no_conformance_check)
+        {
+            std::cout << std::format("Skipping conformance check as requested by cmd line.\n");
+        }
+        else
+        {
+            const auto conformance_result = node->validate_conformance(command_queue.Get(), command_allocator.Get(), command_list.Get());
+            std::cout << std::format("Conformance {}. Tested values (tensor out elements count): {} \n", conformance_result.passed, conformance_result.tested_samples_count);
+            std::cout << std::format("Biggest difference in the output tensor: {}. It is in the epsilion range: {}. \n", conformance_result.biggest_difference, conformance_result.epsilon);
+
+            if (!conformance_result.passed)
+            {
+                return -2;
+            }
+        }
+
 
         // Copy the timing data back
         command_list->ResolveQueryData(
