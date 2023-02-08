@@ -14,7 +14,7 @@
 
 #define INPUT_WIDTH 8
 #define INPUT_HEIGHT 1
-#define INPUT_CHANNELS 16
+#define INPUT_CHANNELS 128
 
 #define OUTPUT_WIDTH 8
 #define OUTPUT_HEIGHT 1
@@ -23,6 +23,7 @@
 #define DPAS_INPUT_CHANNELS (DPAS_DEPTH * sizeof(DT_IN))
 #define DPAS_OUTPUT_CHANNELS EXEC_SIZE
 
+#define CONV_LOOP_COUNT (INPUT_CHANNELS/DPAS_INPUT_CHANNELS)
 
 #define WEIGHTS_REG_SIZE (DPAS_INPUT_CHANNELS * DPAS_OUTPUT_CHANNELS)
 
@@ -100,12 +101,29 @@ extern "C" _GENX_MAIN_ void convolution_nchw_1x1(
     
     const uint LOAD_W_SIZE = 8;
     
-    vector<DT_IN, LOAD_W_SIZE * INPUT_CHANNELS> input_row_0 = load_input_nchw_and_reorder_to_wc16<LOAD_W_SIZE>(surface_input, 0);
-    vector<DT_WEIGHTS, WEIGHTS_REG_SIZE> weights_0 = load_filter_nchw_data(surface_weights, 0);
+    uint32_t input_offset = 0;
+    const uint32_t input_dpas_ic_offset_size = INPUT_WIDTH * DPAS_INPUT_CHANNELS * sizeof(DT_IN);
+    
+    uint32_t weights_offset = 0;
+    const uint weights_nchw_dpas_ic_offset_size = DPAS_INPUT_CHANNELS * sizeof(DT_WEIGHTS);
+    
+    vector<DT_IN, LOAD_W_SIZE * DPAS_INPUT_CHANNELS> input_row_0 = load_input_nchw_and_reorder_to_wc16<LOAD_W_SIZE>(surface_input, input_offset);
+    vector<DT_WEIGHTS, WEIGHTS_REG_SIZE> weights_0 = load_filter_nchw_data(surface_weights, weights_offset);
     
     const uint ACCU_REG_SIZE = LOAD_W_SIZE * DPAS_OUTPUT_CHANNELS;
     vector<DT_ACCU, ACCU_REG_SIZE> accu_row_0(0.0f); 
     accu_row_0 = cm_dpas<CM_PRECISION_HF, CM_PRECISION_HF, 8, 8>(accu_row_0, weights_0.format<uint32_t>(), input_row_0.format<uint32_t>());
+    
+    #pragma unroll
+    for(int i = 1; i < CONV_LOOP_COUNT; i++)
+    {
+        input_offset += input_dpas_ic_offset_size;
+        weights_offset += weights_nchw_dpas_ic_offset_size;
+        
+        input_row_0 = load_input_nchw_and_reorder_to_wc16<LOAD_W_SIZE>(surface_input, input_offset);
+        weights_0 = load_filter_nchw_data(surface_weights, weights_offset);
+        accu_row_0 = cm_dpas<CM_PRECISION_HF, CM_PRECISION_HF, 8, 8>(accu_row_0, weights_0.format<uint32_t>(), input_row_0.format<uint32_t>());
+    }
     
     vector<DT_OUT, ACCU_REG_SIZE> output_row_0 = vector<DT_OUT, ACCU_REG_SIZE>(accu_row_0);
     store_output_wc8_as_nchw<8>(surface_output, output_row_0, 0);  
