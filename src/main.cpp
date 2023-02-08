@@ -59,7 +59,6 @@ inline void randomize_linear_container_float(std::mt19937& gen, std::uniform_rea
     }
 }
 
-
 inline void randomize_linear_container_half(std::mt19937& gen, std::uniform_real_distribution<float>& dist, std::span<std::byte> container)
 {
     using Dt = Half;
@@ -67,6 +66,16 @@ inline void randomize_linear_container_half(std::mt19937& gen, std::uniform_real
     for (auto i = 0; i < container.size() / sizeof(Dt); i++)
     {
         ptr[i] = DirectX::PackedVector::XMConvertFloatToHalf(dist(gen));
+    }
+}
+
+inline void fill_with_constant_linear_container_half(std::span<std::byte> container, Half value)
+{
+    using Dt = Half;
+    auto* ptr = reinterpret_cast<Dt*>(container.data());
+    for (auto i = 0; i < container.size() / sizeof(Dt); i++)
+    {
+        ptr[i] = value;
     }
 }
 
@@ -376,7 +385,8 @@ public:
         else if (params_.dt == DataType::eFp16)
         {
             randomize_linear_container_half(random_generator, uniform_distribution, input_data_);
-            randomize_linear_container_half(random_generator, uniform_distribution, filter_data_);
+            //randomize_linear_container_half(random_generator, uniform_distribution, filter_data_);
+            fill_with_constant_linear_container_half(filter_data_, DirectX::PackedVector::XMConvertFloatToHalf(1.0f));
             if (use_bias())
             {
                 randomize_linear_container_half(random_generator, uniform_distribution, bias_data_);

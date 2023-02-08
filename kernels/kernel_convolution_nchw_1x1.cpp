@@ -13,9 +13,12 @@
 #define DT_ACCU float 
 
 #define INPUT_WIDTH 8
-#define INPUT_WIDTH 8
 #define INPUT_HEIGHT 1
 #define INPUT_CHANNELS 16
+
+#define OUTPUT_WIDTH 8
+#define OUTPUT_HEIGHT 1
+#define OUTPUT_CHANNELS 8
 
 #define DPAS_INPUT_CHANNELS (DPAS_DEPTH * sizeof(DT_IN))
 #define DPAS_OUTPUT_CHANNELS EXEC_SIZE
@@ -23,10 +26,18 @@
 
 #define WEIGHTS_REG_SIZE (DPAS_INPUT_CHANNELS * DPAS_OUTPUT_CHANNELS)
 
+static const uint32_t store_init_offsets_for_halfs[8] = { 0, 16, 32, 48, 64, 80, 96, 112 };
+
 template<typename DT, unsigned VS, CacheHint CH_L1, CacheHint CH_L3>
 _GENX_ inline vector<DT, VS> lsc_load(SurfaceIndex surface [[type("buffer_t")]], const uint byte_offset)
 {
     return cm_load<DT, VS, DataSize::Default, CH_L1, CH_L3>(surface, byte_offset);
+}
+
+template<typename DT, unsigned VS, CacheHint CH_L1, CacheHint CH_L3>
+_GENX_ inline vector<DT, VS> lsc_store(SurfaceIndex surface [[type("buffer_t")]], vector_ref<DT, VS> grf_chunk, const uint byte_offset)
+{
+    cm_store<DT, VS, DataSize::Default, CH_L1, CH_L3>(surface, byte_offset, grf_chunk);   
 }
 
 template<uint32_t LOAD_W>
@@ -60,6 +71,20 @@ _GENX_ inline vector<DT_WEIGHTS, WEIGHTS_REG_SIZE> load_filter_nchw_data(Surface
     return data_out;
 }
 
+template<uint32_t STORE_W>
+_GENX_ inline void store_output_wc8_as_nchw(SurfaceIndex surface [[type("buffer_t")]], vector_ref<DT_OUT, STORE_W * DPAS_OUTPUT_CHANNELS> grf_chunk, uint byte_offset)
+{    
+    #pragma unroll
+    for(int i = 0; i < DPAS_OUTPUT_CHANNELS; i++)
+    {
+        // pick data to store
+        vector<DT_OUT, STORE_W> grf_chunk_store = grf_chunk.select<STORE_W, DPAS_OUTPUT_CHANNELS>(i);
+        // store with non-transposed msg
+        cm_store<uint32_t, 4, DataSize::Default, CacheHint::WriteBack, CacheHint::WriteBack>(surface, byte_offset, grf_chunk_store.format<uint32_t>());
+        byte_offset += OUTPUT_WIDTH * sizeof(DT_OUT);
+    }
+}
+
 extern "C" _GENX_MAIN_ void convolution_nchw_1x1(
 	SurfaceIndex surface_input [[type("buffer_t")]],
 	SurfaceIndex surface_weights [[type("buffer_t")]],
@@ -83,5 +108,10 @@ extern "C" _GENX_MAIN_ void convolution_nchw_1x1(
     accu_row_0 = cm_dpas<CM_PRECISION_HF, CM_PRECISION_HF, 8, 8>(accu_row_0, weights_0.format<uint32_t>(), input_row_0.format<uint32_t>());
     
     vector<DT_OUT, ACCU_REG_SIZE> output_row_0 = vector<DT_OUT, ACCU_REG_SIZE>(accu_row_0);
-    cm_store<uint32_t, ACCU_REG_SIZE / sizeof(DT_OUT)>(surface_output, 0, output_row_0.format<uint32_t>());
+    //cm_store<uint32_t, ACCU_REG_SIZE / sizeof(DT_OUT)>(surface_output, 0, output_row_0.format<uint32_t>());
+    store_output_wc8_as_nchw<8>(surface_output, output_row_0, 0);
+    
+    
+    //cm_store<uint32_t, 4, DataSize::Default, CacheHint::WriteBack, CacheHint::WriteBack>(surface_output, 0, output_row_0.format<uint32_t>().select<4, 1>());
+    
 }
