@@ -44,7 +44,7 @@ inline dml::TensorPolicy to_dml_tensor_policy(DataLayout layout)
 {
     switch (layout)
     {
-    case DataLayout::eNCHW: return dml::TensorPolicy(&compute_nchw_tensor_policy);
+    case DataLayout::eNCHW: return dml::TensorPolicy::Default();
     case DataLayout::eNHWC: return dml::TensorPolicy::InterleavedChannel();
     default:
         assert(false && "Unknown data layout.");

@@ -10,11 +10,10 @@ inline dnnl::memory::dim dimensions_product(const dnnl::memory::dims& dims)
     return std::accumulate(dims.begin(), dims.end(), (dnnl::memory::dim)1, std::multiplies<dnnl::memory::dim>());
 }
 
-inline dnnl::memory::dims to_dnnl_dims(const std::vector<std::uint32_t>& in_dims)
+inline dnnl::memory::dims to_dnnl_dims(const TensorShape& shape)
 {
-    assert(in_dims.size() == 4);
     // nchw
-    const dnnl::memory::dims dims{ in_dims[0], in_dims[1], in_dims[2], in_dims[3] };
+    const dnnl::memory::dims dims{ shape.n, shape.c, shape.h, shape.w };
     return dims;
 }
 

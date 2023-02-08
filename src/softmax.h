@@ -85,5 +85,5 @@ private:
 
 namespace cpu_op
 {
-std::vector<std::byte> softmax(std::uint32_t axis, const std::byte* in_data, const std::vector<std::uint32_t>& dims, DataType in_out_datatype, DataLayout in_out_layout);
+std::vector<std::byte> softmax(std::uint32_t axis, const std::byte* in_data, const TensorShape& in_out_shape, DataType in_out_datatype, DataLayout in_out_layout);
 }  // namespace cpu_op

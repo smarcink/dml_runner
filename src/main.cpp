@@ -12,10 +12,31 @@
 #include <chrono>
 #include <sstream>
 #include <string>
+#include <utility>
 
 #include "CLI/App.hpp"
 #include "CLI/Formatter.hpp"
 #include "CLI/Config.hpp"
+
+// the lexical cast operator should be in the same namespace as the type for ADL to work properly
+//bool lexical_cast(const std::string& input, Values<double>& /*v*/) {
+//    std::cout << "called correct lexical_cast function ! val: " << input << std::endl;
+//    return true;
+//}
+
+bool lexical_cast(const std::string& input, TensorShape& ts) {
+    std::vector<std::uint32_t> data;
+    constexpr const auto buffer_size = 128;
+    std::string line(buffer_size, ' ');
+    std::stringstream stream;
+    stream << input;
+    while(stream.getline(line.data(), buffer_size, ','))
+    {
+        data.push_back(std::stoi(line));
+    }
+    ts = TensorShape(data);
+    return true;
+}
 
 template<typename TimeType>
 inline void print_performance_stats(const std::vector<TimeType>& timings)
@@ -59,7 +80,6 @@ inline void randomize_linear_container_float(std::mt19937& gen, std::uniform_rea
     }
 }
 
-
 inline void randomize_linear_container_half(std::mt19937& gen, std::uniform_real_distribution<float>& dist, std::span<std::byte> container)
 {
     using Dt = Half;
@@ -67,6 +87,16 @@ inline void randomize_linear_container_half(std::mt19937& gen, std::uniform_real
     for (auto i = 0; i < container.size() / sizeof(Dt); i++)
     {
         ptr[i] = DirectX::PackedVector::XMConvertFloatToHalf(dist(gen));
+    }
+}
+
+inline void fill_with_constant_linear_container_half(std::span<std::byte> container, Half value)
+{
+    using Dt = Half;
+    auto* ptr = reinterpret_cast<Dt*>(container.data());
+    for (auto i = 0; i < container.size() / sizeof(Dt); i++)
+    {
+        ptr[i] = value;
     }
 }
 
@@ -319,15 +349,11 @@ public:
     {
         DataType dt;
         DataLayout layout;
-        std::uint32_t batch;
-        std::uint32_t ic;
-        std::uint32_t oc;
-        std::uint32_t in_width;
-        std::uint32_t in_height;
+        TensorShape input_shape;
+        TensorShape filter_shape;
         std::uint32_t in_pad;
         std::uint32_t out_pad;
-        std::uint32_t kernel_size;
-        std::uint32_t stride;
+        TensorShape stride;
         bool no_bias = false;
         bool allow_fp16_computations = false;
 
@@ -335,15 +361,11 @@ public:
         {
             add_data_type_cli_option(opts, "--data_type", params.dt)->required();
             add_data_layout_cli_option(opts, "--layout", params.layout)->required();
-            opts->add_option("--batch", params.batch)->required();
-            opts->add_option("--ic", params.ic)->required();
-            opts->add_option("--oc", params.oc)->required();
-            opts->add_option("--in_width", params.in_width)->required();
-            opts->add_option("--in_height", params.in_height)->required();
+            opts->add_option("--input_shape", params.input_shape, "speciify list: <n, ic, h, w")->required();
+            opts->add_option("--filter_shape", params.filter_shape, "speciify list: <oc, ic, kh, kw")->required();
             opts->add_option("--in_pad", params.in_pad)->required();
             opts->add_option("--out_pad", params.out_pad)->required();
-            opts->add_option("--kernel_size", params.kernel_size)->required();
-            opts->add_option("--stride", params.stride)->required();
+            opts->add_option("--stride", params.stride, "speciify list: <stride_h, stride_w>")->required();
             opts->add_flag("--no_bias", params.no_bias);
             opts->add_flag("--allow_fp16_computations", params.allow_fp16_computations);
 
@@ -353,13 +375,14 @@ public:
     ConvolutionBaseDispatcher(create_params_t&& params, ID3D12Device* d3d12_device, ID3D12GraphicsCommandList* cmd_list)
         : params_(std::move(params))
         , d3d12_device_(d3d12_device)
-        , input_data_(params_.batch* params_.ic* params_.in_height* params_.in_width * get_data_type_bytes_width(params_.dt))
-        , filter_data_(params_.oc* params_.ic* params_.kernel_size* params_.kernel_size * get_data_type_bytes_width(params_.dt))
+        , input_data_(params_.input_shape.get_elements_count() * get_data_type_bytes_width(params_.dt))
+        , filter_data_(params_.filter_shape.get_elements_count()* get_data_type_bytes_width(params_.dt))
 
     {
+        assert(params_.input_shape.c == params_.filter_shape.c);
         if (!params_.no_bias)
         {
-            bias_data_ = std::vector<std::byte>(params_.oc * get_data_type_bytes_width(params_.dt));
+            bias_data_ = std::vector<std::byte>(params_.filter_shape.n * get_data_type_bytes_width(params_.dt));
         }
         // randomize data
         std::mt19937 random_generator(42); // static, create it once!
@@ -375,8 +398,10 @@ public:
         }
         else if (params_.dt == DataType::eFp16)
         {
+            //fill_with_constant_linear_container_half(input_data_, DirectX::PackedVector::XMConvertFloatToHalf(1.0f));
             randomize_linear_container_half(random_generator, uniform_distribution, input_data_);
             randomize_linear_container_half(random_generator, uniform_distribution, filter_data_);
+            //fill_with_constant_linear_container_half(filter_data_, DirectX::PackedVector::XMConvertFloatToHalf(1.0f));
             if (use_bias())
             {
                 randomize_linear_container_half(random_generator, uniform_distribution, bias_data_);
@@ -390,9 +415,8 @@ public:
         const auto tensor_input_bytes_width = input_data_.size();
         const auto tensor_filter_bytes_width = filter_data_.size();
         const auto tensor_bias_bytes_width = bias_data_.size();
-        const auto out_width = (params_.in_width - params_.kernel_size + params_.in_pad + params_.in_pad) / params_.stride + 1;
-        const auto out_height = (params_.in_height - params_.kernel_size + params_.in_pad + params_.in_pad) / params_.stride + 1;
-        const auto tensor_out_bytes_width = params_.batch * params_.oc * out_height * out_width * get_data_type_bytes_width(params_.dt);
+        const auto output_shape = get_output_shape();
+        const auto tensor_out_bytes_width = output_shape.get_elements_count() * get_data_type_bytes_width(params_.dt);
 
         upload_buffer_ = create_buffer(d3d12_device_, tensor_input_bytes_width + tensor_filter_bytes_width + tensor_bias_bytes_width,
             D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ);
@@ -481,6 +505,17 @@ public:
     }
 
 protected:
+    inline TensorShape get_output_shape() const
+    {
+        TensorShape ret;
+        ret.n = params_.input_shape.n;
+        ret.c = params_.filter_shape.n; // output channels
+        ret.d = 0;
+        ret.h = (params_.input_shape.h - params_.filter_shape.h + params_.in_pad + params_.in_pad) / params_.stride.h + 1;
+        ret.w = (params_.input_shape.w - params_.filter_shape.w + params_.in_pad + params_.in_pad) / params_.stride.w + 1;
+        return ret;
+    }
+
     inline bool use_bias() const
     {
         return !params_.no_bias;
@@ -493,23 +528,24 @@ protected:
             bindings.input.data = input_data_.data();
             bindings.input.dt = params_.dt;
             bindings.input.layout = params_.layout;
-            bindings.input.dims = { params_.batch, params_.ic, params_.in_width, params_.in_height };
+            bindings.input.shape = params_.input_shape;
         }
 
         {
             bindings.filter.data = filter_data_.data();
             bindings.filter.dt = params_.dt;
             bindings.filter.layout = params_.layout;
-            bindings.filter.dims = { params_.oc , params_.ic, params_.kernel_size, params_.kernel_size };
+            bindings.filter.shape = params_.filter_shape;
         }
         if(use_bias())
         {
             bindings.bias.data = bias_data_.data();
             bindings.bias.dt = params_.dt;
             bindings.bias.layout = params_.layout;
-            bindings.bias.dims = { params_.oc , 1, 1, 1 };
+            bindings.bias.shape = TensorShape(params_.filter_shape.n, 1u, 1u, 1u);
         }
         cpu_op::opts_t opts{};
+        opts.output_shape = get_output_shape();
         opts.inp_pad = params_.in_pad;
         opts.out_pad = params_.out_pad;
         opts.stride = params_.stride;
@@ -540,14 +576,11 @@ public:
     ConvolutionDirectMLDispatcher(create_params_t&& params, ID3D12Device* d3d12_device, IDMLDevice* dml_device, IDMLCommandRecorder* dml_cmd_recorder, ID3D12GraphicsCommandList* cmd_list)
         : ConvolutionBaseDispatcher(std::move(params), d3d12_device, cmd_list)
         , dml_cmd_recorder_(dml_cmd_recorder)
-        , conv_(dml::TensorDimensions{params_.batch, params_.ic, params_.in_width, params_.in_height},
-            dml::TensorDimensions{ params_.oc, params_.ic, params_.kernel_size, params_.kernel_size},
+        , conv_(params_.input_shape, params_.filter_shape, get_output_shape(),
             to_dml_data_type(params_.dt), to_dml_tensor_policy(params_.layout),
             params_.stride, params_.in_pad, params_.out_pad, !params_.no_bias, params_.allow_fp16_computations,
             dml_device, d3d12_device)
-
     {
-
     } 
 
     std::uint32_t get_total_descriptor_count()override
@@ -579,14 +612,20 @@ public:
         bool dump_asm;
         bool large_grf;
         bool print_reg_usage;
-        std::array<std::uint32_t, 3> lws{ 1u, 1u, 1u };
+        std::array<std::uint32_t, 3> lws{ 1u, 1u, 1u}; 
+        std::uint32_t block_w = 8;
+        std::uint32_t block_h = 1;
+        std::uint32_t block_oc = 8;
 
         inline static void add_cli_options(CLI::App* opts, conv_cm_params_t& params)
         {
             opts->add_flag("--dump_asm", params.dump_asm)->default_val(false);
             opts->add_flag("--large_grf", params.large_grf)->default_val(false);
             opts->add_flag("--print_reg_usage", params.print_reg_usage)->default_val(false);
-            opts->add_option("--lws", params.lws)->delimiter(',');  // pass it like this: --lws=8,4,1
+            opts->add_option("--block_w", params.block_w);
+            opts->add_option("--block_h", params.block_h);
+            opts->add_option("--block_oc", params.block_oc);
+            opts->add_option("--lws", params.lws)->delimiter(',');
         }
     };
 public:
@@ -594,8 +633,10 @@ public:
         : ConvolutionBaseDispatcher(std::move(params), d3d12_device, cmd_list)
         , intc_ext_(intc_ext)
         , d3d12_device_(d3d12_device)
-
+        , cm_params_(std::move(cm_params))
+        , output_shape_(get_output_shape())
     {
+        assert(params_.filter_shape.h == params_.filter_shape.w);
         // root signature
         {
             const auto bindings_size = get_total_descriptor_count();
@@ -673,9 +714,48 @@ public:
                 IID_PPV_ARGS(&root_signature_)), "CreateRootSignature(...) failed.");
         }
 
+        // kernel jits
+        std::string build_options = "";
+        const std::string pre_jit = "-D";
+        const std::string post_jit = " ";
+        const std::string between_name_and_value = "=";
+
+        auto add_define = [&](const std::string& name, auto value) {
+            using namespace std;
+            std::string value_str;
+            if (std::is_floating_point<decltype(value)>::value)
+            {// to_*string precision is not enough to ensure good match betweeen GPU and CPU or pytorch execution results:
+                value_str = (std::stringstream() << std::setiosflags(std::ios_base::showpoint | std::ios_base::fixed) << std::setprecision((std::numeric_limits<decltype(value)>::max_digits10 + 1)) << value).str();
+            }
+            else
+            { // fine for other types:
+                value_str = to_string(value);
+            }
+
+            build_options += pre_jit + name + between_name_and_value + value_str + post_jit;
+        };
+
+        add_define("INPUT_WIDTH", params_.input_shape.w);
+        add_define("INPUT_HEIGHT", params_.input_shape.h);
+        add_define("INPUT_CHANNELS", params_.input_shape.c);
+
+        add_define("OUTPUT_WIDTH", output_shape_.w);
+        add_define("OUTPUT_HEIGHT", output_shape_.h);
+        add_define("OUTPUT_CHANNELS", output_shape_.c);
+
+        add_define("BATCH", params_.input_shape.n);
+        add_define("INPUT_PAD", params_.in_pad);
+        add_define("OUTPUT_PAD", params_.out_pad);
+        add_define("USE_BIAS", !params_.no_bias);
+        add_define("KERNEL_SIZE", params_.filter_shape.h);
+        add_define("STRIDE_W", params_.stride.w);
+        add_define("STRIDE_H", params_.stride.h);
+
+        add_define("BLOCK_W", cm_params_.block_w);
+        add_define("BLOCK_H", cm_params_.block_h);
+        add_define("BLOCK_OC", cm_params_.block_oc);
 
         // kernel compilation
-        std::string build_options = " ";
         const auto dump_asm_str = cm_params_.dump_asm ? " -mdump_asm" : "";
         const auto large_grf_str = cm_params_.large_grf ? " -Qxcm_doubleGRF" : "";
         const auto print_reg_str = cm_params_.print_reg_usage ? " -mCM_printregusage" : "";
@@ -684,9 +764,14 @@ public:
         const auto lws_z = " -DLWS_SIZE_Z=" + std::to_string(cm_params_.lws[2]);
         const auto build_options_final = " -I \" \" " + build_options + dump_asm_str + large_grf_str + print_reg_str + lws_x + lws_y + lws_z;
 
+        if (cm_params_.dump_asm)
+        {
+            std::cout << build_options_final << std::endl;
+        }
+
         auto kernel_source_content = []()
         {
-            const auto path = "kernel_convolution_nchw_1x1.cpp";
+            const auto path = "conv_1x1_nchw_b1_fp16.cpp";
             std::fstream file(path);
             if (!file.is_open())
             {
@@ -793,9 +878,14 @@ public:
             const auto gpu_heap_handle = gpu_handles_[i];
             cmd_list->SetComputeRootDescriptorTable(root_index++, gpu_heap_handle);
         }
-        const auto gws_x = 1;
-        const auto gws_y = 1;
-        const auto gws_z = 1;
+
+        const auto gws_x = round_up_next_multiple(output_shape_.w, cm_params_.block_w) / cm_params_.block_w;
+        const auto gws_y = round_up_next_multiple(output_shape_.h, cm_params_.block_h) / cm_params_.block_h;
+        const auto gws_z = params_.filter_shape.n / cm_params_.block_oc;
+
+        assert(gws_x % cm_params_.lws[0] == 0);
+        assert(gws_y % cm_params_.lws[1] == 0);
+        assert(gws_z % cm_params_.lws[2] == 0);
 
         const auto thg_x = gws_x / cm_params_.lws[0];
         const auto thg_y = gws_y / cm_params_.lws[1];
@@ -811,6 +901,8 @@ private:
 
     ComPtr<ID3D12PipelineState> pso_;
     ComPtr<ID3D12RootSignature> root_signature_;
+
+    const TensorShape output_shape_;
 };
 
 class SoftmaxDispatcher : public NodeDispatcher

@@ -1,7 +1,7 @@
 #include "softmax.h"
 #include "dnnl_utils.h"
 
-std::vector<std::byte> cpu_op::softmax(std::uint32_t axis, const std::byte* in_data, const std::vector<std::uint32_t>& in_out_dims, DataType in_out_datatype, DataLayout in_out_layout)
+std::vector<std::byte> cpu_op::softmax(std::uint32_t axis, const std::byte* in_data, const TensorShape& in_out_shape, DataType in_out_datatype, DataLayout in_out_layout)
 {
     static dnnl::engine engine(dnnl::engine::kind::gpu, 0);
     static dnnl::stream stream(engine);
@@ -11,7 +11,7 @@ std::vector<std::byte> cpu_op::softmax(std::uint32_t axis, const std::byte* in_d
 
     dnnl::memory input_memory = [&]()
     {
-        const auto dims = to_dnnl_dims(in_out_dims);
+        const auto dims = to_dnnl_dims(in_out_shape);
         const auto dt = to_dnnl_data_type(in_out_datatype);
         const auto ft = to_dnnl_format(in_out_layout);
         auto ret = dnnl::memory({ dims, dt, ft }, engine);
@@ -21,7 +21,7 @@ std::vector<std::byte> cpu_op::softmax(std::uint32_t axis, const std::byte* in_d
 
     dnnl::memory output_memory = [&]()
     {
-        const auto dims = to_dnnl_dims(in_out_dims);
+        const auto dims = to_dnnl_dims(in_out_shape);
         const auto dt = to_dnnl_data_type(in_out_datatype);
         const auto ft = to_dnnl_format(in_out_layout);
         return dnnl::memory({ dims, dt, ft }, engine);
