@@ -108,10 +108,5 @@ extern "C" _GENX_MAIN_ void convolution_nchw_1x1(
     accu_row_0 = cm_dpas<CM_PRECISION_HF, CM_PRECISION_HF, 8, 8>(accu_row_0, weights_0.format<uint32_t>(), input_row_0.format<uint32_t>());
     
     vector<DT_OUT, ACCU_REG_SIZE> output_row_0 = vector<DT_OUT, ACCU_REG_SIZE>(accu_row_0);
-    //cm_store<uint32_t, ACCU_REG_SIZE / sizeof(DT_OUT)>(surface_output, 0, output_row_0.format<uint32_t>());
-    store_output_wc8_as_nchw<8>(surface_output, output_row_0, 0);
-    
-    
-    //cm_store<uint32_t, 4, DataSize::Default, CacheHint::WriteBack, CacheHint::WriteBack>(surface_output, 0, output_row_0.format<uint32_t>().select<4, 1>());
-    
+    store_output_wc8_as_nchw<8>(surface_output, output_row_0, 0);  
 }
