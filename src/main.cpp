@@ -597,7 +597,9 @@ public:
         bool large_grf;
         bool print_reg_usage;
         std::array<std::uint32_t, 3> lws{ 1u, 1u, 1u}; 
-        std::uint32_t oc_chunks_per_thread = 8;
+        std::uint32_t block_w = 8;
+        std::uint32_t block_h = 4;
+        std::uint32_t block_oc = 8;
 
         inline static void add_cli_options(CLI::App* opts, conv_cm_params_t& params)
         {
@@ -613,6 +615,7 @@ public:
         , intc_ext_(intc_ext)
         , d3d12_device_(d3d12_device)
         , cm_params_(std::move(cm_params))
+        , output_sizes_(get_output_sizes())
     {
         // root signature
         {
@@ -727,6 +730,10 @@ public:
         add_define("USE_BIAS", !params_.no_bias);
         add_define("KERNEL_SIZE", params_.kernel_size);
         add_define("STRIDE", params_.stride);
+
+        add_define("BLOCK_W", cm_params_.block_w);
+        add_define("BLOCK_H", cm_params_.block_h);
+        add_define("BLOCK_OC", cm_params_.block_oc);
 
         // kernel compilation
         const auto dump_asm_str = cm_params_.dump_asm ? " -mdump_asm" : "";
@@ -851,9 +858,10 @@ public:
             const auto gpu_heap_handle = gpu_handles_[i];
             cmd_list->SetComputeRootDescriptorTable(root_index++, gpu_heap_handle);
         }
-        const auto gws_x = 1;
-        const auto gws_y = 1;
-        const auto gws_z = params_.oc / cm_params_.oc_chunks_per_thread;
+
+        const auto gws_x = output_sizes_.first / cm_params_.block_w;
+        const auto gws_y = output_sizes_.second / cm_params_.block_h;
+        const auto gws_z = params_.oc / cm_params_.block_oc;
 
         const auto thg_x = gws_x / cm_params_.lws[0];
         const auto thg_y = gws_y / cm_params_.lws[1];
@@ -869,6 +877,8 @@ private:
 
     ComPtr<ID3D12PipelineState> pso_;
     ComPtr<ID3D12RootSignature> root_signature_;
+
+    std::pair<std::uint32_t, std::uint32_t> output_sizes_;
 };
 
 class SoftmaxDispatcher : public NodeDispatcher

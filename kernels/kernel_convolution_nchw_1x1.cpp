@@ -54,7 +54,7 @@ _GENX_ inline vector<DT_IN, LOAD_W * DPAS_INPUT_CHANNELS> load_input_nchw_and_re
         vector<DT_IN, LOAD_W> load_data_dt_view = load_data_dword.format<DT_IN>();  
         // reshuffle data into return registers
         data_out.select<LOAD_W, DPAS_INPUT_CHANNELS>(i) = load_data_dt_view;    
-        byte_offset += INPUT_WIDTH * sizeof(DT_IN);
+        byte_offset += INPUT_WIDTH * INPUT_HEIGHT * sizeof(DT_IN);
     }
     return data_out;
 }
@@ -80,7 +80,7 @@ _GENX_ inline void store_output_wc8_as_nchw(SurfaceIndex surface [[type("buffer_
         vector<DT_OUT, STORE_W> grf_chunk_store = grf_chunk.select<STORE_W, DPAS_OUTPUT_CHANNELS>(i);
         // store with non-transposed msg
         cm_store<uint32_t, 4, DataSize::Default, CacheHint::WriteBack, CacheHint::WriteBack>(surface, byte_offset, grf_chunk_store.format<uint32_t>());
-        byte_offset += OUTPUT_WIDTH * sizeof(DT_OUT);
+        byte_offset += OUTPUT_WIDTH * OUTPUT_HEIGHT * sizeof(DT_OUT);
     }
 }
 
@@ -94,23 +94,33 @@ extern "C" _GENX_MAIN_ void convolution_nchw_1x1(
 )
 {
     const uint global_id_x = cm_group_id(0) * cm_local_size(0) + cm_local_id(0);
-    const uint global_id_y = cm_group_id(1) * cm_local_size(1) + cm_local_id(1);
+    const uint h_chunk_id = cm_group_id(1) * cm_local_size(1) + cm_local_id(1);
     const uint oc_chunk_id = cm_group_id(2) * cm_local_size(2) + cm_local_id(2);
+         
+    const uint32_t input_row_offset_size = INPUT_WIDTH * sizeof(DT_IN);
+    const uint32_t input_dpas_ic_offset_size = INPUT_HEIGHT * DPAS_INPUT_CHANNELS * input_row_offset_size;
     
-    const uint LOAD_W_SIZE = 8;
-     
-    uint32_t input_offset = 0;
-    const uint32_t input_dpas_ic_offset_size = INPUT_WIDTH * INPUT_HEIGHT * DPAS_INPUT_CHANNELS * sizeof(DT_IN);
-    
+    const uint input_h_chunk_offset = h_chunk_id * BLOCK_H * input_row_offset_size;
+    uint32_t input_offset = input_h_chunk_offset;
+        
     uint32_t weights_offset = 0;
     const uint weights_nchw_dpas_ic_offset_size = DPAS_INPUT_CHANNELS * sizeof(DT_WEIGHTS);
     
-    vector<DT_IN, LOAD_W_SIZE * DPAS_INPUT_CHANNELS> input_row_0 = load_input_nchw_and_reorder_to_wc16<LOAD_W_SIZE>(surface_input, input_offset);
+    vector<DT_IN, BLOCK_W * DPAS_INPUT_CHANNELS> input_row_0 = load_input_nchw_and_reorder_to_wc16<BLOCK_W>(surface_input, input_offset);
+    vector<DT_IN, BLOCK_W * DPAS_INPUT_CHANNELS> input_row_1 = load_input_nchw_and_reorder_to_wc16<BLOCK_W>(surface_input, input_offset + input_row_offset_size);
+    vector<DT_IN, BLOCK_W * DPAS_INPUT_CHANNELS> input_row_2 = load_input_nchw_and_reorder_to_wc16<BLOCK_W>(surface_input, input_offset + 2 * input_row_offset_size);
+    vector<DT_IN, BLOCK_W * DPAS_INPUT_CHANNELS> input_row_3 = load_input_nchw_and_reorder_to_wc16<BLOCK_W>(surface_input, input_offset + 3 * input_row_offset_size);
     vector<DT_WEIGHTS, WEIGHTS_REG_SIZE> weights_0 = load_filter_nchw_data(surface_weights, weights_offset);
     
-    const uint ACCU_REG_SIZE = LOAD_W_SIZE * DPAS_OUTPUT_CHANNELS;
-    vector<DT_ACCU, ACCU_REG_SIZE> accu_row_0(0.0f); 
-    accu_row_0 = cm_dpas<CM_PRECISION_HF, CM_PRECISION_HF, 8, 8>(accu_row_0, weights_0.format<uint32_t>(), input_row_0.format<uint32_t>());
+    const uint ACCU_REG_SIZE = BLOCK_W * DPAS_OUTPUT_CHANNELS;
+    vector<DT_ACCU, ACCU_REG_SIZE> accu_row_0;
+    vector<DT_ACCU, ACCU_REG_SIZE> accu_row_1;
+    vector<DT_ACCU, ACCU_REG_SIZE> accu_row_2;
+    vector<DT_ACCU, ACCU_REG_SIZE> accu_row_3;
+    accu_row_0 = cm_dpas<CM_PRECISION_HF, CM_PRECISION_HF, 8, 8, float, uint, uint, 64>(0, weights_0.format<uint32_t>(), input_row_0.format<uint32_t>());
+    accu_row_1 = cm_dpas<CM_PRECISION_HF, CM_PRECISION_HF, 8, 8, float, uint, uint, 64>(0, weights_0.format<uint32_t>(), input_row_1.format<uint32_t>());
+    accu_row_2 = cm_dpas<CM_PRECISION_HF, CM_PRECISION_HF, 8, 8, float, uint, uint, 64>(0, weights_0.format<uint32_t>(), input_row_2.format<uint32_t>());
+    accu_row_3 = cm_dpas<CM_PRECISION_HF, CM_PRECISION_HF, 8, 8, float, uint, uint, 64>(0, weights_0.format<uint32_t>(), input_row_3.format<uint32_t>());
     
     #pragma unroll
     for(int i = 1; i < CONV_LOOP_COUNT; i++)
@@ -118,16 +128,32 @@ extern "C" _GENX_MAIN_ void convolution_nchw_1x1(
         input_offset += input_dpas_ic_offset_size;
         weights_offset += weights_nchw_dpas_ic_offset_size;
         
-        input_row_0 = load_input_nchw_and_reorder_to_wc16<LOAD_W_SIZE>(surface_input, input_offset);
+        input_row_0 = load_input_nchw_and_reorder_to_wc16<BLOCK_W>(surface_input, input_offset);
+        input_row_1 = load_input_nchw_and_reorder_to_wc16<BLOCK_W>(surface_input, input_offset + input_row_offset_size);
+        input_row_2 = load_input_nchw_and_reorder_to_wc16<BLOCK_W>(surface_input, input_offset + 2 * input_row_offset_size);
+        input_row_3 = load_input_nchw_and_reorder_to_wc16<BLOCK_W>(surface_input, input_offset + 3 * input_row_offset_size);
+        
         weights_0 = load_filter_nchw_data(surface_weights, weights_offset);
         accu_row_0 = cm_dpas<CM_PRECISION_HF, CM_PRECISION_HF, 8, 8>(accu_row_0, weights_0.format<uint32_t>(), input_row_0.format<uint32_t>());
+        accu_row_1 = cm_dpas<CM_PRECISION_HF, CM_PRECISION_HF, 8, 8>(accu_row_1, weights_0.format<uint32_t>(), input_row_1.format<uint32_t>());
+        accu_row_2 = cm_dpas<CM_PRECISION_HF, CM_PRECISION_HF, 8, 8>(accu_row_2, weights_0.format<uint32_t>(), input_row_2.format<uint32_t>());
+        accu_row_3 = cm_dpas<CM_PRECISION_HF, CM_PRECISION_HF, 8, 8>(accu_row_3, weights_0.format<uint32_t>(), input_row_3.format<uint32_t>());
     }
     
     vector<DT_OUT, ACCU_REG_SIZE> output_row_0 = vector<DT_OUT, ACCU_REG_SIZE>(accu_row_0);
+    vector<DT_OUT, ACCU_REG_SIZE> output_row_1 = vector<DT_OUT, ACCU_REG_SIZE>(accu_row_1);
+    vector<DT_OUT, ACCU_REG_SIZE> output_row_2 = vector<DT_OUT, ACCU_REG_SIZE>(accu_row_2);
+    vector<DT_OUT, ACCU_REG_SIZE> output_row_3 = vector<DT_OUT, ACCU_REG_SIZE>(accu_row_3);
 #if USE_BIAS
 #error ToDo: add support for use_bias case here.
 #endif 
-
-    uint32_t output_offset = oc_chunk_id * DPAS_OUTPUT_CHANNELS * OUTPUT_WIDTH * OUTPUT_HEIGHT * sizeof(DT_OUT);
+    
+    const uint output_row_offset_size = OUTPUT_WIDTH * sizeof(DT_OUT);
+    const uint output_oc_chunk_offset = oc_chunk_id * DPAS_OUTPUT_CHANNELS * OUTPUT_HEIGHT * output_row_offset_size;
+    const uint output_h_chunk_offset = h_chunk_id * BLOCK_H * output_row_offset_size;
+    uint32_t output_offset = output_oc_chunk_offset + output_h_chunk_offset;
     store_output_wc8_as_nchw<8>(surface_output, output_row_0, output_offset);  
+    store_output_wc8_as_nchw<8>(surface_output, output_row_1, output_offset + output_row_offset_size);  
+    store_output_wc8_as_nchw<8>(surface_output, output_row_2, output_offset + 2 * output_row_offset_size);  
+    store_output_wc8_as_nchw<8>(surface_output, output_row_3, output_offset + 3 * output_row_offset_size);  
 }
