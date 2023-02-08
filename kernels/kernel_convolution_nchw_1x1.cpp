@@ -1,7 +1,13 @@
 #include <cm/cm.h>
 #include <cm/cmtl.h>
 
-#define USE_BIAS 0
+#if !CM_HAS_DPAS
+#error [ERROR] Kernel designed to use dpas. Current device does not support dpas.
+#endif
+
+#if !CM_HAS_LSC
+#error [ERROR] Kernel designed to use lsc. Current device does not support lsc.
+#endif
 
 #define EXEC_SIZE 8
 #define DPAS_DEPTH 8 
@@ -11,14 +17,6 @@
 #define DT_WEIGHTS half
 // accu on DG2 have to be float for half dt inputs
 #define DT_ACCU float 
-
-#define INPUT_WIDTH 8
-#define INPUT_HEIGHT 1
-#define INPUT_CHANNELS 128
-
-#define OUTPUT_WIDTH 8
-#define OUTPUT_HEIGHT 1
-#define OUTPUT_CHANNELS 8
 
 #define DPAS_INPUT_CHANNELS (DPAS_DEPTH * sizeof(DT_IN))
 #define DPAS_OUTPUT_CHANNELS EXEC_SIZE
