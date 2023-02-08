@@ -12,6 +12,7 @@
 #include <chrono>
 #include <sstream>
 #include <string>
+#include <utility>
 
 #include "CLI/App.hpp"
 #include "CLI/Formatter.hpp"
@@ -400,8 +401,7 @@ public:
         const auto tensor_input_bytes_width = input_data_.size();
         const auto tensor_filter_bytes_width = filter_data_.size();
         const auto tensor_bias_bytes_width = bias_data_.size();
-        const auto out_width = (params_.in_width - params_.kernel_size + params_.in_pad + params_.in_pad) / params_.stride + 1;
-        const auto out_height = (params_.in_height - params_.kernel_size + params_.in_pad + params_.in_pad) / params_.stride + 1;
+        const auto [out_width, out_height] = get_output_sizes();
         const auto tensor_out_bytes_width = params_.batch * params_.oc * out_height * out_width * get_data_type_bytes_width(params_.dt);
 
         upload_buffer_ = create_buffer(d3d12_device_, tensor_input_bytes_width + tensor_filter_bytes_width + tensor_bias_bytes_width,
@@ -491,6 +491,13 @@ public:
     }
 
 protected:
+    inline std::pair<std::uint32_t, std::uint32_t> get_output_sizes() const
+    {
+        const auto out_width = (params_.in_width - params_.kernel_size + params_.in_pad + params_.in_pad) / params_.stride + 1;
+        const auto out_height = (params_.in_height - params_.kernel_size + params_.in_pad + params_.in_pad) / params_.stride + 1;
+        return { out_width, out_height };
+    }
+
     inline bool use_bias() const
     {
         return !params_.no_bias;
@@ -589,14 +596,15 @@ public:
         bool dump_asm;
         bool large_grf;
         bool print_reg_usage;
-        std::array<std::uint32_t, 3> lws{ 1u, 1u, 1u };
+        std::array<std::uint32_t, 3> lws{ 1u, 1u, 1u}; 
+        std::uint32_t oc_chunks_per_thread = 8;
 
         inline static void add_cli_options(CLI::App* opts, conv_cm_params_t& params)
         {
             opts->add_flag("--dump_asm", params.dump_asm)->default_val(false);
             opts->add_flag("--large_grf", params.large_grf)->default_val(false);
             opts->add_flag("--print_reg_usage", params.print_reg_usage)->default_val(false);
-            opts->add_option("--lws", params.lws)->delimiter(',');  // pass it like this: --lws=8,4,1
+            opts->add_option("--lws", params.lws)->delimiter(',');
         }
     };
 public:
@@ -604,7 +612,7 @@ public:
         : ConvolutionBaseDispatcher(std::move(params), d3d12_device, cmd_list)
         , intc_ext_(intc_ext)
         , d3d12_device_(d3d12_device)
-
+        , cm_params_(std::move(cm_params))
     {
         // root signature
         {
@@ -683,9 +691,44 @@ public:
                 IID_PPV_ARGS(&root_signature_)), "CreateRootSignature(...) failed.");
         }
 
+        // kernel jits
+        std::string build_options = "";
+        const std::string pre_jit = "-D";
+        const std::string post_jit = " ";
+        const std::string between_name_and_value = "=";
+
+        auto add_define = [&](const std::string& name, auto value) {
+            using namespace std;
+            std::string value_str;
+            if (std::is_floating_point<decltype(value)>::value)
+            {// to_*string precision is not enough to ensure good match betweeen GPU and CPU or pytorch execution results:
+                value_str = (std::stringstream() << std::setiosflags(std::ios_base::showpoint | std::ios_base::fixed) << std::setprecision((std::numeric_limits<decltype(value)>::max_digits10 + 1)) << value).str();
+            }
+            else
+            { // fine for other types:
+                value_str = to_string(value);
+            }
+
+            build_options += pre_jit + name + between_name_and_value + value_str + post_jit;
+        };
+
+        add_define("INPUT_WIDTH", params_.in_width);
+        add_define("INPUT_HEIGHT", params_.in_height);
+        add_define("INPUT_CHANNELS", params_.ic);
+
+        const auto [out_width, out_height] = get_output_sizes();
+        add_define("OUTPUT_WIDTH", out_width);
+        add_define("OUTPUT_HEIGHT", out_height);
+        add_define("OUTPUT_CHANNELS", params_.oc);
+
+        add_define("BATCH", params_.batch);
+        add_define("INPUT_PAD", params_.in_pad);
+        add_define("OUTPUT_PAD", params_.out_pad);
+        add_define("USE_BIAS", !params_.no_bias);
+        add_define("KERNEL_SIZE", params_.kernel_size);
+        add_define("STRIDE", params_.stride);
 
         // kernel compilation
-        std::string build_options = " ";
         const auto dump_asm_str = cm_params_.dump_asm ? " -mdump_asm" : "";
         const auto large_grf_str = cm_params_.large_grf ? " -Qxcm_doubleGRF" : "";
         const auto print_reg_str = cm_params_.print_reg_usage ? " -mCM_printregusage" : "";
@@ -693,6 +736,11 @@ public:
         const auto lws_y = " -DLWS_SIZE_Y=" + std::to_string(cm_params_.lws[1]);
         const auto lws_z = " -DLWS_SIZE_Z=" + std::to_string(cm_params_.lws[2]);
         const auto build_options_final = " -I \" \" " + build_options + dump_asm_str + large_grf_str + print_reg_str + lws_x + lws_y + lws_z;
+
+        if (cm_params_.dump_asm)
+        {
+            std::cout << build_options_final << std::endl;
+        }
 
         auto kernel_source_content = []()
         {
@@ -805,7 +853,7 @@ public:
         }
         const auto gws_x = 1;
         const auto gws_y = 1;
-        const auto gws_z = 1;
+        const auto gws_z = params_.oc / cm_params_.oc_chunks_per_thread;
 
         const auto thg_x = gws_x / cm_params_.lws[0];
         const auto thg_y = gws_y / cm_params_.lws[1];

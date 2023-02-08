@@ -95,12 +95,12 @@ extern "C" _GENX_MAIN_ void convolution_nchw_1x1(
 {
     const uint global_id_x = cm_group_id(0) * cm_local_size(0) + cm_local_id(0);
     const uint global_id_y = cm_group_id(1) * cm_local_size(1) + cm_local_id(1);
-    const uint global_id_z = cm_group_id(2) * cm_local_size(2) + cm_local_id(2);
+    const uint oc_chunk_id = cm_group_id(2) * cm_local_size(2) + cm_local_id(2);
     
     const uint LOAD_W_SIZE = 8;
-    
+     
     uint32_t input_offset = 0;
-    const uint32_t input_dpas_ic_offset_size = INPUT_WIDTH * DPAS_INPUT_CHANNELS * sizeof(DT_IN);
+    const uint32_t input_dpas_ic_offset_size = INPUT_WIDTH * INPUT_HEIGHT * DPAS_INPUT_CHANNELS * sizeof(DT_IN);
     
     uint32_t weights_offset = 0;
     const uint weights_nchw_dpas_ic_offset_size = DPAS_INPUT_CHANNELS * sizeof(DT_WEIGHTS);
@@ -124,5 +124,10 @@ extern "C" _GENX_MAIN_ void convolution_nchw_1x1(
     }
     
     vector<DT_OUT, ACCU_REG_SIZE> output_row_0 = vector<DT_OUT, ACCU_REG_SIZE>(accu_row_0);
-    store_output_wc8_as_nchw<8>(surface_output, output_row_0, 0);  
+#if USE_BIAS
+#error ToDo: add support for use_bias case here.
+#endif 
+
+    uint32_t output_offset = oc_chunk_id * DPAS_OUTPUT_CHANNELS * OUTPUT_WIDTH * OUTPUT_HEIGHT * sizeof(DT_OUT);
+    store_output_wc8_as_nchw<8>(surface_output, output_row_0, output_offset);  
 }
