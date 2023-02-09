@@ -35,9 +35,9 @@ public:
             tensor_input_desc_.Flags = DML_TENSOR_FLAG_NONE;
             tensor_input_desc_.DimensionCount = static_cast<std::uint32_t>(input_dims.size());
             tensor_input_desc_.Sizes = input_dims.data();
+
             input_tensor_properites = tensor_policy.Get(tensor_input_desc_.DataType, tensor_input_desc_.Flags, input_dims);
-           // tensor_input_desc_.Strides = input_tensor_properites.strides.has_value() ? input_tensor_properites.strides->data() : nullptr;
-            tensor_input_desc_.Strides = nullptr;
+            tensor_input_desc_.Strides = input_tensor_properites.strides.has_value() ? input_tensor_properites.strides->data() : nullptr;
             tensor_input_desc_.TotalTensorSizeInBytes = input_tensor_properites.totalTensorSizeInBytes;
             tensor_input_desc_.GuaranteedBaseOffsetAlignment = input_tensor_properites.guaranteedBaseOffsetAlignment;
         }
@@ -45,11 +45,12 @@ public:
         dml::TensorProperties filter_tensor_properites{};
         {
             tensor_filter_desc_.DataType = data_type;
-            tensor_filter_desc_.Flags = DML_TENSOR_FLAG_NONE;
+            tensor_filter_desc_.Flags = DML_TENSOR_FLAG_NONE; // DML_TENSOR_FLAG_OWNED_BY_DML;
             tensor_filter_desc_.DimensionCount = static_cast<std::uint32_t>(filter_dims.size());
             tensor_filter_desc_.Sizes = filter_dims.data();
+
             filter_tensor_properites = tensor_policy.Get(tensor_filter_desc_.DataType, tensor_filter_desc_.Flags, filter_dims);
-            tensor_filter_desc_.Strides = nullptr;
+            tensor_filter_desc_.Strides = filter_tensor_properites.strides.has_value() ? filter_tensor_properites.strides->data() : nullptr;;
             tensor_filter_desc_.TotalTensorSizeInBytes = filter_tensor_properites.totalTensorSizeInBytes;
             tensor_filter_desc_.GuaranteedBaseOffsetAlignment = filter_tensor_properites.guaranteedBaseOffsetAlignment;
         }
@@ -63,7 +64,6 @@ public:
             bias_desc.DimensionCount = static_cast<std::uint32_t>(bias_dims.size());
             bias_desc.Sizes = bias_dims.data();
             bias_tensor_properites = tensor_policy.Get(bias_desc.DataType, bias_desc.Flags, bias_dims);
-            bias_desc.Strides = nullptr;
             bias_desc.TotalTensorSizeInBytes = bias_tensor_properites.totalTensorSizeInBytes;
             bias_desc.GuaranteedBaseOffsetAlignment = bias_tensor_properites.guaranteedBaseOffsetAlignment;
             tensor_bias_desc_.emplace(std::move(bias_desc));
@@ -77,8 +77,7 @@ public:
             tensor_out_desc_.Sizes = output_dims.data();
 
             output_tensor_properites = tensor_policy.Get(tensor_out_desc_.DataType, tensor_out_desc_.Flags, output_dims);
-            //tensor_out_desc_.Strides = output_tensor_properites.strides.has_value() ? output_tensor_properites.strides->data() : nullptr;
-            tensor_out_desc_.Strides = nullptr;
+            tensor_out_desc_.Strides = output_tensor_properites.strides.has_value() ? output_tensor_properites.strides->data() : nullptr;
             tensor_out_desc_.TotalTensorSizeInBytes = output_tensor_properites.totalTensorSizeInBytes;
             tensor_out_desc_.GuaranteedBaseOffsetAlignment = output_tensor_properites.guaranteedBaseOffsetAlignment;
         }

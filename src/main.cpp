@@ -606,6 +606,9 @@ public:
             opts->add_flag("--dump_asm", params.dump_asm)->default_val(false);
             opts->add_flag("--large_grf", params.large_grf)->default_val(false);
             opts->add_flag("--print_reg_usage", params.print_reg_usage)->default_val(false);
+            opts->add_option("--block_w", params.block_w);
+            opts->add_option("--block_h", params.block_h);
+            opts->add_option("--block_oc", params.block_oc);
             opts->add_option("--lws", params.lws)->delimiter(',');
         }
     };
@@ -859,9 +862,13 @@ public:
             cmd_list->SetComputeRootDescriptorTable(root_index++, gpu_heap_handle);
         }
 
-        const auto gws_x = output_sizes_.first / cm_params_.block_w;
-        const auto gws_y = output_sizes_.second / cm_params_.block_h;
+        const auto gws_x = round_up_next_multiple(output_sizes_.first, cm_params_.block_w) / cm_params_.block_w;
+        const auto gws_y = round_up_next_multiple(output_sizes_.second, cm_params_.block_h) / cm_params_.block_h;
         const auto gws_z = params_.oc / cm_params_.block_oc;
+
+        assert(gws_x % cm_params_.lws[0] == 0);
+        assert(gws_y % cm_params_.lws[1] == 0);
+        assert(gws_z % cm_params_.lws[2] == 0);
 
         const auto thg_x = gws_x / cm_params_.lws[0];
         const auto thg_y = gws_y / cm_params_.lws[1];

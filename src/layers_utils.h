@@ -26,3 +26,9 @@ enum class DataLayout
     eNHWC = 1,
     eCount
 };
+
+template<typename T>
+inline constexpr T round_up_next_multiple(T N, T M) 
+{
+    return ((N + M - 1) / M) * M;
+}
