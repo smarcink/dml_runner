@@ -39,6 +39,40 @@
 #define CONV_LOOP_COUNT (INPUT_CHANNELS/DPAS_INPUT_CHANNELS)
 
 #define WEIGHTS_REG_SIZE (DPAS_INPUT_CHANNELS * DPAS_OUTPUT_CHANNELS)
+#define WEIGHTS_IC_OFSET sizeof(DT_WEIGHTS)
+#define WEIGHTS_OC_OFSET (INPUT_CHANNELS * sizeof(DT_WEIGHTS))
+
+#define INPUT_NCHW_PLANE_SIZE (INPUT_WIDTH * INPUT_HEIGHT * sizeof(DT_IN))
+#define OUTPUT_NCHW_PLANE_SIZE (OUTPUT_WIDTH * OUTPUT_HEIGHT * sizeof(DT_OUT))
+
+static const uint32_t input_init_offsets[] = {
+                                            0 * INPUT_NCHW_PLANE_SIZE, 1 * INPUT_NCHW_PLANE_SIZE,
+                                            2 * INPUT_NCHW_PLANE_SIZE, 3 * INPUT_NCHW_PLANE_SIZE,
+                                            4 * INPUT_NCHW_PLANE_SIZE, 5 * INPUT_NCHW_PLANE_SIZE,
+                                            6 * INPUT_NCHW_PLANE_SIZE, 7 * INPUT_NCHW_PLANE_SIZE,
+                                            8 * INPUT_NCHW_PLANE_SIZE, 9 * INPUT_NCHW_PLANE_SIZE,
+                                            10 * INPUT_NCHW_PLANE_SIZE, 11 * INPUT_NCHW_PLANE_SIZE,
+                                            12 * INPUT_NCHW_PLANE_SIZE, 13 * INPUT_NCHW_PLANE_SIZE,
+                                            14 * INPUT_NCHW_PLANE_SIZE,15 * INPUT_NCHW_PLANE_SIZE,
+                                            };
+
+static const uint32_t output_init_offsets[] = {
+                                            0 * OUTPUT_NCHW_PLANE_SIZE, 1 * OUTPUT_NCHW_PLANE_SIZE,
+                                            2 * OUTPUT_NCHW_PLANE_SIZE, 3 * OUTPUT_NCHW_PLANE_SIZE,
+                                            4 * OUTPUT_NCHW_PLANE_SIZE, 5 * OUTPUT_NCHW_PLANE_SIZE,
+                                            6 * OUTPUT_NCHW_PLANE_SIZE, 7 * OUTPUT_NCHW_PLANE_SIZE,
+                                            };
+
+static const uint32_t weights_init_offsets[] = {
+                                                0 * WEIGHTS_OC_OFSET, 0 * WEIGHTS_OC_OFSET + WEIGHTS_IC_OFSET,
+                                                1 * WEIGHTS_OC_OFSET, 1 * WEIGHTS_OC_OFSET + WEIGHTS_IC_OFSET,
+                                                2 * WEIGHTS_OC_OFSET, 2 * WEIGHTS_OC_OFSET + WEIGHTS_IC_OFSET,
+                                                3 * WEIGHTS_OC_OFSET, 3 * WEIGHTS_OC_OFSET + WEIGHTS_IC_OFSET,
+                                                4 * WEIGHTS_OC_OFSET, 4 * WEIGHTS_OC_OFSET + WEIGHTS_IC_OFSET,
+                                                5 * WEIGHTS_OC_OFSET, 5 * WEIGHTS_OC_OFSET + WEIGHTS_IC_OFSET,
+                                                6 * WEIGHTS_OC_OFSET, 6 * WEIGHTS_OC_OFSET + WEIGHTS_IC_OFSET,
+                                                7 * WEIGHTS_OC_OFSET, 7 * WEIGHTS_OC_OFSET + WEIGHTS_IC_OFSET,
+                                                };
 
 template<uint32_t LOAD_W>
 _GENX_ inline vector<DT_IN, BLOCK_W * DPAS_INPUT_CHANNELS> load_input_nchw_and_reorder_to_wc16(SurfaceIndex surface [[type("buffer_t")]], uint byte_offset)
@@ -48,25 +82,7 @@ _GENX_ inline vector<DT_IN, BLOCK_W * DPAS_INPUT_CHANNELS> load_input_nchw_and_r
     
     vector<DT_IN, BLOCK_W * DPAS_INPUT_CHANNELS> data_out;
     // non transposed scattered reads
-    vector<uint32_t, DPAS_INPUT_CHANNELS> offsets = 
-    {
-        0 * INPUT_WIDTH * INPUT_HEIGHT * sizeof(DT_IN),
-        1 * INPUT_WIDTH * INPUT_HEIGHT * sizeof(DT_IN),
-        2 * INPUT_WIDTH * INPUT_HEIGHT * sizeof(DT_IN),
-        3 * INPUT_WIDTH * INPUT_HEIGHT * sizeof(DT_IN),
-        4 * INPUT_WIDTH * INPUT_HEIGHT * sizeof(DT_IN),
-        5 * INPUT_WIDTH * INPUT_HEIGHT * sizeof(DT_IN),
-        6 * INPUT_WIDTH * INPUT_HEIGHT * sizeof(DT_IN),
-        7 * INPUT_WIDTH * INPUT_HEIGHT * sizeof(DT_IN),
-        8 * INPUT_WIDTH * INPUT_HEIGHT * sizeof(DT_IN),
-        9 * INPUT_WIDTH * INPUT_HEIGHT * sizeof(DT_IN),
-        10 * INPUT_WIDTH * INPUT_HEIGHT * sizeof(DT_IN),
-        11 * INPUT_WIDTH * INPUT_HEIGHT * sizeof(DT_IN),
-        12 * INPUT_WIDTH * INPUT_HEIGHT * sizeof(DT_IN),
-        13 * INPUT_WIDTH * INPUT_HEIGHT * sizeof(DT_IN),
-        14 * INPUT_WIDTH * INPUT_HEIGHT * sizeof(DT_IN),
-        15 * INPUT_WIDTH * INPUT_HEIGHT * sizeof(DT_IN),
-    };
+    vector<uint32_t, DPAS_INPUT_CHANNELS> offsets(input_init_offsets);
     offsets += byte_offset;
     #pragma unroll
     for(int i = 0; i < LOAD_W; i++)
@@ -87,20 +103,14 @@ _GENX_ inline vector<DT_IN, BLOCK_W * DPAS_INPUT_CHANNELS> load_input_nchw_and_r
     return data_out;
 }
 
-_GENX_ inline vector<DT_WEIGHTS, WEIGHTS_REG_SIZE> load_filter_nchw_data(SurfaceIndex surface [[type("buffer_t")]], uint byte_offset)
+_GENX_ inline vector<DT_WEIGHTS, WEIGHTS_REG_SIZE> load_filter_nchw_data(SurfaceIndex surface [[type("buffer_t")]], uint32_t byte_offset)
 {
     static_assert(KERNEL_SIZE == 1, "Weights loading in this kernel is implemented only for 1x1 weights size");
     const uint32_t PACKED_ELEMENT = sizeof(uint32_t)/ sizeof(DT_WEIGHTS);
     const uint32_t INPUT_CHANNELS_CHUNKS = DPAS_INPUT_CHANNELS / PACKED_ELEMENT;
     const uint32_t LOAD_SIZE = PACKED_ELEMENT * DPAS_OUTPUT_CHANNELS;
-    vector<uint32_t, LOAD_SIZE> offsets;
     
-    const uint32_t WEIGHTS_OC_OFSET = INPUT_CHANNELS * sizeof(DT_WEIGHTS);
-    for(int i = 0; i < 8; i++)
-    {
-        offsets[i * 2] = 0 + i * WEIGHTS_OC_OFSET;
-        offsets[i * 2 + 1] = 2 + i * WEIGHTS_OC_OFSET;
-    }
+    vector<uint32_t, LOAD_SIZE> offsets(weights_init_offsets);
     offsets += byte_offset;
 
     vector<DT_WEIGHTS, WEIGHTS_REG_SIZE> data_out;
@@ -117,17 +127,7 @@ template<uint32_t STORE_W>
 _GENX_ inline void store_output_wc8_as_nchw(SurfaceIndex surface [[type("buffer_t")]], vector_ref<DT_OUT, BLOCK_W * DPAS_OUTPUT_CHANNELS> grf_chunk, uint byte_offset)
 {    
     // non transposed scattered writes
-    vector<uint32_t, DPAS_OUTPUT_CHANNELS> offsets = 
-    {
-        0 * OUTPUT_WIDTH * OUTPUT_HEIGHT * sizeof(DT_OUT),
-        1 * OUTPUT_WIDTH * OUTPUT_HEIGHT * sizeof(DT_OUT),
-        2 * OUTPUT_WIDTH * OUTPUT_HEIGHT * sizeof(DT_OUT),
-        3 * OUTPUT_WIDTH * OUTPUT_HEIGHT * sizeof(DT_OUT),
-        4 * OUTPUT_WIDTH * OUTPUT_HEIGHT * sizeof(DT_OUT),
-        5 * OUTPUT_WIDTH * OUTPUT_HEIGHT * sizeof(DT_OUT),
-        6 * OUTPUT_WIDTH * OUTPUT_HEIGHT * sizeof(DT_OUT),
-        7 * OUTPUT_WIDTH * OUTPUT_HEIGHT * sizeof(DT_OUT),
-    };
+    vector<uint32_t, DPAS_OUTPUT_CHANNELS> offsets(output_init_offsets);
     offsets += byte_offset;
     #pragma unroll
     for(int i = 0; i < STORE_W; i++)
