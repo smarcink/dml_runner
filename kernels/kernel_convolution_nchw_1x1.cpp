@@ -9,6 +9,10 @@
 #error [Error_device_no_lsc] Kernel designed to use lsc. Current device does not support lsc.
 #endif
 
+#if(CM_GENX >= 1280)
+#error [Error_device_not_supported] Kernel is not designed for Xe2+ architecutre.
+#endif
+
 #if BLOCK_W > 8
 #error [Error_kernel_config_unsupported_block_w] Kernel designed to with with block_w in range: <1; 7>;
 #endif
@@ -85,12 +89,27 @@ _GENX_ inline vector<DT_IN, BLOCK_W * DPAS_INPUT_CHANNELS> load_input_nchw_and_r
 
 _GENX_ inline vector<DT_WEIGHTS, WEIGHTS_REG_SIZE> load_filter_nchw_data(SurfaceIndex surface [[type("buffer_t")]], uint byte_offset)
 {
-    const uint32_t LOAD_SIZE = WEIGHTS_REG_SIZE * sizeof(DT_WEIGHTS);
-    const uint32_t LOAD_SIZE_DWORDS = LOAD_SIZE / sizeof(uint32_t);
+    static_assert(KERNEL_SIZE == 1, "Weights loading in this kernel is implemented only for 1x1 weights size");
+    const uint32_t PACKED_ELEMENT = sizeof(uint32_t)/ sizeof(DT_WEIGHTS);
+    const uint32_t INPUT_CHANNELS_CHUNKS = DPAS_INPUT_CHANNELS / PACKED_ELEMENT;
+    const uint32_t LOAD_SIZE = PACKED_ELEMENT * DPAS_OUTPUT_CHANNELS;
+    vector<uint32_t, LOAD_SIZE> offsets;
     
+    const uint32_t WEIGHTS_OC_OFSET = INPUT_CHANNELS * sizeof(DT_WEIGHTS);
+    for(int i = 0; i < 8; i++)
+    {
+        offsets[i * 2] = 0 + i * WEIGHTS_OC_OFSET;
+        offsets[i * 2 + 1] = 2 + i * WEIGHTS_OC_OFSET;
+    }
+    offsets += byte_offset;
+
     vector<DT_WEIGHTS, WEIGHTS_REG_SIZE> data_out;
-    vector_ref<uint32_t, LOAD_SIZE_DWORDS> load_data_dword_view = data_out.format<uint32_t>(); 
-    load_data_dword_view = cm_load<uint32_t, LOAD_SIZE_DWORDS, DataSize::Default, CacheHint::Cached, CacheHint::Cached>(surface, byte_offset);   
+    #pragma unroll
+    for(int i = 0; i < INPUT_CHANNELS_CHUNKS; i++)
+    {
+        data_out.select<LOAD_SIZE, 1>(LOAD_SIZE * i) = cm_load<half, VectorSize::N1, DataSize::Default, CacheHint::Default, CacheHint::Default>(surface, offsets);     
+        offsets += PACKED_ELEMENT * sizeof(DT_WEIGHTS);
+    }
     return data_out;
 }
 
@@ -141,7 +160,8 @@ extern "C" _GENX_MAIN_ void convolution_nchw_1x1(
     const uint input_h_chunk_offset = h_chunk_id * BLOCK_H * input_row_offset_size;
     uint32_t input_offset = (input_h_chunk_offset + input_w_chunk_offset) * sizeof(DT_IN);
         
-    uint32_t weights_offset = 0;
+    const uint32_t weights_nchw_oc_offset_size = oc_chunk_id * BLOCK_OC * INPUT_CHANNELS * sizeof(DT_WEIGHTS);
+    uint32_t weights_offset = weights_nchw_oc_offset_size;
     const uint weights_nchw_dpas_ic_offset_size = DPAS_INPUT_CHANNELS * sizeof(DT_WEIGHTS);
     
     vector<DT_IN, BLOCK_W * DPAS_INPUT_CHANNELS> input_row_0 = load_input_nchw_and_reorder_to_wc16<BLOCK_W>(surface_input, input_offset);
