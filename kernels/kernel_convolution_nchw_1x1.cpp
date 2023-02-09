@@ -128,24 +128,25 @@ extern "C" _GENX_MAIN_ void convolution_nchw_1x1(
 	SurfaceIndex surface_output [[type("buffer_t")]]
 )
 {
-    const uint global_id_x = cm_group_id(0) * cm_local_size(0) + cm_local_id(0);
+    const uint w_chunk_id = cm_group_id(0) * cm_local_size(0) + cm_local_id(0);
     const uint h_chunk_id = cm_group_id(1) * cm_local_size(1) + cm_local_id(1);
     const uint oc_chunk_id = cm_group_id(2) * cm_local_size(2) + cm_local_id(2);
          
-    const uint32_t input_row_offset_size = INPUT_WIDTH * sizeof(DT_IN);
+    const uint32_t input_row_offset_size = INPUT_WIDTH;
     const uint32_t input_dpas_ic_offset_size = INPUT_HEIGHT * DPAS_INPUT_CHANNELS * input_row_offset_size;
     
+    const uint input_w_chunk_offset = w_chunk_id * BLOCK_W;
     const uint input_h_chunk_offset = h_chunk_id * BLOCK_H * input_row_offset_size;
-    uint32_t input_offset = input_h_chunk_offset;
+    uint32_t input_offset = (input_h_chunk_offset + input_w_chunk_offset) * sizeof(DT_IN);
         
     uint32_t weights_offset = 0;
     const uint weights_nchw_dpas_ic_offset_size = DPAS_INPUT_CHANNELS * sizeof(DT_WEIGHTS);
     
     vector<DT_IN, BLOCK_W * DPAS_INPUT_CHANNELS> input_row_0 = load_input_nchw_and_reorder_to_wc16<8>(surface_input, input_offset);
 #if BLOCK_H == 4
-    vector<DT_IN, BLOCK_W * DPAS_INPUT_CHANNELS> input_row_1 = load_input_nchw_and_reorder_to_wc16<BLOCK_W>(surface_input, input_offset + input_row_offset_size);
-    vector<DT_IN, BLOCK_W * DPAS_INPUT_CHANNELS> input_row_2 = load_input_nchw_and_reorder_to_wc16<BLOCK_W>(surface_input, input_offset + 2 * input_row_offset_size);
-    vector<DT_IN, BLOCK_W * DPAS_INPUT_CHANNELS> input_row_3 = load_input_nchw_and_reorder_to_wc16<BLOCK_W>(surface_input, input_offset + 3 * input_row_offset_size);
+    vector<DT_IN, BLOCK_W * DPAS_INPUT_CHANNELS> input_row_1 = load_input_nchw_and_reorder_to_wc16<BLOCK_W>(surface_input, input_offset + input_row_offset_size * sizeof(DT_IN));
+    vector<DT_IN, BLOCK_W * DPAS_INPUT_CHANNELS> input_row_2 = load_input_nchw_and_reorder_to_wc16<BLOCK_W>(surface_input, input_offset + 2 * input_row_offset_size * sizeof(DT_IN));
+    vector<DT_IN, BLOCK_W * DPAS_INPUT_CHANNELS> input_row_3 = load_input_nchw_and_reorder_to_wc16<BLOCK_W>(surface_input, input_offset + 3 * input_row_offset_size * sizeof(DT_IN));
 #endif
     vector<DT_WEIGHTS, WEIGHTS_REG_SIZE> weights_0 = load_filter_nchw_data(surface_weights, weights_offset);
     
@@ -163,7 +164,7 @@ extern "C" _GENX_MAIN_ void convolution_nchw_1x1(
     #pragma unroll
     for(int i = 1; i < CONV_LOOP_COUNT; i++)
     {
-        input_offset += input_dpas_ic_offset_size;
+        input_offset += (input_dpas_ic_offset_size * sizeof(DT_IN));
         weights_offset += weights_nchw_dpas_ic_offset_size;
         
         input_row_0 = load_input_nchw_and_reorder_to_wc16<8>(surface_input, input_offset);
@@ -191,14 +192,16 @@ extern "C" _GENX_MAIN_ void convolution_nchw_1x1(
 #error ToDo: add support for use_bias case here.
 #endif 
     
-    const uint output_row_offset_size = OUTPUT_WIDTH * sizeof(DT_OUT);
+    const uint output_row_offset_size = OUTPUT_WIDTH;
     const uint output_oc_chunk_offset = oc_chunk_id * DPAS_OUTPUT_CHANNELS * OUTPUT_HEIGHT * output_row_offset_size;
+    const uint output_w_chunk_offset = w_chunk_id * BLOCK_W;
     const uint output_h_chunk_offset = h_chunk_id * BLOCK_H * output_row_offset_size;
-    uint32_t output_offset = output_oc_chunk_offset + output_h_chunk_offset;
+    uint32_t output_offset = (output_oc_chunk_offset + output_h_chunk_offset + output_w_chunk_offset) * sizeof(DT_OUT);
+    
     store_output_wc8_as_nchw<8>(surface_output, output_row_0, output_offset);  
 #if BLOCK_H == 4
-    store_output_wc8_as_nchw<BLOCK_W>(surface_output, output_row_1, output_offset + output_row_offset_size);  
-    store_output_wc8_as_nchw<BLOCK_W>(surface_output, output_row_2, output_offset + 2 * output_row_offset_size);  
-    store_output_wc8_as_nchw<BLOCK_W>(surface_output, output_row_3, output_offset + 3 * output_row_offset_size);  
+    store_output_wc8_as_nchw<BLOCK_W>(surface_output, output_row_1, output_offset + output_row_offset_size * sizeof(DT_OUT));  
+    store_output_wc8_as_nchw<BLOCK_W>(surface_output, output_row_2, output_offset + 2 * output_row_offset_size * sizeof(DT_OUT));  
+    store_output_wc8_as_nchw<BLOCK_W>(surface_output, output_row_3, output_offset + 3 * output_row_offset_size * sizeof(DT_OUT));  
 #endif
 }
