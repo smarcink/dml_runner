@@ -385,8 +385,10 @@ public:
         }
         else if (params_.dt == DataType::eFp16)
         {
+            //fill_with_constant_linear_container_half(input_data_, DirectX::PackedVector::XMConvertFloatToHalf(1.0f));
             randomize_linear_container_half(random_generator, uniform_distribution, input_data_);
             randomize_linear_container_half(random_generator, uniform_distribution, filter_data_);
+            //fill_with_constant_linear_container_half(filter_data_, DirectX::PackedVector::XMConvertFloatToHalf(1.0f));
             if (use_bias())
             {
                 randomize_linear_container_half(random_generator, uniform_distribution, bias_data_);
