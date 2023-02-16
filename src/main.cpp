@@ -599,7 +599,7 @@ public:
         bool print_reg_usage;
         std::array<std::uint32_t, 3> lws{ 1u, 1u, 1u}; 
         std::uint32_t block_w = 8;
-        std::uint32_t block_h = 4;
+        std::uint32_t block_h = 1;
         std::uint32_t block_oc = 8;
 
         inline static void add_cli_options(CLI::App* opts, conv_cm_params_t& params)

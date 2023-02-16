@@ -21,6 +21,8 @@
 #error [Error_kernel_config_unsupported_block_h] Kernel designed to work with block_h = {1, 2}.
 #endif
 
+
+
 #define WIDTH_LEFTOVER (OUTPUT_WIDTH % BLOCK_W)
 #define HAS_LEFTOVER (WIDTH_LEFTOVER != 0)
 
@@ -29,9 +31,13 @@
 
 #define DT_OUT half
 #define DT_IN half
+#define DT_IN_SIZE 2 
 #define DT_WEIGHTS half
 // accu on DG2 have to be float for half dt inputs
 #define DT_ACCU float 
+
+#define DWORD_SIZE 4
+#define INPUT_WIDTH_ALIGNED_TO_DWORD ((INPUT_WIDTH * DT_IN_SIZE) % DWORD_SIZE == 0)
 
 #define DPAS_INPUT_CHANNELS (DPAS_DEPTH * sizeof(DT_IN))
 #define DPAS_OUTPUT_CHANNELS EXEC_SIZE
@@ -82,7 +88,7 @@ _GENX_ inline vector<DT_IN, BLOCK_W * DPAS_INPUT_CHANNELS> load_input_nchw_and_r
     const uint32_t LOAD_W_DWORDS = LOAD_W_BYTES_WIDTH / sizeof(uint32_t);
     
     vector<DT_IN, BLOCK_W * DPAS_INPUT_CHANNELS> data_out;
-#if BLOCK_W == 8
+#if INPUT_WIDTH_ALIGNED_TO_DWORD && BLOCK_W == 8
     #pragma unroll
     for(int i = 0; i < DPAS_INPUT_CHANNELS; i++)
     {
