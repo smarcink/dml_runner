@@ -3,7 +3,7 @@
 
 inline dnnl::memory create_dnnl_memory(const cpu_op::binding_t binding, dnnl::engine& engine)
 {
-    const auto dims = to_dnnl_dims(binding.dims);
+    const auto dims = to_dnnl_dims(binding.shape);
     const auto dt = to_dnnl_data_type(binding.dt);
     const auto ft = to_dnnl_format(binding.layout);
     return dnnl::memory({ dims, dt, ft }, engine);
@@ -19,7 +19,7 @@ std::vector<std::byte> cpu_op::convolution(const bindings_t& bindings, opts_t op
 
     dnnl::memory input_memory = [&](const auto& binding)
     {
-        const auto dims = to_dnnl_dims(binding.dims);
+        const auto dims = to_dnnl_dims(binding.shape);
         const auto dt = to_dnnl_data_type(binding.dt);
         const auto ft = to_dnnl_format(binding.layout);
         auto ret = dnnl::memory({ dims, dt, ft }, engine);
@@ -29,7 +29,7 @@ std::vector<std::byte> cpu_op::convolution(const bindings_t& bindings, opts_t op
 
     dnnl::memory filter_memory = [&](const auto& binding)
     {
-        const auto dims = to_dnnl_dims(binding.dims);
+        const auto dims = to_dnnl_dims(binding.shape);
         const auto dt = to_dnnl_data_type(binding.dt);
         auto ft = dnnl::memory::format_tag::undef;
         if (binding.layout == DataLayout::eNCHW)
@@ -53,7 +53,7 @@ std::vector<std::byte> cpu_op::convolution(const bindings_t& bindings, opts_t op
         {
             return dnnl::memory{};
         }
-        const auto dims = dnnl::memory::dims{ binding.dims[0] };
+        const auto dims = dnnl::memory::dims{ binding.shape.n };
         const auto dt = to_dnnl_data_type(binding.dt);
         const auto ft = dnnl::memory::format_tag::a;
         auto ret = dnnl::memory({ dims, dt, ft }, engine);
@@ -64,12 +64,7 @@ std::vector<std::byte> cpu_op::convolution(const bindings_t& bindings, opts_t op
 
     dnnl::memory output_memory = [&]()
     {
-        std::vector<std::uint32_t> output_dims;
-        output_dims.push_back(bindings.input.dims[0]);
-        output_dims.push_back(bindings.filter.dims[0]);
-        output_dims.push_back((bindings.input.dims[2] - bindings.filter.dims[2] + opts.inp_pad + opts.inp_pad) / opts.stride.h + 1);  // h
-        output_dims.push_back((bindings.input.dims[3] - bindings.filter.dims[3] + opts.inp_pad + opts.inp_pad) / opts.stride.w + 1);  // w
-        return create_dnnl_memory(binding_t{ nullptr, opts.out_dt, opts.out_layout, output_dims }, engine);
+        return create_dnnl_memory(binding_t{ nullptr, opts.out_dt, opts.out_layout, opts.output_shape }, engine);
     }();
 
 

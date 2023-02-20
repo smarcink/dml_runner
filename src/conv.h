@@ -7,27 +7,24 @@ namespace gpu_op
 class Convolution : public DirectMlBaseNode
 {
 public:
-    Convolution(const dml::TensorDimensions& input_dims, const dml::TensorDimensions& filter_dims,
+    Convolution(const TensorShape& input_shape, const TensorShape& filter_shape, const TensorShape& output_shape,
         const DML_TENSOR_DATA_TYPE data_type, const dml::TensorPolicy& tensor_policy,
         const TensorShape& stride_shape, std::uint32_t input_pad, std::uint32_t output_pad,
             bool use_bias, bool allow_fp16_computations, 
             IDMLDevice* dml_device, ID3D12Device* d3d12_device)
         : DirectMlBaseNode(dml_device, d3d12_device)
     {
+
+        const dml::TensorDimensions input_dims{ input_shape.n, input_shape.c, input_shape.h, input_shape.w };
+        const dml::TensorDimensions filter_dims{ filter_shape.n, filter_shape.c, filter_shape.h, filter_shape.w };
+        const dml::TensorDimensions output_dims{ output_shape.n, output_shape.c, output_shape.h, output_shape.w };
+        const dml::TensorDimensions bias_dims{ 1, output_shape.c, 1, 1 };
+
         const std::array<std::uint32_t, 2> strides = { stride_shape.h, stride_shape.w };
         const std::vector<std::uint32_t> dilations = { 0u, 0u };
         const std::vector<std::uint32_t> start_pad = { input_pad, input_pad };
         const std::vector<std::uint32_t> end_pad = { input_pad, input_pad };
         const std::vector<std::uint32_t> out_pad = { output_pad, output_pad };
-
-        const dml::TensorDimensions bias_dims {1, filter_dims[0], 1, 1 };
-
-        const dml::TensorDimensions output_dims{
-            input_dims[0],
-            filter_dims[0],
-            (input_dims[2] - filter_dims[2] + start_pad[0] + end_pad[0]) / strides[0] + 1,
-            (input_dims[3] - filter_dims[3] + start_pad[1] + end_pad[1]) / strides[1] + 1,
-        };
 
         dml::TensorProperties input_tensor_properites{};
         {
@@ -209,7 +206,7 @@ struct binding_t
     const std::byte* data = nullptr;
     DataType dt = DataType::eCount;
     DataLayout layout = DataLayout::eCount;
-    std::vector<std::uint32_t> dims;
+    TensorShape shape;
 };
 
 struct bindings_t
@@ -224,6 +221,7 @@ struct opts_t
     std::uint32_t inp_pad;
     std::uint32_t out_pad;
     TensorShape stride;
+    TensorShape output_shape;
 
     DataType out_dt = DataType::eCount;
     DataLayout out_layout = DataLayout::eCount;

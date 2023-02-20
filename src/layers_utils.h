@@ -16,6 +16,12 @@ struct TensorShape
     std::uint32_t w = 0;
 
     TensorShape() = default;
+
+    TensorShape(std::uint32_t n, std::uint32_t c, std::uint32_t h, std::uint32_t w)
+        : n(n), c(c), h(h), w(w)
+    {
+    }
+
     TensorShape(std::span<std::uint32_t> in_v)
     {
         assert((in_v.size() == 2 || in_v.size() == 4 || in_v.size() == 5) && "Not supported shape!");
@@ -34,6 +40,17 @@ struct TensorShape
         assert(current_idx == -1 && "Current idex should be equal -1 (parsed all dimensions).");
     }
 
+    inline std::size_t get_elements_count() const
+    {
+        std::size_t acc = 1;
+        acc *= n ? n : 1;
+        acc *= c ? c : 1;
+        acc *= d ? d : 1;
+        acc *= h ? h : 1;
+        acc *= w ? w : 1;
+        return acc;
+    }
+
     //friend std::istream& operator>>(std::istream& input, TensorShape& ts) {
     //    std::vector<std::uint32_t> data;
     //    constexpr const auto buffer_size = 128;
@@ -46,6 +63,7 @@ struct TensorShape
     //    return input;
     //}
 };
+
 
 enum class DataType
 {
