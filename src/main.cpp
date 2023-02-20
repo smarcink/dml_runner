@@ -337,7 +337,7 @@ public:
         std::uint32_t in_pad;
         std::uint32_t out_pad;
         std::uint32_t kernel_size;
-        std::uint32_t stride;
+        std::array<std::uint32_t, 2> stride;
         bool no_bias = false;
         bool allow_fp16_computations = false;
 
@@ -353,7 +353,7 @@ public:
             opts->add_option("--in_pad", params.in_pad)->required();
             opts->add_option("--out_pad", params.out_pad)->required();
             opts->add_option("--kernel_size", params.kernel_size)->required();
-            opts->add_option("--stride", params.stride)->required();
+            opts->add_option("--stride", params.stride, "speciify list: <stride_h, stride_w>")->delimiter(',')->required()->check(CLI::PositiveNumber);
             opts->add_flag("--no_bias", params.no_bias);
             opts->add_flag("--allow_fp16_computations", params.allow_fp16_computations);
 
@@ -494,8 +494,8 @@ public:
 protected:
     inline std::pair<std::uint32_t, std::uint32_t> get_output_sizes() const
     {
-        const auto out_width = (params_.in_width - params_.kernel_size + params_.in_pad + params_.in_pad) / params_.stride + 1;
-        const auto out_height = (params_.in_height - params_.kernel_size + params_.in_pad + params_.in_pad) / params_.stride + 1;
+        const auto out_width = (params_.in_width - params_.kernel_size + params_.in_pad + params_.in_pad) / params_.stride[1] + 1;
+        const auto out_height = (params_.in_height - params_.kernel_size + params_.in_pad + params_.in_pad) / params_.stride[0] + 1;
         return { out_width, out_height };
     }
 
@@ -511,7 +511,7 @@ protected:
             bindings.input.data = input_data_.data();
             bindings.input.dt = params_.dt;
             bindings.input.layout = params_.layout;
-            bindings.input.dims = { params_.batch, params_.ic, params_.in_width, params_.in_height };
+            bindings.input.dims = { params_.batch, params_.ic, params_.in_height, params_.in_width };
         }
 
         {
@@ -558,7 +558,7 @@ public:
     ConvolutionDirectMLDispatcher(create_params_t&& params, ID3D12Device* d3d12_device, IDMLDevice* dml_device, IDMLCommandRecorder* dml_cmd_recorder, ID3D12GraphicsCommandList* cmd_list)
         : ConvolutionBaseDispatcher(std::move(params), d3d12_device, cmd_list)
         , dml_cmd_recorder_(dml_cmd_recorder)
-        , conv_(dml::TensorDimensions{params_.batch, params_.ic, params_.in_width, params_.in_height},
+        , conv_(dml::TensorDimensions{params_.batch, params_.ic, params_.in_height, params_.in_width },
             dml::TensorDimensions{ params_.oc, params_.ic, params_.kernel_size, params_.kernel_size},
             to_dml_data_type(params_.dt), to_dml_tensor_policy(params_.layout),
             params_.stride, params_.in_pad, params_.out_pad, !params_.no_bias, params_.allow_fp16_computations,
@@ -733,7 +733,8 @@ public:
         add_define("OUTPUT_PAD", params_.out_pad);
         add_define("USE_BIAS", !params_.no_bias);
         add_define("KERNEL_SIZE", params_.kernel_size);
-        add_define("STRIDE", params_.stride);
+        add_define("STRIDE_W", params_.stride[0]);
+        add_define("STRIDE_H", params_.stride[1]);
 
         add_define("BLOCK_W", cm_params_.block_w);
         add_define("BLOCK_H", cm_params_.block_h);
@@ -862,9 +863,10 @@ public:
             const auto gpu_heap_handle = gpu_handles_[i];
             cmd_list->SetComputeRootDescriptorTable(root_index++, gpu_heap_handle);
         }
-
-        const auto gws_x = round_up_next_multiple(output_sizes_.first, cm_params_.block_w) / cm_params_.block_w;
-        const auto gws_y = round_up_next_multiple(output_sizes_.second, cm_params_.block_h) / cm_params_.block_h;
+        const auto block_w_strided = cm_params_.block_w * params_.stride[1];
+        const auto gws_x = round_up_next_multiple(output_sizes_.first, block_w_strided) / block_w_strided;
+        const auto block_h_strided = cm_params_.block_h * params_.stride[0];
+        const auto gws_y = round_up_next_multiple(output_sizes_.second, block_h_strided) / block_h_strided;
         const auto gws_z = params_.oc / cm_params_.block_oc;
 
         assert(gws_x % cm_params_.lws[0] == 0);
