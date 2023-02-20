@@ -755,7 +755,7 @@ public:
 
         auto kernel_source_content = []()
         {
-            const auto path = "kernel_convolution_nchw_1x1.cpp";
+            const auto path = "conv_1x1_nchw_b1_fp16.cpp";
             std::fstream file(path);
             if (!file.is_open())
             {
