@@ -9,11 +9,12 @@ class Convolution : public DirectMlBaseNode
 public:
     Convolution(const dml::TensorDimensions& input_dims, const dml::TensorDimensions& filter_dims,
         const DML_TENSOR_DATA_TYPE data_type, const dml::TensorPolicy& tensor_policy,
-        std::array<std::uint32_t, 2> strides, std::uint32_t input_pad, std::uint32_t output_pad,
+        const TensorShape& stride_shape, std::uint32_t input_pad, std::uint32_t output_pad,
             bool use_bias, bool allow_fp16_computations, 
             IDMLDevice* dml_device, ID3D12Device* d3d12_device)
         : DirectMlBaseNode(dml_device, d3d12_device)
     {
+        const std::array<std::uint32_t, 2> strides = { stride_shape.h, stride_shape.w };
         const std::vector<std::uint32_t> dilations = { 0u, 0u };
         const std::vector<std::uint32_t> start_pad = { input_pad, input_pad };
         const std::vector<std::uint32_t> end_pad = { input_pad, input_pad };
@@ -222,7 +223,7 @@ struct opts_t
 {
     std::uint32_t inp_pad;
     std::uint32_t out_pad;
-    std::array<std::uint32_t,2 > stride;
+    TensorShape stride;
 
     DataType out_dt = DataType::eCount;
     DataLayout out_layout = DataLayout::eCount;

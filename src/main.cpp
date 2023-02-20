@@ -18,6 +18,26 @@
 #include "CLI/Formatter.hpp"
 #include "CLI/Config.hpp"
 
+// the lexical cast operator should be in the same namespace as the type for ADL to work properly
+//bool lexical_cast(const std::string& input, Values<double>& /*v*/) {
+//    std::cout << "called correct lexical_cast function ! val: " << input << std::endl;
+//    return true;
+//}
+
+bool lexical_cast(const std::string& input, TensorShape& ts) {
+    std::vector<std::uint32_t> data;
+    constexpr const auto buffer_size = 128;
+    std::string line(buffer_size, ' ');
+    std::stringstream stream;
+    stream << input;
+    while(stream.getline(line.data(), buffer_size, ','))
+    {
+        data.push_back(std::stoi(line));
+    }
+    ts = TensorShape(data);
+    return true;
+}
+
 template<typename TimeType>
 inline void print_performance_stats(const std::vector<TimeType>& timings)
 {
@@ -329,6 +349,7 @@ public:
     {
         DataType dt;
         DataLayout layout;
+        TensorShape input_sizes;
         std::uint32_t batch;
         std::uint32_t ic;
         std::uint32_t oc;
@@ -337,7 +358,7 @@ public:
         std::uint32_t in_pad;
         std::uint32_t out_pad;
         std::uint32_t kernel_size;
-        std::array<std::uint32_t, 2> stride;
+        TensorShape stride;
         bool no_bias = false;
         bool allow_fp16_computations = false;
 
@@ -345,6 +366,7 @@ public:
         {
             add_data_type_cli_option(opts, "--data_type", params.dt)->required();
             add_data_layout_cli_option(opts, "--layout", params.layout)->required();
+            opts->add_option("--input_size", params.input_sizes)->required();
             opts->add_option("--batch", params.batch)->required();
             opts->add_option("--ic", params.ic)->required();
             opts->add_option("--oc", params.oc)->required();
@@ -353,7 +375,7 @@ public:
             opts->add_option("--in_pad", params.in_pad)->required();
             opts->add_option("--out_pad", params.out_pad)->required();
             opts->add_option("--kernel_size", params.kernel_size)->required();
-            opts->add_option("--stride", params.stride, "speciify list: <stride_h, stride_w>")->delimiter(',')->required()->check(CLI::PositiveNumber);
+            opts->add_option("--stride", params.stride, "speciify list: <stride_h, stride_w>")->required();
             opts->add_flag("--no_bias", params.no_bias);
             opts->add_flag("--allow_fp16_computations", params.allow_fp16_computations);
 
@@ -402,7 +424,7 @@ public:
         const auto tensor_input_bytes_width = input_data_.size();
         const auto tensor_filter_bytes_width = filter_data_.size();
         const auto tensor_bias_bytes_width = bias_data_.size();
-        const auto [out_width, out_height] = get_output_sizes();
+        const auto [out_height, out_width] = get_output_sizes();
         const auto tensor_out_bytes_width = params_.batch * params_.oc * out_height * out_width * get_data_type_bytes_width(params_.dt);
 
         upload_buffer_ = create_buffer(d3d12_device_, tensor_input_bytes_width + tensor_filter_bytes_width + tensor_bias_bytes_width,
@@ -494,9 +516,9 @@ public:
 protected:
     inline std::pair<std::uint32_t, std::uint32_t> get_output_sizes() const
     {
-        const auto out_width = (params_.in_width - params_.kernel_size + params_.in_pad + params_.in_pad) / params_.stride[1] + 1;
-        const auto out_height = (params_.in_height - params_.kernel_size + params_.in_pad + params_.in_pad) / params_.stride[0] + 1;
-        return { out_width, out_height };
+        const auto out_width = (params_.in_width - params_.kernel_size + params_.in_pad + params_.in_pad) / params_.stride.w + 1;
+        const auto out_height = (params_.in_height - params_.kernel_size + params_.in_pad + params_.in_pad) / params_.stride.h + 1;
+        return { out_height, out_width };
     }
 
     inline bool use_bias() const
@@ -723,7 +745,7 @@ public:
         add_define("INPUT_HEIGHT", params_.in_height);
         add_define("INPUT_CHANNELS", params_.ic);
 
-        const auto [out_width, out_height] = get_output_sizes();
+        const auto [out_height, out_width] = get_output_sizes();
         add_define("OUTPUT_WIDTH", out_width);
         add_define("OUTPUT_HEIGHT", out_height);
         add_define("OUTPUT_CHANNELS", params_.oc);
@@ -733,8 +755,8 @@ public:
         add_define("OUTPUT_PAD", params_.out_pad);
         add_define("USE_BIAS", !params_.no_bias);
         add_define("KERNEL_SIZE", params_.kernel_size);
-        add_define("STRIDE_W", params_.stride[0]);
-        add_define("STRIDE_H", params_.stride[1]);
+        add_define("STRIDE_W", params_.stride.w);
+        add_define("STRIDE_H", params_.stride.h);
 
         add_define("BLOCK_W", cm_params_.block_w);
         add_define("BLOCK_H", cm_params_.block_h);
@@ -863,10 +885,9 @@ public:
             const auto gpu_heap_handle = gpu_handles_[i];
             cmd_list->SetComputeRootDescriptorTable(root_index++, gpu_heap_handle);
         }
-        const auto block_w_strided = cm_params_.block_w * params_.stride[1];
-        const auto gws_x = round_up_next_multiple(output_sizes_.first, block_w_strided) / block_w_strided;
-        const auto block_h_strided = cm_params_.block_h * params_.stride[0];
-        const auto gws_y = round_up_next_multiple(output_sizes_.second, block_h_strided) / block_h_strided;
+
+        const auto gws_x = round_up_next_multiple(output_sizes_.second, cm_params_.block_w) / cm_params_.block_w;
+        const auto gws_y = round_up_next_multiple(output_sizes_.first, cm_params_.block_h) / cm_params_.block_h;
         const auto gws_z = params_.oc / cm_params_.block_oc;
 
         assert(gws_x % cm_params_.lws[0] == 0);
@@ -888,7 +909,7 @@ private:
     ComPtr<ID3D12PipelineState> pso_;
     ComPtr<ID3D12RootSignature> root_signature_;
 
-    std::pair<std::uint32_t, std::uint32_t> output_sizes_;
+    const std::pair<std::uint32_t, std::uint32_t> output_sizes_;
 };
 
 class SoftmaxDispatcher : public NodeDispatcher

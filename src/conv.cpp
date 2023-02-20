@@ -67,14 +67,14 @@ std::vector<std::byte> cpu_op::convolution(const bindings_t& bindings, opts_t op
         std::vector<std::uint32_t> output_dims;
         output_dims.push_back(bindings.input.dims[0]);
         output_dims.push_back(bindings.filter.dims[0]);
-        output_dims.push_back((bindings.input.dims[2] - bindings.filter.dims[2] + opts.inp_pad + opts.inp_pad) / opts.stride[0] + 1);  // h
-        output_dims.push_back((bindings.input.dims[3] - bindings.filter.dims[3] + opts.inp_pad + opts.inp_pad) / opts.stride[1] + 1);  // w
+        output_dims.push_back((bindings.input.dims[2] - bindings.filter.dims[2] + opts.inp_pad + opts.inp_pad) / opts.stride.h + 1);  // h
+        output_dims.push_back((bindings.input.dims[3] - bindings.filter.dims[3] + opts.inp_pad + opts.inp_pad) / opts.stride.w + 1);  // w
         return create_dnnl_memory(binding_t{ nullptr, opts.out_dt, opts.out_layout, output_dims }, engine);
     }();
 
 
     const dnnl::memory::dims pad{ opts.inp_pad, opts.inp_pad };
-    const dnnl::memory::dims stride{ opts.stride[0], opts.stride[1]};
+    const dnnl::memory::dims stride{ opts.stride.h, opts.stride.w };
     const dnnl::convolution_forward::primitive_desc conv_desc(engine,
         dnnl::prop_kind::forward_inference, dnnl::algorithm::convolution_direct,
         input_memory.get_desc(), filter_memory.get_desc(), bindings.bias.data ? bias_memory.get_desc() : dnnl::memory::desc{}, output_memory.get_desc(), stride, pad, pad);

@@ -1,1 +1,0 @@
---type=conv --iters=100 conv_opts --batch=1 --ic=128 --oc=128 --in_width 256 --in_height=256 --in_pad=0 --out_pad=0 --kernel_size=1 --stride=1 --data_type=fp16 --layout=nchw --no_bias

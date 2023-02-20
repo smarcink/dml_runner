@@ -84,7 +84,8 @@ static const uint32_t weights_init_offsets[] = {
 template<uint32_t LOAD_W>
 _GENX_ inline vector<DT_IN, BLOCK_W * DPAS_INPUT_CHANNELS> load_input_nchw_and_reorder_to_wc16(SurfaceIndex surface [[type("buffer_t")]], uint byte_offset)
 {
-    const uint32_t LOAD_W_BYTES_WIDTH = LOAD_W * sizeof(DT_IN);
+    const uint32_t LOAD_W_WIDTH = LOAD_W * STRIDE_W;
+    const uint32_t LOAD_W_BYTES_WIDTH = LOAD_W_WIDTH * sizeof(DT_IN);
     const uint32_t LOAD_W_DWORDS = LOAD_W_BYTES_WIDTH / sizeof(uint32_t);
     
     vector<DT_IN, BLOCK_W * DPAS_INPUT_CHANNELS> data_out;
@@ -92,9 +93,9 @@ _GENX_ inline vector<DT_IN, BLOCK_W * DPAS_INPUT_CHANNELS> load_input_nchw_and_r
     #pragma unroll
     for(int i = 0; i < DPAS_INPUT_CHANNELS; i++)
     {
-        vector<uint32_t, 4> load_chunk = cm_load<uint32_t, 4, DataSize::Default, CacheHint::Cached, CacheHint::Cached>(surface, byte_offset);
-        vector<half, BLOCK_W> load_chunk_typed = load_chunk.format<half>();  
-        data_out.select<BLOCK_W, DPAS_INPUT_CHANNELS>(i) = load_chunk_typed;
+        vector<uint32_t, LOAD_W_DWORDS> load_chunk = cm_load<uint32_t, LOAD_W_DWORDS, DataSize::Default, CacheHint::Cached, CacheHint::Cached>(surface, byte_offset);
+        vector<half, LOAD_W_WIDTH> load_chunk_typed = load_chunk.format<half>();  
+        data_out.select<BLOCK_W, DPAS_INPUT_CHANNELS>(i) = load_chunk_typed.select<LOAD_W, STRIDE_W>();
         byte_offset += INPUT_NCHW_PLANE_SIZE;
     }  
 #else
@@ -208,8 +209,8 @@ extern "C" _GENX_MAIN_ void convolution_nchw_1x1(
     const uint32_t input_row_offset_size = INPUT_WIDTH;
     const uint32_t input_dpas_ic_offset_size = INPUT_HEIGHT * DPAS_INPUT_CHANNELS * input_row_offset_size;
     
-    const uint input_w_chunk_offset = w_chunk_id * BLOCK_W;
-    const uint input_h_chunk_offset = h_chunk_id * BLOCK_H * input_row_offset_size;
+    const uint input_w_chunk_offset = w_chunk_id * BLOCK_W * STRIDE_W;
+    const uint input_h_chunk_offset = h_chunk_id * BLOCK_H * STRIDE_H * input_row_offset_size;
     uint32_t input_offset = (input_h_chunk_offset + input_w_chunk_offset) * sizeof(DT_IN);
         
       
