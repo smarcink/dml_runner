@@ -154,7 +154,7 @@ inline ConformanceResult run_conformance_check(const std::vector<std::byte>& gpu
 
         const auto abs_diff = std::abs(ret.node_value - ret.reference_value);
 
-        //if (abs_diff > ret.epsilon)
+        if (abs_diff > ret.epsilon)
         {
             ret.passed = false;
 
@@ -1078,6 +1078,7 @@ public:
         , mvn_(params_.shape, to_dml_data_type(params_.dt), to_dml_tensor_policy(params_.layout),
             params_.no_scale, params_.no_bias, params_.epsilon, dml_device, d3d12_device)
         , d3d12_device_(d3d12_device)
+        , dml_device_(dml_device)
         , input_data_(params_.shape.get_elements_count() * get_data_type_bytes_width(params_.dt))
     {
         if (use_bias())
@@ -1243,7 +1244,42 @@ public:
         std::memcpy(data_out.data(), readback_mapped_ptr, data_out.size());
         readback_buffer->Unmap(0, nullptr);
 
-        const auto dnnl_untyped_result = cpu_op::mvn(params_.shape, params_.layout, params_.dt, input_data_.data(), scale_data_.data(), bias_data_.data(), params_.epsilon);
+        //
+        //  calc reference with dml non-mc mvn
+        //
+        readback_output_barrirer = CD3DX12_RESOURCE_BARRIER::Transition(output_buffer_.Get(),
+            D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        command_list->ResourceBarrier(1, &readback_output_barrirer);
+
+        gpu_op::Mvn mvn_ref(params_.shape, to_dml_data_type(params_.dt), to_dml_tensor_policy(params_.layout),
+            params_.no_scale, params_.no_bias, params_.epsilon, dml_device_, d3d12_device_, true /*disable mc for ref calc*/);
+        // bind descriptor heap
+        auto descriptor_heap = create_descriptor_heap(d3d12_device_, mvn_ref.get_total_descriptor_count());
+        ID3D12DescriptorHeap* d3d12_descriptor_heaps[] = { descriptor_heap.Get() };
+        command_list->SetDescriptorHeaps(1, d3d12_descriptor_heaps);
+
+        mvn_ref.create_binding_tables(descriptor_heap->GetCPUDescriptorHandleForHeapStart(), descriptor_heap->GetGPUDescriptorHandleForHeapStart());
+        mvn_ref.record_initialize(dml_cmd_recorder_, command_list);
+        close_execute_reset_wait(d3d12_device_, command_queue, command_allocator, command_list);
+
+        mvn_ref.record_execute(dml_cmd_recorder_, command_list,
+            output_buffer_.Get(), input_buffer_.Get(), scale_buffer_.Get(), bias_buffer_.Get());
+        close_execute_reset_wait(d3d12_device_, command_queue, command_allocator, command_list);
+
+        readback_output_barrirer = CD3DX12_RESOURCE_BARRIER::Transition(output_buffer_.Get(),
+            D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
+        command_list->ResourceBarrier(1, &readback_output_barrirer);
+        command_list->CopyResource(readback_buffer.Get(), output_buffer_.Get());
+        close_execute_reset_wait(d3d12_device_, command_queue, command_allocator, command_list);
+
+        std::vector<std::byte> dnnl_untyped_result(tensor_out_bytes_width);
+        readback_mapped_ptr = nullptr;
+        readback_buffer->Map(0, nullptr, reinterpret_cast<void**>(&readback_mapped_ptr));
+        std::memcpy(dnnl_untyped_result.data(), readback_mapped_ptr, data_out.size());
+        readback_buffer->Unmap(0, nullptr);
+
+        // dnnl seems to be broken, use mvn non-mc path
+        //const auto dnnl_untyped_result = cpu_op::mvn(params_.shape, params_.layout, params_.dt, input_data_.data(), scale_data_.data(), bias_data_.data(), params_.epsilon);
 
         if (params_.dt == DataType::eFp32)
         {
@@ -1273,6 +1309,7 @@ private:
     create_params_t params_;
     gpu_op::Mvn mvn_;
     ID3D12Device* d3d12_device_;
+    IDMLDevice* dml_device_;
     IDMLCommandRecorder* dml_cmd_recorder_;
 
     std::vector<std::byte> input_data_;

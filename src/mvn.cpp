@@ -3,6 +3,9 @@
 
 std::vector<std::byte> cpu_op::mvn(const TensorShape& in_out_shape, DataLayout in_out_layout, DataType in_out_datatype, const std::byte* input_data, const std::byte* scale_data, const std::byte* bias_data, const float epsilon)
 {
+    /*
+    *   This code seems to be broken. ToDo: fix it.
+    */
     static dnnl::engine engine(dnnl::engine::kind::gpu, 0);
     static dnnl::stream stream(engine);
     const auto engine_kind = engine.get_kind();

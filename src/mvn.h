@@ -9,7 +9,7 @@ class Mvn : public DirectMlBaseNode
 public:
     Mvn(const TensorShape& shape, const DML_TENSOR_DATA_TYPE data_type, const dml::TensorPolicy& tensor_policy,
         bool no_scale, bool no_bias, float epsilon,
-        IDMLDevice* dml_device, ID3D12Device* d3d12_device)
+        IDMLDevice* dml_device, ID3D12Device* d3d12_device, bool disable_mc = false)
         : DirectMlBaseNode(dml_device, d3d12_device)
     {
         const dml::TensorDimensions input_dims{ shape.n, shape.c, shape.h, shape.w };
@@ -87,9 +87,16 @@ public:
         throw_if_failed(dml_device->CreateOperator(
             &dml_operator_desc, IID_PPV_ARGS(dml_operator_.ReleaseAndGetAddressOf())), "create softmax operator");
 
+        auto exec_flags = DML_EXECUTION_FLAG_NONE;
+        exec_flags |= DML_EXECUTION_FLAG_ALLOW_HALF_PRECISION_COMPUTATION;
+        if (disable_mc)
+        {
+            exec_flags |= DML_EXECUTION_FLAG_DISABLE_META_COMMANDS;
+        }
+
         throw_if_failed(dml_device->CompileOperator(
             dml_operator_.Get(),
-            DML_EXECUTION_FLAG_NONE,
+            exec_flags,
             IID_PPV_ARGS(dml_op_executor_.ReleaseAndGetAddressOf())), "create softmax compiled operator");
         create_operator_impl();
     }
