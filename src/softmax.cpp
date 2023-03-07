@@ -35,7 +35,7 @@ std::vector<std::byte> cpu_op::softmax(std::uint32_t axis, const std::byte* in_d
     stream.wait();
 
     auto* out_dnnl_data = output_memory.map_data<uint8_t>();
-    assert(out_dnnl_data != nullptr && "[dnnl][conv] Couldnt map output memory!");
+    assert(out_dnnl_data != nullptr && "[dnnl][softmax] Couldnt map output memory!");
 
     const auto om_desc = output_memory.get_desc();
     const auto om_dims = om_desc.get_dims();

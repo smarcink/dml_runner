@@ -2,6 +2,7 @@
 #include "gemm.h"
 #include "conv.h"
 #include "softmax.h"
+#include "mvn.h"
 #include "layers_utils.h"
 
 #include <iostream>
@@ -153,7 +154,7 @@ inline ConformanceResult run_conformance_check(const std::vector<std::byte>& gpu
 
         const auto abs_diff = std::abs(ret.node_value - ret.reference_value);
 
-        if (abs_diff > ret.epsilon)
+        //if (abs_diff > ret.epsilon)
         {
             ret.passed = false;
 
@@ -171,6 +172,7 @@ enum class NodeType
     eConvDml,
     eConvCm,
     eSoftmax,
+    eMvnDml,
     eCount
 };
 
@@ -1047,6 +1049,243 @@ private:
     ComPtr<ID3D12Resource> upload_buffer_;
 };
 
+
+class MvnDispatcher : public NodeDispatcher
+{
+public:
+    struct create_params_t
+    {
+        DataType dt;
+        DataLayout layout;
+        TensorShape shape;
+        bool no_scale = false;
+        bool no_bias = false;
+        float epsilon = 0.00005f;
+
+        inline static void add_cli_options(CLI::App* opts, create_params_t& params)
+        {
+            add_data_type_cli_option(opts, "--data_type", params.dt)->required();
+            add_data_layout_cli_option(opts, "--layout", params.layout)->required();
+            opts->add_option("--shape", params.shape, "shape: <n,c,h,w>")->required();
+            opts->add_flag("--no_scale", params.no_scale);
+            opts->add_flag("--no_bias", params.no_bias);
+        }
+    };
+public:
+    MvnDispatcher(create_params_t&& params, ID3D12Device* d3d12_device, IDMLDevice* dml_device, IDMLCommandRecorder* dml_cmd_recorder, ID3D12GraphicsCommandList* cmd_list)
+        : params_(std::move(params))
+        , dml_cmd_recorder_(dml_cmd_recorder)
+        , mvn_(params_.shape, to_dml_data_type(params_.dt), to_dml_tensor_policy(params_.layout),
+            params_.no_scale, params_.no_bias, params_.epsilon, dml_device, d3d12_device)
+        , d3d12_device_(d3d12_device)
+        , input_data_(params_.shape.get_elements_count() * get_data_type_bytes_width(params_.dt))
+    {
+        if (use_bias())
+        {
+            bias_data_.resize(params_.shape.c * get_data_type_bytes_width(params_.dt));
+        }
+        if (use_scale())
+        {
+            scale_data_.resize(params_.shape.c * get_data_type_bytes_width(params_.dt));
+        }
+
+        // randomize data
+        std::mt19937 random_generator(42); // static, create it once!
+        std::uniform_real_distribution<float> uniform_distribution(0.0f, 5.0f);
+
+        if (params_.dt == DataType::eFp32)
+        {
+            randomize_linear_container_float(random_generator, uniform_distribution, input_data_);
+            if (use_bias())
+            {
+                randomize_linear_container_float(random_generator, uniform_distribution, bias_data_);
+            }
+            if (use_scale())
+            {
+                randomize_linear_container_float(random_generator, uniform_distribution, scale_data_);
+            }
+        }
+        else if (params_.dt == DataType::eFp16)
+        {
+            randomize_linear_container_half(random_generator, uniform_distribution, input_data_);
+            //auto* ptr = reinterpret_cast<Half*>(input_data_.data());
+            //size_t idx = 0;
+            //ptr[idx++] = DirectX::PackedVector::XMConvertFloatToHalf(-1.0f);
+            //ptr[idx++] = DirectX::PackedVector::XMConvertFloatToHalf(0.0f);
+            //ptr[idx++] = DirectX::PackedVector::XMConvertFloatToHalf(1.0f);
+            //ptr[idx++] = DirectX::PackedVector::XMConvertFloatToHalf(2.0f);
+
+            //ptr[idx++] = DirectX::PackedVector::XMConvertFloatToHalf(2.0f);
+            //ptr[idx++] = DirectX::PackedVector::XMConvertFloatToHalf(3.0f);
+            //ptr[idx++] = DirectX::PackedVector::XMConvertFloatToHalf(4.0f);
+            //ptr[idx++] = DirectX::PackedVector::XMConvertFloatToHalf(5.0f);
+            if (use_bias())
+            {
+                //randomize_linear_container_half(random_generator, uniform_distribution, bias_data_);
+                fill_with_constant_linear_container_half(bias_data_, DirectX::PackedVector::XMConvertFloatToHalf(0.0f));
+            }
+            if (use_scale())
+            {
+                //randomize_linear_container_half(random_generator, uniform_distribution, scale_data_);
+                fill_with_constant_linear_container_half(scale_data_, DirectX::PackedVector::XMConvertFloatToHalf(1.0f));
+            }
+        }
+        else
+        {
+            assert(false && "Unsupported data type in convolution dispatcher!");
+        }
+
+        const auto tensor_input_bytes_width = input_data_.size();
+        const auto tensor_bias_bytes_width = bias_data_.size();
+        const auto tensor_scale_bytes_width = scale_data_.size();
+        const auto tensor_out_bytes_width = tensor_input_bytes_width;
+
+        upload_buffer_ = create_buffer(d3d12_device_, tensor_input_bytes_width + tensor_bias_bytes_width + tensor_scale_bytes_width,
+            D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ);
+        input_buffer_ = create_buffer(d3d12_device, tensor_input_bytes_width,
+            D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+        if (use_bias())
+        {
+            bias_buffer_ = create_buffer(d3d12_device, tensor_bias_bytes_width,
+                D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+        }
+        if (use_scale())
+        {
+            scale_buffer_ = create_buffer(d3d12_device, tensor_scale_bytes_width,
+                D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+        }
+        output_buffer_ = create_buffer(d3d12_device, tensor_out_bytes_width,
+            D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+
+
+        // copy data into buffer
+        std::byte* upload_mapped_ptr = nullptr;
+        upload_buffer_->Map(0, nullptr, reinterpret_cast<void**>(&upload_mapped_ptr));
+        std::size_t memcopy_offset = 0;
+        std::memcpy(upload_mapped_ptr, input_data_.data(), tensor_input_bytes_width);
+        memcopy_offset += tensor_input_bytes_width;
+        if (use_bias())
+        {
+            std::memcpy(upload_mapped_ptr + memcopy_offset, bias_data_.data(), tensor_bias_bytes_width);
+            memcopy_offset += tensor_bias_bytes_width;
+        }
+        if (use_scale())
+        {
+            std::memcpy(upload_mapped_ptr + memcopy_offset, scale_data_.data(), tensor_scale_bytes_width);
+            memcopy_offset += tensor_scale_bytes_width;
+        }
+        // unmap memory
+        upload_buffer_->Unmap(0, nullptr);
+
+        memcopy_offset = 0;
+        cmd_list->CopyBufferRegion(input_buffer_.Get(), 0, upload_buffer_.Get(), 0, tensor_input_bytes_width);
+        memcopy_offset += tensor_input_bytes_width;
+        if (use_bias())
+        {
+            cmd_list->CopyBufferRegion(bias_buffer_.Get(), 0, upload_buffer_.Get(), memcopy_offset, tensor_bias_bytes_width);
+            memcopy_offset += tensor_bias_bytes_width;
+        }
+        if (use_scale())
+        {
+            cmd_list->CopyBufferRegion(scale_buffer_.Get(), 0, upload_buffer_.Get(), memcopy_offset, tensor_scale_bytes_width);
+            memcopy_offset += tensor_scale_bytes_width;
+        }
+
+        std::vector<CD3DX12_RESOURCE_BARRIER> barriers;
+        barriers.push_back(CD3DX12_RESOURCE_BARRIER::Transition(input_buffer_.Get(),
+            D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_UNORDERED_ACCESS));
+        if (use_bias())
+        {
+            barriers.push_back(CD3DX12_RESOURCE_BARRIER::Transition(bias_buffer_.Get(),
+                D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_UNORDERED_ACCESS));
+        }
+        if (use_scale())
+        {
+            barriers.push_back(CD3DX12_RESOURCE_BARRIER::Transition(scale_buffer_.Get(),
+                D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_UNORDERED_ACCESS));
+        }
+        cmd_list->ResourceBarrier(static_cast<std::uint32_t>(barriers.size()), barriers.data());
+    }
+
+    std::uint32_t get_total_descriptor_count() override
+    {
+        return mvn_.get_total_descriptor_count();
+    }
+
+    void initialize(ID3D12GraphicsCommandList* cmd_list, D3D12_CPU_DESCRIPTOR_HANDLE cpu_handle, D3D12_GPU_DESCRIPTOR_HANDLE gpu_handle)
+    {
+        mvn_.create_binding_tables(cpu_handle, gpu_handle);
+        mvn_.record_initialize(dml_cmd_recorder_, cmd_list);
+    }
+
+    void execute(ID3D12GraphicsCommandList* cmd_list)
+    {
+        mvn_.record_execute(dml_cmd_recorder_, cmd_list,
+            output_buffer_.Get(), input_buffer_.Get(), scale_buffer_.Get(), bias_buffer_.Get());
+    }
+
+    ConformanceResult validate_conformance(ID3D12CommandQueue* command_queue,
+        ID3D12CommandAllocator* command_allocator, ID3D12GraphicsCommandList* command_list)
+    {
+        const auto tensor_out_bytes_width = output_buffer_->GetDesc().Width;
+
+        // readback data and validate
+        auto readback_buffer = create_buffer(d3d12_device_, tensor_out_bytes_width, D3D12_HEAP_TYPE_READBACK, D3D12_RESOURCE_STATE_COPY_DEST);
+        auto readback_output_barrirer = CD3DX12_RESOURCE_BARRIER::Transition(output_buffer_.Get(),
+            D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
+        command_list->ResourceBarrier(1, &readback_output_barrirer);
+        command_list->CopyResource(readback_buffer.Get(), output_buffer_.Get());
+        close_execute_reset_wait(d3d12_device_, command_queue, command_allocator, command_list);
+
+        std::vector<std::byte> data_out(tensor_out_bytes_width);
+        std::byte* readback_mapped_ptr = nullptr;
+        readback_buffer->Map(0, nullptr, reinterpret_cast<void**>(&readback_mapped_ptr));
+        std::memcpy(data_out.data(), readback_mapped_ptr, data_out.size());
+        readback_buffer->Unmap(0, nullptr);
+
+        const auto dnnl_untyped_result = cpu_op::mvn(params_.shape, params_.layout, params_.dt, input_data_.data(), scale_data_.data(), bias_data_.data(), params_.epsilon);
+
+        if (params_.dt == DataType::eFp32)
+        {
+            return run_conformance_check<float>(data_out, dnnl_untyped_result, 0.001f);
+        }
+        else if (params_.dt == DataType::eFp16)
+        {
+            return run_conformance_check<Half>(data_out, dnnl_untyped_result, 0.05f);
+        }
+        assert(false && "Unsupported output data type!");
+        ConformanceResult ret{};
+        return ret;
+    }
+
+protected:
+    inline bool use_bias() const
+    {
+        return !params_.no_bias;
+    }
+
+    inline bool use_scale() const
+    {
+        return !params_.no_scale;
+    }
+
+private:
+    create_params_t params_;
+    gpu_op::Mvn mvn_;
+    ID3D12Device* d3d12_device_;
+    IDMLCommandRecorder* dml_cmd_recorder_;
+
+    std::vector<std::byte> input_data_;
+    std::vector<std::byte> bias_data_;
+    std::vector<std::byte> scale_data_;
+
+    ComPtr<ID3D12Resource> input_buffer_;
+    ComPtr<ID3D12Resource> scale_buffer_;
+    ComPtr<ID3D12Resource> bias_buffer_;
+    ComPtr<ID3D12Resource> output_buffer_;
+    ComPtr<ID3D12Resource> upload_buffer_;
+};
+
 struct CliOptions
 {
     NodeType node_type = NodeType::eCount;
@@ -1057,6 +1296,7 @@ struct CliOptions
     GemmDispatcher::create_params_t gemm_opts{};
     ConvolutionBaseDispatcher::create_params_t conv_opts{};
     SoftmaxDispatcher::create_params_t softmax_opts{};
+    MvnDispatcher::create_params_t mvn_opts{};
 
     // specific for implementation
     ConvolutionCmDispatcher::conv_cm_params_t conv_cm_params{};
@@ -1069,12 +1309,13 @@ int main()
     CliOptions opts;
     CLI::App dml_runner_app{ "App to microbenchmark and developer dml kernels.", "DirectML runner." };
     dml_runner_app.add_option("--type", opts.node_type, "Name of the type of layer to run.")
-        ->required()->check(CLI::IsMember({ NodeType::eConvDml, NodeType::eConvCm , NodeType::eGemm, NodeType::eSoftmax }))->
+        ->required()->check(CLI::IsMember({ NodeType::eConvDml, NodeType::eConvCm , NodeType::eGemm, NodeType::eSoftmax, NodeType::eMvnDml }))->
         transform(CLI::Transformer(std::map<std::string, NodeType>{
             { "conv_dml", NodeType::eConvDml },
             { "conv_cm", NodeType::eConvCm },
             { "gemm", NodeType::eGemm },
-            { "softmax", NodeType::eSoftmax }
+            { "softmax", NodeType::eSoftmax },
+            { "mvn_dml", NodeType::eMvnDml },
     }, CLI::ignore_case, CLI::ignore_underscore));
     dml_runner_app.add_option("--iters", opts.dispatch_iterations, "How many iterations to run.")->check(CLI::Range(1u, MAX_ITERATIONS));
     dml_runner_app.add_flag("--no_conform", opts.no_conformance_check);
@@ -1086,6 +1327,8 @@ int main()
     ConvolutionBaseDispatcher::create_params_t::add_cli_options(conv_option_groups, opts.conv_opts);
     auto softmax_option_groups = dml_runner_app.add_subcommand("softmax_opts", "Options for softmax layer.");
     SoftmaxDispatcher::create_params_t::add_cli_options(softmax_option_groups, opts.softmax_opts);
+    auto mvn_option_groups = dml_runner_app.add_subcommand("mvn_opts", "Options for mvn layer.");
+    MvnDispatcher::create_params_t::add_cli_options(mvn_option_groups, opts.mvn_opts);
 
     // specific for implementation
     auto conv_cm_option_groups = dml_runner_app.add_subcommand("conv_cm_opts", "Options for convolution layer with CM implementation.");
@@ -1102,7 +1345,7 @@ int main()
     std::cout << std::format("Running app with config:\n {}", dumped_config);
 
     assert(opts.node_type != NodeType::eCount);
-    if ((opts.node_type == NodeType::eConvCm || opts.node_type == NodeType::eConvCm)
+    if ((opts.node_type == NodeType::eConvCm || opts.node_type == NodeType::eConvDml)
         && !conv_option_groups->parsed())
     {
         std::cout << "Convoltion options not set.\n";
@@ -1154,6 +1397,11 @@ int main()
         else if (opts.node_type == NodeType::eSoftmax)
         {
             node = std::make_unique<SoftmaxDispatcher>(std::move(opts.softmax_opts),
+                d3d12_device.Get(), dml_device.Get(), dml_command_recorder.Get(), command_list.Get());
+        }
+        else if (opts.node_type == NodeType::eMvnDml)
+        {
+            node = std::make_unique<MvnDispatcher>(std::move(opts.mvn_opts),
                 d3d12_device.Get(), dml_device.Get(), dml_command_recorder.Get(), command_list.Get());
         }
         else

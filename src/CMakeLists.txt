@@ -11,6 +11,8 @@ set(TARGET_SOURCES
     conv.cpp
     softmax.h
     softmax.cpp
+    mvn.h
+    mvn.cpp
 )
 
 add_executable(${TARGET_NAME} ${TARGET_SOURCES})
