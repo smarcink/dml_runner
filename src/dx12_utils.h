@@ -97,34 +97,42 @@ public:
     {
         assert(d3d12_device != nullptr);
 
-        // create extension    
-        throw_if_failed(INTC_LoadExtensionsLibrary(true), "Intel Plugin Extension ERROR: INTC_LoadExtensionsLibrary failed");
-
-
-        uint32_t supported_ext_version_count = 0;
-        throw_if_failed(INTC_D3D12_GetSupportedVersions(d3d12_device, nullptr, &supported_ext_version_count), "Intel Plugin Extension ERROR: GetSupportedVersions");
-
-        //Next, use returned value for supported_ext_version_count to allocate space for the supported extensions
-        std::vector<INTCExtensionVersion> supported_ext_versions(supported_ext_version_count);
-        const INTCExtensionVersion required_version = { 1,2,0 }; //version 1.2.0
-        INTCExtensionInfo intc_extension_info = {};
-
-        throw_if_failed(INTC_D3D12_GetSupportedVersions(d3d12_device, supported_ext_versions.data(), &supported_ext_version_count),
-            "Intel Plugin Extension ERROR: GetSupportedVersions");
-
-        for (uint32_t i = 0; i < supported_ext_version_count; i++)
+        try
         {
-            if ((supported_ext_versions[i].HWFeatureLevel >= required_version.HWFeatureLevel) &&
-                (supported_ext_versions[i].APIVersion >= required_version.APIVersion) &&
-                (supported_ext_versions[i].Revision >= required_version.Revision))
-            {
-                intc_extension_info.RequestedExtensionVersion = supported_ext_versions[i];
-                break;
-            }
-        }
+            // create extension    
+            throw_if_failed(INTC_LoadExtensionsLibrary(true), "Intel Plugin Extension ERROR: INTC_LoadExtensionsLibrary failed");
 
-        throw_if_failed(INTC_D3D12_CreateDeviceExtensionContext(d3d12_device, &ext_ctx_, &intc_extension_info, nullptr),
-            "Intel Plugin Extension ERROR: CreateExtensionContext failed");
+
+            uint32_t supported_ext_version_count = 0;
+            throw_if_failed(INTC_D3D12_GetSupportedVersions(d3d12_device, nullptr, &supported_ext_version_count), "Intel Plugin Extension ERROR: GetSupportedVersions");
+
+            //Next, use returned value for supported_ext_version_count to allocate space for the supported extensions
+            std::vector<INTCExtensionVersion> supported_ext_versions(supported_ext_version_count);
+            const INTCExtensionVersion required_version = { 1,2,0 }; //version 1.2.0
+            INTCExtensionInfo intc_extension_info = {};
+
+            throw_if_failed(INTC_D3D12_GetSupportedVersions(d3d12_device, supported_ext_versions.data(), &supported_ext_version_count),
+                "Intel Plugin Extension ERROR: GetSupportedVersions");
+
+            for (uint32_t i = 0; i < supported_ext_version_count; i++)
+            {
+                if ((supported_ext_versions[i].HWFeatureLevel >= required_version.HWFeatureLevel) &&
+                    (supported_ext_versions[i].APIVersion >= required_version.APIVersion) &&
+                    (supported_ext_versions[i].Revision >= required_version.Revision))
+                {
+                    intc_extension_info.RequestedExtensionVersion = supported_ext_versions[i];
+                    break;
+                }
+            }
+
+            throw_if_failed(INTC_D3D12_CreateDeviceExtensionContext(d3d12_device, &ext_ctx_, &intc_extension_info, nullptr),
+                "Intel Plugin Extension ERROR: CreateExtensionContext failed");
+
+        }
+        catch (...)
+        {
+            ext_ctx_ = nullptr;
+        }
     }
     IntelExtension(const IntelExtension& rhs) = delete;
     IntelExtension(IntelExtension&& rhs) 
