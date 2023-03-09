@@ -62,6 +62,7 @@ struct CliOptions
     // specific for implementation
     ConvolutionCmDispatcher::conv_cm_params_t conv_cm_params{};
     MvnCmDispatcher::mvn_cm_params_t mvn_cm_params{};
+    GemmCmDispatcher::cm_params_t gemm_cm_params{};
 };
 
 int main()
@@ -71,11 +72,12 @@ int main()
     CliOptions opts;
     CLI::App dml_runner_app{ "App to microbenchmark and developer dml kernels.", "DirectML runner." };
     dml_runner_app.add_option("--type", opts.node_type, "Name of the type of layer to run.")
-        ->required()->check(CLI::IsMember({ NodeType::eConvDml, NodeType::eConvCm , NodeType::eGemmDml, NodeType::eSoftmax, NodeType::eMvnDml, NodeType::eMvnCm }))->
+        ->required()->check(CLI::IsMember({ NodeType::eConvDml, NodeType::eConvCm, NodeType::eGemmDml, NodeType::eGemmCm, NodeType::eSoftmax, NodeType::eMvnDml, NodeType::eMvnCm }))->
         transform(CLI::Transformer(std::map<std::string, NodeType>{
             { "conv_dml", NodeType::eConvDml },
             { "conv_cm", NodeType::eConvCm },
             { "gemm_dml", NodeType::eGemmDml },
+            { "gemm_cm", NodeType::eGemmCm },
             { "softmax", NodeType::eSoftmax },
             { "mvn_dml", NodeType::eMvnDml },
             { "mvn_cm", NodeType::eMvnCm },
@@ -98,6 +100,8 @@ int main()
     ConvolutionCmDispatcher::conv_cm_params_t::add_cli_options(conv_cm_option_groups, opts.conv_cm_params);
     auto mvn_cm_option_groups = dml_runner_app.add_subcommand("mvn_cm_opts", "Options for mvn layer with CM implementation.");
     MvnCmDispatcher::mvn_cm_params_t::add_cli_options(mvn_cm_option_groups, opts.mvn_cm_params);
+    auto gemm_cm_option_groups = dml_runner_app.add_subcommand("gemm_cm_opts", "Options for gemm layer with CM implementation.");
+    GemmCmDispatcher::cm_params_t::add_cli_options(gemm_cm_option_groups, opts.gemm_cm_params);
 
     try {
         dml_runner_app.parse();
@@ -116,7 +120,7 @@ int main()
         std::cout << "Convoltion options not set.\n";
         return -1;
     }
-    if (opts.node_type == NodeType::eGemmDml && !gemm_option_groups->parsed())
+    if ((opts.node_type == NodeType::eGemmDml || opts.node_type == NodeType::eGemmCm) && !gemm_option_groups->parsed())
     {
         std::cout << "Gemm options not set.\n";
         return -1;
@@ -148,6 +152,11 @@ int main()
         {
             node = std::make_unique<GemmDmlDispatcher>(std::move(opts.gemm_opts), 
                 d3d12_device.Get(), dml_device.Get(), dml_command_recorder.Get(), command_list.Get());
+        }
+        else if (opts.node_type == NodeType::eGemmCm)
+        {
+            node = std::make_unique<GemmCmDispatcher>(std::move(opts.gemm_opts), std::move(opts.gemm_cm_params),
+                intel_extension_d3d12, d3d12_device.Get(), dml_device.Get(), dml_command_recorder.Get(), command_list.Get());
         }
         else if (opts.node_type == NodeType::eConvDml)
         {

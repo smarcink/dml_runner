@@ -8,6 +8,8 @@
 
 #include "dml_base_node.h"
 
+std::string to_string(const std::string& value) { return value; }
+
 namespace gpu_op
 {
 class Gemm : public DirectMlBaseNode
@@ -513,4 +515,174 @@ public:
 
 private:
     gpu_op::Gemm gemm_;
+};
+
+class GemmCmDispatcher : public GemmBaseDispatcher
+{
+public:
+    struct cm_params_t
+    {
+        bool dump_asm;
+        bool large_grf;
+        bool print_reg_usage;
+        std::array<std::uint32_t, 3> lws{ 1u, 1u, 1u };
+
+        inline static void add_cli_options(CLI::App* opts, cm_params_t& params)
+        {
+            opts->add_flag("--dump_asm", params.dump_asm)->default_val(false);
+            opts->add_flag("--large_grf", params.large_grf)->default_val(false);
+            opts->add_flag("--print_reg_usage", params.print_reg_usage)->default_val(false);
+        }
+    };
+
+public:
+    GemmCmDispatcher(create_params_t&& params, cm_params_t&& cm_params, IntelExtension& intc_ext, ID3D12Device* d3d12_device, IDMLDevice* dml_device, IDMLCommandRecorder* dml_cmd_recorder, ID3D12GraphicsCommandList* cmd_list)
+        : GemmBaseDispatcher(std::move(params), d3d12_device, dml_device, dml_cmd_recorder, cmd_list)
+        , intc_ext_(intc_ext)
+        , cm_params_(std::move(cm_params))
+    {
+        //validate
+        assert(params_.dt == DataType::eFp16);
+
+        {
+            std::vector< DescType> desc_list =
+            {
+                DescType::eSrv, // input a
+                DescType::eSrv, // input b
+                DescType::eUav // output
+            };
+            if (use_c_tensor())
+            {
+                desc_list.push_back(DescType::eSrv);
+            }
+            root_signature_ = create_root_signature(d3d12_device, desc_list);
+        }
+
+
+        // kernel jits
+        std::string build_options = "";
+        const std::string pre_jit = "-D";
+        const std::string post_jit = " ";
+        const std::string between_name_and_value = "=";
+
+        auto add_define = [&](const std::string& name, auto value) {
+            using namespace std;
+            std::string value_str;
+            if (std::is_floating_point<decltype(value)>::value)
+            {// to_*string precision is not enough to ensure good match betweeen GPU and CPU or pytorch execution results:
+                value_str = (std::stringstream() << std::setiosflags(std::ios_base::showpoint | std::ios_base::fixed) << std::setprecision((std::numeric_limits<decltype(value)>::max_digits10 + 1)) << value).str();
+            }
+            else
+            { // fine for other types:
+                value_str = to_string(value);
+            }
+
+            build_options += pre_jit + name + between_name_and_value + value_str + post_jit;
+        };
+
+        add_define("SIZE_B", params_.B);
+        add_define("SIZE_C", params_.C);
+        add_define("SIZE_K", params_.M);
+        add_define("SIZE_N", params_.K);
+
+        add_define("USE_C", use_c_tensor());
+
+        add_define("DT", "half");
+
+
+
+        // kernel compilation
+        const auto dump_asm_str = cm_params_.dump_asm ? " -mdump_asm" : "";
+        const auto large_grf_str = cm_params_.large_grf ? " -Qxcm_doubleGRF" : "";
+        const auto print_reg_str = cm_params_.print_reg_usage ? " -mCM_printregusage" : "";
+        const auto lws_x = " -DLWS_SIZE_X=" + std::to_string(cm_params_.lws[0]);
+        const auto lws_y = " -DLWS_SIZE_Y=" + std::to_string(cm_params_.lws[1]);
+        const auto lws_z = " -DLWS_SIZE_Z=" + std::to_string(cm_params_.lws[2]);
+        const auto build_options_final = " -I \" \" " + build_options + dump_asm_str + large_grf_str + print_reg_str + lws_x + lws_y + lws_z;
+
+        if (cm_params_.dump_asm)
+        {
+            std::cout << build_options_final << std::endl;
+        }
+
+        auto kernel_source_content = []()
+        {
+            const auto path = "gemm_nchw_fp16.cpp";
+            std::fstream file(path);
+            if (!file.is_open())
+            {
+                const auto msg = std::format("Kernel file cant be opened:{} \n.", path);
+                throw std::runtime_error(msg);
+            }
+            return std::string((std::istreambuf_iterator<char>(file)), (std::istreambuf_iterator<char>()));
+        }();
+
+        CD3DX12_SHADER_BYTECODE byte_code;
+        byte_code.pShaderBytecode = kernel_source_content.data();
+        byte_code.BytecodeLength = kernel_source_content.size();
+        pso_ = intc_ext_.create_pipeline(byte_code, build_options_final, root_signature_.Get());
+
+    }
+
+
+    std::uint32_t get_total_descriptor_count() override
+    {
+        // input_a, input_b, output
+        std::uint32_t descriptor_count = 3;
+        if (use_c_tensor())
+        {
+            descriptor_count++;
+        }
+        return descriptor_count;
+    }
+
+    void initialize(ID3D12GraphicsCommandList* cmd_list, D3D12_CPU_DESCRIPTOR_HANDLE cpu_handle, D3D12_GPU_DESCRIPTOR_HANDLE gpu_handle)
+    {
+
+        std::vector<std::pair<DescType, ID3D12Resource*>> resources_list;
+        resources_list.reserve(get_total_descriptor_count());
+        resources_list.push_back({ DescType::eSrv, input_buffer_a_.Get() });
+        resources_list.push_back({ DescType::eSrv, input_buffer_b_.Get() });
+        resources_list.push_back({ DescType::eUav, output_buffer_.Get() });
+        if (use_c_tensor())
+        {
+            resources_list.push_back({ DescType::eSrv, input_buffer_c_.Get() });
+        }
+
+        gpu_handles_ = create_resource_views_and_handles(d3d12_device_, resources_list, cpu_handle, gpu_handle);
+    }
+
+    void execute(ID3D12GraphicsCommandList* cmd_list)
+    {
+        cmd_list->SetComputeRootSignature(root_signature_.Get());
+        cmd_list->SetPipelineState(pso_.Get());
+
+        uint32_t root_index = 1; // start with 1, beacuse Cross compiler CM driver path needs that
+        for (uint32_t i = 0; i < gpu_handles_.size(); i++)
+        {
+            const auto gpu_heap_handle = gpu_handles_[i];
+            cmd_list->SetComputeRootDescriptorTable(root_index++, gpu_heap_handle);
+        }
+
+        const auto gws_x = 1;
+        const auto gws_y = 1;
+        const auto gws_z = 1;
+
+        assert(gws_x % cm_params_.lws[0] == 0);
+        assert(gws_y % cm_params_.lws[1] == 0);
+        assert(gws_z % cm_params_.lws[2] == 0);
+
+        const auto thg_x = gws_x / cm_params_.lws[0];
+        const auto thg_y = gws_y / cm_params_.lws[1];
+        const auto thg_z = gws_z / cm_params_.lws[2];
+        cmd_list->Dispatch(thg_x, thg_y, thg_z);
+    }
+
+private:
+    cm_params_t cm_params_;
+    IntelExtension& intc_ext_;
+    std::vector<CD3DX12_GPU_DESCRIPTOR_HANDLE> gpu_handles_;
+
+    ComPtr<ID3D12PipelineState> pso_;
+    ComPtr<ID3D12RootSignature> root_signature_;
 };
