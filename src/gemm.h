@@ -248,7 +248,7 @@ public:
         }
         // randomize data
         std::mt19937 random_generator(42); // static, create it once!
-        std::uniform_real_distribution<float> uniform_distribution(0.0f, 5.0f);
+        std::uniform_real_distribution<float> uniform_distribution(-0.5f, 0.5f);
 
         if (params_.dt == DataType::eFp32)
         {
@@ -582,8 +582,9 @@ public:
 
         add_define("SIZE_B", params_.B);
         add_define("SIZE_C", params_.C);
-        add_define("SIZE_K", params_.M);
-        add_define("SIZE_N", params_.K);
+        add_define("SIZE_M", params_.M);
+        add_define("SIZE_K", params_.K);
+        add_define("SIZE_N", params_.N);
 
         add_define("USE_C", use_c_tensor());
 
