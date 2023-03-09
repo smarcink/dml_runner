@@ -4,7 +4,9 @@
 #include <optional>
 #include <span>
 #include <format>
+#include <random>
 
+#include "layers_utils.h"
 
 namespace gpu_op
 {
@@ -209,3 +211,160 @@ void gemm(std::uint32_t M, std::uint32_t K, std::uint32_t N, float alpha, float 
     }
 }
 }
+
+
+
+class GemmDispatcher : public NodeDispatcher
+{
+public:
+    struct create_params_t
+    {
+        std::uint32_t M;
+        std::uint32_t K;
+        std::uint32_t N;
+
+        inline static void add_cli_options(CLI::App* opts, create_params_t& params)
+        {
+            opts->add_option("M", params.M)->required();
+            opts->add_option("K", params.K)->required();
+            opts->add_option("N", params.N)->required();
+        }
+    };
+public:
+    GemmDispatcher(create_params_t&& params, ID3D12Device* d3d12_device, IDMLDevice* dml_device, IDMLCommandRecorder* dml_cmd_recorder, ID3D12GraphicsCommandList* cmd_list)
+        : params_(std::move(params))
+        , dml_cmd_recorder_(dml_cmd_recorder)
+        , gemm_(dml::TensorDimensions{ 1, 1, params_.M, params_.K }, dml::TensorDimensions{ 1, 1, params_.K, params_.N }, dml_device, d3d12_device)
+        , d3d12_device_(d3d12_device)
+        , input_data_a_(params_.M* params_.K)
+        , input_data_b_(params_.K* params_.N)
+    {
+        const auto tensor_a_desc = gemm_.get_tensor_a_desc();
+        const auto tensor_b_desc = gemm_.get_tensor_b_desc();
+        const auto tensor_out_desc = gemm_.get_tensor_out_desc();
+        const auto tensor_a_bytes_width = tensor_a_desc.totalTensorSizeInBytes;
+        const auto tensor_b_bytes_width = tensor_b_desc.totalTensorSizeInBytes;
+        const auto tensor_out_bytes_width = tensor_out_desc.totalTensorSizeInBytes;
+
+
+        upload_buffer_ = create_buffer(d3d12_device, tensor_a_bytes_width + tensor_b_bytes_width, D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ);
+        input_buffer_a_ = create_buffer(d3d12_device, tensor_a_bytes_width,
+            D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+        input_buffer_b_ = create_buffer(d3d12_device, tensor_b_bytes_width,
+            D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+        output_buffer_ = create_buffer(d3d12_device, tensor_out_bytes_width,
+            D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+
+        // randomize data
+        std::mt19937 random_generator(42); // static, create it once!
+        std::uniform_real_distribution<float> uniform_distribution(-0.5f, 0.5f);
+
+        for (auto& a : input_data_a_)
+        {
+            a = uniform_distribution(random_generator);
+        }
+        for (auto& b : input_data_b_)
+        {
+            b = uniform_distribution(random_generator);
+        }
+
+        // copy data into buffer
+        std::byte* upload_mapped_ptr = nullptr;
+        upload_buffer_->Map(0, nullptr, reinterpret_cast<void**>(&upload_mapped_ptr));
+        std::memcpy(upload_mapped_ptr, input_data_a_.data(), tensor_a_bytes_width);
+        std::memcpy(upload_mapped_ptr + tensor_a_bytes_width, input_data_b_.data(), tensor_b_bytes_width);
+        // unmap memory
+        upload_buffer_->Unmap(0, nullptr);
+
+
+        cmd_list->CopyBufferRegion(input_buffer_a_.Get(), 0, upload_buffer_.Get(), 0, tensor_a_bytes_width);
+        cmd_list->CopyBufferRegion(input_buffer_b_.Get(), 0, upload_buffer_.Get(), tensor_a_bytes_width, tensor_b_bytes_width);
+
+        std::vector<CD3DX12_RESOURCE_BARRIER> barriers;
+        barriers.push_back(CD3DX12_RESOURCE_BARRIER::Transition(input_buffer_a_.Get(),
+            D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_UNORDERED_ACCESS));
+        barriers.push_back(CD3DX12_RESOURCE_BARRIER::Transition(input_buffer_b_.Get(),
+            D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_UNORDERED_ACCESS));
+        cmd_list->ResourceBarrier(static_cast<std::uint32_t>(barriers.size()), barriers.data());
+    }
+
+    std::uint32_t get_total_descriptor_count() override
+    {
+        return gemm_.get_total_descriptor_count();
+    }
+
+    void initialize(ID3D12GraphicsCommandList* cmd_list, D3D12_CPU_DESCRIPTOR_HANDLE cpu_handle, D3D12_GPU_DESCRIPTOR_HANDLE gpu_handle)
+    {
+        gemm_.create_binding_tables(cpu_handle, gpu_handle);
+
+        // Record execution of the operator initializer.
+        gemm_.record_initialize(dml_cmd_recorder_, cmd_list);
+    }
+
+    void execute(ID3D12GraphicsCommandList* cmd_list)
+    {
+        gemm_.record_execute(dml_cmd_recorder_, cmd_list, output_buffer_.Get(), input_buffer_a_.Get(), input_buffer_b_.Get());
+    }
+
+    ConformanceResult validate_conformance(ID3D12CommandQueue* command_queue,
+        ID3D12CommandAllocator* command_allocator, ID3D12GraphicsCommandList* command_list)
+    {
+        const auto tensor_a_desc = gemm_.get_tensor_a_desc();
+        const auto tensor_b_desc = gemm_.get_tensor_b_desc();
+        const auto tensor_out_desc = gemm_.get_tensor_out_desc();
+        const auto tensor_a_bytes_width = tensor_a_desc.totalTensorSizeInBytes;
+        const auto tensor_b_bytes_width = tensor_b_desc.totalTensorSizeInBytes;
+        const auto tensor_out_bytes_width = tensor_out_desc.totalTensorSizeInBytes;
+
+        // readback data and validate
+        auto readback_buffer = create_buffer(d3d12_device_, tensor_out_bytes_width, D3D12_HEAP_TYPE_READBACK, D3D12_RESOURCE_STATE_COPY_DEST);
+        auto readback_output_barrirer = CD3DX12_RESOURCE_BARRIER::Transition(output_buffer_.Get(),
+            D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
+        command_list->ResourceBarrier(1, &readback_output_barrirer);
+        command_list->CopyResource(readback_buffer.Get(), output_buffer_.Get());
+        close_execute_reset_wait(d3d12_device_, command_queue, command_allocator, command_list);
+
+        std::vector<std::byte> data_out(tensor_out_bytes_width);
+        std::byte* readback_mapped_ptr = nullptr;
+        readback_buffer->Map(0, nullptr, reinterpret_cast<void**>(&readback_mapped_ptr));
+        std::memcpy(data_out.data(), readback_mapped_ptr, data_out.size());
+        readback_buffer->Unmap(0, nullptr);
+
+        std::vector<float> cpu_data_f32(params_.M * params_.N);
+        cpu_op::gemm<float>(params_.M, params_.K, params_.N, 1.0f, 1.0f, input_data_a_.data(), input_data_b_.data(), nullptr, cpu_data_f32.data());
+
+        const auto* gpu_data_out_f32 = reinterpret_cast<const float*>(data_out.data());
+        // compare results
+        ConformanceResult ret;
+        ret.epsilon = 0.001f;
+        for (std::uint32_t i = 0; i < params_.M * params_.N; i++)
+        {
+            ret.node_value = gpu_data_out_f32[i];
+            ret.reference_value = cpu_data_f32[i];
+            const auto abs_diff = std::abs(ret.node_value - ret.reference_value);
+
+            if (abs_diff > ret.epsilon)
+            {
+                ret.passed = false;
+
+                std::cout << std::format("Mismatch, gpu: {}, cpu: {}, at index: {}. Absolute differece: \n", ret.node_value, ret.reference_value, i, abs_diff);
+            }
+            ret.biggest_difference = std::max(ret.biggest_difference, abs_diff);
+            ret.tested_samples_count++;
+        }
+        return ret;
+    }
+
+private:
+    create_params_t params_;
+    gpu_op::Gemm gemm_;
+    ID3D12Device* d3d12_device_;
+    IDMLCommandRecorder* dml_cmd_recorder_;
+
+    std::vector<float> input_data_a_;
+    ComPtr<ID3D12Resource> input_buffer_a_;
+    std::vector<float> input_data_b_;
+    ComPtr<ID3D12Resource> input_buffer_b_;
+    ComPtr<ID3D12Resource> output_buffer_;
+    ComPtr<ID3D12Resource> upload_buffer_;
+};
