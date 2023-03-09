@@ -26,6 +26,27 @@ namespace
         return props;
     }
 
+    inline static dml::TensorProperties compute_w_tensor_policy(
+        DML_TENSOR_DATA_TYPE dataType,
+        DML_TENSOR_FLAGS /*flags*/,
+        std::span<const uint32_t> sizes)
+    {
+        uint32_t dimension_count = static_cast<uint32_t>(sizes.size());
+        dml::TensorStrides strides(dimension_count);
+
+        for (auto& s : strides)
+        {
+            s = 0;
+        }
+        strides.back() = 1;
+
+        dml::TensorProperties props;
+        props.strides = std::move(strides);
+        props.totalTensorSizeInBytes = DMLCalcBufferTensorSize(dataType, dimension_count, sizes.data(), props.strides->data());
+        props.guaranteedBaseOffsetAlignment = 0;
+        return props;
+    }
+
 }
 
 inline DML_TENSOR_DATA_TYPE to_dml_data_type(DataType dt)
@@ -46,6 +67,7 @@ inline dml::TensorPolicy to_dml_tensor_policy(DataLayout layout)
     {
     case DataLayout::eNCHW: return dml::TensorPolicy::Default();
     case DataLayout::eNHWC: return dml::TensorPolicy::InterleavedChannel();
+    case DataLayout::eW: return dml::TensorPolicy(compute_w_tensor_policy);
     default:
         assert(false && "Unknown data layout.");
     }

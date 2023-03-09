@@ -95,8 +95,24 @@ enum class DataLayout
 {
     eNCHW = 0,
     eNHWC = 1,
+    eW,
     eCount
 };
+
+inline std::uint8_t data_layout_dimensions_count(DataLayout l)
+{
+    switch (l)
+    {
+    case DataLayout::eNCHW:
+    case DataLayout::eNHWC:
+        return 4;
+    case DataLayout::eW:
+        return 1;
+    default:
+        return 0;
+    }
+    return 0;
+}
 
 template<typename T>
 inline constexpr T round_up_next_multiple(T N, T M) 
@@ -177,9 +193,9 @@ inline auto add_data_type_cli_option(CLI::App* opts, std::string_view opt_name, 
 
 inline auto add_data_layout_cli_option(CLI::App* opts, std::string_view opt_name, DataLayout& layout)
 {
-    return opts->add_option(opt_name.data(), layout)->check(CLI::IsMember({DataLayout::eNCHW, DataLayout::eNHWC}))
+    return opts->add_option(opt_name.data(), layout)->check(CLI::IsMember({DataLayout::eNCHW, DataLayout::eNHWC, DataLayout::eW }))
         ->transform(CLI::Transformer(std::map<std::string, DataLayout>{
-            {"nchw", DataLayout::eNCHW}, { "nhwc", DataLayout::eNHWC },
+            {"nchw", DataLayout::eNCHW}, { "nhwc", DataLayout::eNHWC }, { "w", DataLayout::eW },
     }, CLI::ignore_case, CLI::ignore_underscore));
 }
 
