@@ -358,7 +358,7 @@ public:
 
         gpu_op::Gemm gemm_ref(to_dml_data_type(params_.dt), get_shape_input_a(), to_dml_tensor_policy(params_.layout_a), params_.transform_a,
             get_shape_input_b(), to_dml_tensor_policy(params_.layout_b), params_.transform_b,
-            use_c_tensor(), get_shape_input_c(), to_dml_tensor_policy(params_.layout_c),
+            use_c_tensor(), get_shape_input_c(), to_dml_tensor_policy(use_c_tensor() ? params_.layout_c : DataLayout::eNCHW),
             get_shape_output(), to_dml_tensor_policy(params_.layout_out), params_.alpha, params_.beta, dml_device_, d3d12_device_, true);
 
         // bind descriptor heap
@@ -487,7 +487,7 @@ public:
         : GemmBaseDispatcher(std::move(params), d3d12_device, dml_device, dml_cmd_recorder, cmd_list)
         , gemm_(to_dml_data_type(params_.dt), get_shape_input_a(), to_dml_tensor_policy(params_.layout_a), params_.transform_a,
             get_shape_input_b(), to_dml_tensor_policy(params_.layout_b), params_.transform_b,
-            use_c_tensor(), get_shape_input_c(), to_dml_tensor_policy(params_.layout_c),
+            use_c_tensor(), get_shape_input_c(), to_dml_tensor_policy(use_c_tensor() ? params_.layout_c : DataLayout::eNCHW),
             get_shape_output(), to_dml_tensor_policy(params_.layout_out), params_.alpha, params_.beta, dml_device, d3d12_device, false)
     {
 
