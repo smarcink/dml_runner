@@ -519,6 +519,13 @@ private:
 
 class GemmCmDispatcher : public GemmBaseDispatcher
 {
+private:
+    struct cm_dispatch_params_t
+    {
+        std::uint32_t tile_m = 0;
+        std::uint32_t tile_k = 0;
+        std::uint32_t tile_n = 0;
+    };
 public:
     struct cm_params_t
     {
@@ -543,6 +550,35 @@ public:
     {
         //validate
         assert(params_.dt == DataType::eFp16);
+
+        // set dispatch params
+        const std::vector<std::uint32_t> accepted_tile_m_sizes = { 1, 2};
+        const std::vector<std::uint32_t> accepted_tile_k_sizes = { 16, 32, 64, 128 };
+        const std::vector<std::uint32_t> accepted_tile_n_sizes = { 16, 32, 64, 128 };
+
+        for (const auto tm : accepted_tile_m_sizes)
+        {
+            if (params_.M % tm == 0)
+            {
+                cm_dispatch_params_.tile_m = tm;
+            }
+        }
+
+        for (const auto tk : accepted_tile_k_sizes)
+        {
+            if (params_.K % tk == 0)
+            {
+                cm_dispatch_params_.tile_k = tk;
+            }
+        }
+
+        for (const auto tn : accepted_tile_n_sizes)
+        {
+            if (params_.N % tn == 0)
+            {
+                cm_dispatch_params_.tile_n = tn;
+            }
+        }
 
         {
             std::vector< DescType> desc_list =
@@ -590,7 +626,9 @@ public:
 
         add_define("DT", "half");
 
-
+        add_define("TILE_K", cm_dispatch_params_.tile_k);
+        add_define("TILE_N", cm_dispatch_params_.tile_n);
+        add_define("TILE_M", cm_dispatch_params_.tile_m);
 
         // kernel compilation
         const auto dump_asm_str = cm_params_.dump_asm ? " -mdump_asm" : "";
@@ -665,8 +703,8 @@ public:
             cmd_list->SetComputeRootDescriptorTable(root_index++, gpu_heap_handle);
         }
 
-        const auto gws_x = 1;
-        const auto gws_y = 1;
+        const auto gws_x = params_.M / cm_dispatch_params_.tile_m;
+        const auto gws_y = params_.N / cm_dispatch_params_.tile_n;
         const auto gws_z = 1;
 
         assert(gws_x % cm_params_.lws[0] == 0);
@@ -681,6 +719,7 @@ public:
 
 private:
     cm_params_t cm_params_;
+    cm_dispatch_params_t cm_dispatch_params_;
     IntelExtension& intc_ext_;
     std::vector<CD3DX12_GPU_DESCRIPTOR_HANDLE> gpu_handles_;
 
