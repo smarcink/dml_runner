@@ -128,7 +128,7 @@ inline float cast_to_float(float v)
 
 enum class NodeType
 {
-    eGemm,
+    eGemmDml,
     eConvDml,
     eConvCm,
     eSoftmax,
@@ -169,7 +169,7 @@ inline void fill_with_constant_linear_container_half(std::span<std::byte> contai
 
 inline auto add_data_type_cli_option(CLI::App* opts, std::string_view opt_name, DataType& dt)
 {
-    return opts->add_option("--data_type", dt)->check(CLI::IsMember({ DataType::eFp32, DataType::eFp16 }))
+    return opts->add_option(opt_name.data(), dt)->check(CLI::IsMember({DataType::eFp32, DataType::eFp16}))
         ->transform(CLI::Transformer(std::map<std::string, DataType>{
             {"fp32", DataType::eFp32}, { "fp16", DataType::eFp16 }
     }, CLI::ignore_case, CLI::ignore_underscore));
@@ -177,7 +177,7 @@ inline auto add_data_type_cli_option(CLI::App* opts, std::string_view opt_name, 
 
 inline auto add_data_layout_cli_option(CLI::App* opts, std::string_view opt_name, DataLayout& layout)
 {
-    return opts->add_option("--layout", layout)->check(CLI::IsMember({ DataLayout::eNCHW, DataLayout::eNHWC }))
+    return opts->add_option(opt_name.data(), layout)->check(CLI::IsMember({DataLayout::eNCHW, DataLayout::eNHWC}))
         ->transform(CLI::Transformer(std::map<std::string, DataLayout>{
             {"nchw", DataLayout::eNCHW}, { "nhwc", DataLayout::eNHWC },
     }, CLI::ignore_case, CLI::ignore_underscore));

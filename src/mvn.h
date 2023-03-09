@@ -368,7 +368,7 @@ public:
         std::vector<std::byte> dnnl_untyped_result(tensor_out_bytes_width);
         readback_mapped_ptr = nullptr;
         readback_buffer->Map(0, nullptr, reinterpret_cast<void**>(&readback_mapped_ptr));
-        std::memcpy(dnnl_untyped_result.data(), readback_mapped_ptr, data_out.size());
+        std::memcpy(dnnl_untyped_result.data(), readback_mapped_ptr, dnnl_untyped_result.size());
         readback_buffer->Unmap(0, nullptr);
 
         // dnnl seems to be broken, use mvn non-mc path

@@ -54,7 +54,7 @@ struct CliOptions
     bool no_conformance_check = false;
 
     // generic type of layers params
-    GemmDispatcher::create_params_t gemm_opts{};
+    GemmBaseDispatcher::create_params_t gemm_opts{};
     ConvolutionBaseDispatcher::create_params_t conv_opts{};
     SoftmaxDispatcher::create_params_t softmax_opts{};
     MvnBaseDispatcher::create_params_t mvn_opts{};
@@ -71,11 +71,11 @@ int main()
     CliOptions opts;
     CLI::App dml_runner_app{ "App to microbenchmark and developer dml kernels.", "DirectML runner." };
     dml_runner_app.add_option("--type", opts.node_type, "Name of the type of layer to run.")
-        ->required()->check(CLI::IsMember({ NodeType::eConvDml, NodeType::eConvCm , NodeType::eGemm, NodeType::eSoftmax, NodeType::eMvnDml, NodeType::eMvnCm }))->
+        ->required()->check(CLI::IsMember({ NodeType::eConvDml, NodeType::eConvCm , NodeType::eGemmDml, NodeType::eSoftmax, NodeType::eMvnDml, NodeType::eMvnCm }))->
         transform(CLI::Transformer(std::map<std::string, NodeType>{
             { "conv_dml", NodeType::eConvDml },
             { "conv_cm", NodeType::eConvCm },
-            { "gemm", NodeType::eGemm },
+            { "gemm_dml", NodeType::eGemmDml },
             { "softmax", NodeType::eSoftmax },
             { "mvn_dml", NodeType::eMvnDml },
             { "mvn_cm", NodeType::eMvnCm },
@@ -85,7 +85,7 @@ int main()
 
     // generic type of layers options
     auto gemm_option_groups = dml_runner_app.add_subcommand("gemm_opts", "Options for genn layer.");
-    GemmDispatcher::create_params_t::add_cli_options(gemm_option_groups, opts.gemm_opts);
+    GemmBaseDispatcher::create_params_t::add_cli_options(gemm_option_groups, opts.gemm_opts);
     auto conv_option_groups = dml_runner_app.add_subcommand("conv_opts", "Options for convolution layer.");
     ConvolutionBaseDispatcher::create_params_t::add_cli_options(conv_option_groups, opts.conv_opts);
     auto softmax_option_groups = dml_runner_app.add_subcommand("softmax_opts", "Options for softmax layer.");
@@ -116,7 +116,7 @@ int main()
         std::cout << "Convoltion options not set.\n";
         return -1;
     }
-    if (opts.node_type == NodeType::eGemm && !gemm_option_groups->parsed())
+    if (opts.node_type == NodeType::eGemmDml && !gemm_option_groups->parsed())
     {
         std::cout << "Gemm options not set.\n";
         return -1;
@@ -144,9 +144,9 @@ int main()
         throw_if_failed(dml_device->CreateCommandRecorder(IID_PPV_ARGS(dml_command_recorder.ReleaseAndGetAddressOf())), "create dml command recorder");
 
         std::unique_ptr<NodeDispatcher> node;
-        if (opts.node_type == NodeType::eGemm)
+        if (opts.node_type == NodeType::eGemmDml)
         {
-            node = std::make_unique<GemmDispatcher>(std::move(opts.gemm_opts), 
+            node = std::make_unique<GemmDmlDispatcher>(std::move(opts.gemm_opts), 
                 d3d12_device.Get(), dml_device.Get(), dml_command_recorder.Get(), command_list.Get());
         }
         else if (opts.node_type == NodeType::eConvDml)

@@ -6,315 +6,248 @@
 #include <format>
 #include <random>
 
-#include "layers_utils.h"
+#include "dml_base_node.h"
 
 namespace gpu_op
 {
-class Gemm
+class Gemm : public DirectMlBaseNode
 {
 public:
-    Gemm(const dml::TensorDimensions& a_dims, const dml::TensorDimensions& b_dims, IDMLDevice* dml_device, ID3D12Device* d3d12_device)
-        : dml_device_(dml_device)
-        , d3d12_device_(d3d12_device)
-        , graph_(dml_device)
+    Gemm(const DML_TENSOR_DATA_TYPE data_type, const TensorShape& shape_a, const dml::TensorPolicy& shape_a_tensor_policy, bool transform_a,
+        const TensorShape& shape_b, const dml::TensorPolicy& shape_b_tensor_policy, bool transform_b,
+        const TensorShape& shape_out, const dml::TensorPolicy& shape_out_tensor_policy,
+        float alpha, float beta, IDMLDevice* dml_device, ID3D12Device* d3d12_device, bool disable_mc = false)
+        : DirectMlBaseNode(dml_device, d3d12_device)
     {
-        tensor_a_ = dml::InputTensor(graph_, 0, dml::TensorDesc(DML_TENSOR_DATA_TYPE_FLOAT32, a_dims, dml::TensorPolicy::InterleavedChannel()));
-        tensor_b_ = dml::InputTensor(graph_, 1, dml::TensorDesc(DML_TENSOR_DATA_TYPE_FLOAT32, b_dims, dml::TensorPolicy::InterleavedChannel()));
-        tensor_out_ = dml::Gemm(tensor_a_, tensor_b_, {}, DML_MATRIX_TRANSFORM_NONE, DML_MATRIX_TRANSFORM_NONE, 1.0f, 1.0f, dml::FusedActivation::None());
+        const dml::TensorDimensions input_a_dims{ shape_a.n, shape_a.c, shape_a.h, shape_a.w };
+        const dml::TensorDimensions input_b_dims{ shape_b.n, shape_b.c, shape_b.h, shape_b.w };
+        const dml::TensorDimensions output_dims{ shape_out.n, shape_out.c, shape_out.h, shape_out.w };
 
-        // compiled operator
-        DML_EXECUTION_FLAGS exec_flags = DML_EXECUTION_FLAG_DESCRIPTORS_VOLATILE;
-        std::vector<dml::Expression> graph_outputs{ tensor_out_ };
-        dml_op_executor_ = graph_.Compile(exec_flags, graph_outputs);
-        IDMLCompiledOperator* dml_compiled_operators[] = { dml_op_executor_.Get() };
+        tensor_input_a_desc_.DataType = data_type;
+        tensor_input_a_desc_.Flags = DML_TENSOR_FLAG_NONE;
+        tensor_input_a_desc_.DimensionCount = static_cast<std::uint32_t>(input_a_dims.size());
+        tensor_input_a_desc_.Sizes = input_a_dims.data();
+        const auto tensor_a_properites = shape_a_tensor_policy.Get(tensor_input_a_desc_.DataType, tensor_input_a_desc_.Flags, input_a_dims);
+        tensor_input_a_desc_.Strides = tensor_a_properites.strides.has_value() ? tensor_a_properites.strides->data() : nullptr;
+        tensor_input_a_desc_.TotalTensorSizeInBytes = tensor_a_properites.totalTensorSizeInBytes;
 
-        // initlaizer operator
-        dml_device->CreateOperatorInitializer(1, dml_compiled_operators, IID_PPV_ARGS(dml_op_initializer_.ReleaseAndGetAddressOf()));
+        tensor_input_b_desc_.DataType = data_type;
+        tensor_input_b_desc_.Flags = DML_TENSOR_FLAG_NONE;
+        tensor_input_b_desc_.DimensionCount = static_cast<std::uint32_t>(input_b_dims.size());
+        tensor_input_b_desc_.Sizes = input_b_dims.data();
+        const auto tensor_b_properites = shape_b_tensor_policy.Get(tensor_input_b_desc_.DataType, tensor_input_b_desc_.Flags, input_b_dims);
+        tensor_input_b_desc_.Strides = tensor_b_properites.strides.has_value() ? tensor_b_properites.strides->data() : nullptr;
+        tensor_input_b_desc_.TotalTensorSizeInBytes = tensor_b_properites.totalTensorSizeInBytes;
 
-        // resources
-        const auto initialize_binding_properties = dml_op_initializer_->GetBindingProperties();
-        const auto execute_binding_properties = dml_op_executor_->GetBindingProperties();
-        const auto temporary_resource_size = std::max(
-            initialize_binding_properties.TemporaryResourceSize,
-            execute_binding_properties.TemporaryResourceSize);
-        const auto persistent_resource_size = execute_binding_properties.PersistentResourceSize;
+        tensor_output_desc_.DataType = data_type;
+        tensor_output_desc_.Flags = DML_TENSOR_FLAG_NONE;
+        tensor_output_desc_.DimensionCount = static_cast<std::uint32_t>(output_dims.size());
+        tensor_output_desc_.Sizes = output_dims.data();
+        const auto tensor_out_properites = shape_b_tensor_policy.Get(tensor_output_desc_.DataType, tensor_output_desc_.Flags, output_dims);
+        tensor_output_desc_.Strides = tensor_out_properites.strides.has_value() ? tensor_out_properites.strides->data() : nullptr;
+        tensor_output_desc_.TotalTensorSizeInBytes = tensor_out_properites.totalTensorSizeInBytes;
 
-        if (temporary_resource_size != 0)
+        DML_TENSOR_DESC input_a_desc{};
+        input_a_desc.Desc = &tensor_input_a_desc_;
+        input_a_desc.Type = DML_TENSOR_TYPE_BUFFER;
+
+        DML_TENSOR_DESC input_b_desc{};
+        input_b_desc.Desc = &tensor_input_b_desc_;
+        input_b_desc.Type = DML_TENSOR_TYPE_BUFFER;
+
+        DML_TENSOR_DESC input_out_desc{};
+        input_out_desc.Desc = &tensor_output_desc_;
+        input_out_desc.Type = DML_TENSOR_TYPE_BUFFER;
+
+        DML_GEMM_OPERATOR_DESC gemm_op_desc{};
+        gemm_op_desc.Alpha = alpha;
+        gemm_op_desc.Beta = beta;
+        gemm_op_desc.ATensor = &input_a_desc;
+        gemm_op_desc.TransA = transform_a ? DML_MATRIX_TRANSFORM_TRANSPOSE : DML_MATRIX_TRANSFORM_NONE;
+        gemm_op_desc.BTensor = &input_b_desc;
+        gemm_op_desc.TransB = transform_b ? DML_MATRIX_TRANSFORM_TRANSPOSE : DML_MATRIX_TRANSFORM_NONE;
+        gemm_op_desc.OutputTensor = &input_out_desc;
+
+        DML_OPERATOR_DESC dml_operator_desc{};
+        dml_operator_desc.Type = DML_OPERATOR_GEMM;
+        dml_operator_desc.Desc = &gemm_op_desc;
+
+        throw_if_failed(dml_device->CreateOperator(
+            &dml_operator_desc, IID_PPV_ARGS(dml_operator_.ReleaseAndGetAddressOf())), "create softmax operator");
+
+        auto exec_flags = DML_EXECUTION_FLAG_DESCRIPTORS_VOLATILE;
+        if (data_type == DML_TENSOR_DATA_TYPE_FLOAT16)
         {
-            const auto heap_props = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
-            const auto buffer_desc = CD3DX12_RESOURCE_DESC::Buffer(temporary_resource_size, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
-            throw_if_failed(d3d12_device->CreateCommittedResource(
-                &heap_props,
-                D3D12_HEAP_FLAG_NONE,
-                &buffer_desc,
-                D3D12_RESOURCE_STATE_COMMON,
-                nullptr, IID_PPV_ARGS(temporary_buffer_.ReleaseAndGetAddressOf())), "create buffer resource");
+            exec_flags |= DML_EXECUTION_FLAG_ALLOW_HALF_PRECISION_COMPUTATION;
+        }
+        if (disable_mc)
+        {
+            exec_flags |= DML_EXECUTION_FLAG_DISABLE_META_COMMANDS;
         }
 
-        if (persistent_resource_size != 0)
-        {
-            const auto heap_props = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
-            const auto buffder_desc = CD3DX12_RESOURCE_DESC::Buffer(persistent_resource_size);
-            throw_if_failed(d3d12_device->CreateCommittedResource(
-                &heap_props,
-                D3D12_HEAP_FLAG_NONE,
-                &buffder_desc,
-                D3D12_RESOURCE_STATE_COMMON,
-                nullptr, IID_PPV_ARGS(persistent_buffer_.ReleaseAndGetAddressOf())), "create buffer resource");
-        }
+        throw_if_failed(dml_device->CompileOperator(
+            dml_operator_.Get(),
+            exec_flags,
+            IID_PPV_ARGS(dml_op_executor_.ReleaseAndGetAddressOf())), "create softmax compiled operator");
+        create_operator_impl();
     }
 
     dml::TensorDesc get_tensor_a_desc() const
     {
-        return tensor_a_.GetOutputDesc();
+        return tensor_input_a_desc_;
     }
 
     dml::TensorDesc get_tensor_b_desc() const
     {
-        return tensor_b_.GetOutputDesc();
+        return tensor_input_b_desc_;
     }
 
     dml::TensorDesc get_tensor_out_desc() const
     {
-        return tensor_out_.GetOutputDesc();
+        return tensor_output_desc_;
     }
 
-    void record_initialize(IDMLCommandRecorder* dml_cmd_recorder, ID3D12GraphicsCommandList* cmd_list)
+    void record_execute(IDMLCommandRecorder* dml_cmd_recorder, ID3D12GraphicsCommandList* cmd_list,
+        ID3D12Resource* resource_out, ID3D12Resource* resource_a, ID3D12Resource* resource_b)
     {
-        if (temporary_buffer_)
-        {          
-            DML_BUFFER_BINDING buffer_binding{ temporary_buffer_.Get(), 0, temporary_buffer_->GetDesc().Width };
-            DML_BINDING_DESC binding_desc{ DML_BINDING_TYPE_BUFFER, &buffer_binding };
-            dml_init_binding_table->BindTemporaryResource(&binding_desc);
-        }
-
-        if (persistent_buffer_)
-        {
-            // The persistent resource should be bound as the output to the IDMLOperatorInitializer.
-            DML_BUFFER_BINDING buffer_binding{ persistent_buffer_.Get(), 0, persistent_buffer_->GetDesc().Width };
-            DML_BINDING_DESC binding_desc{ DML_BINDING_TYPE_BUFFER, &buffer_binding };
-            dml_init_binding_table->BindOutputs(1, &binding_desc);
-        }
-
-        dml_cmd_recorder->RecordDispatch(
-            cmd_list,
-            dml_op_initializer_.Get(),
-            dml_init_binding_table.Get());
-    }
-
-    void record_execute(IDMLCommandRecorder* dml_cmd_recorder, ID3D12GraphicsCommandList* cmd_list, ID3D12Resource* resource_out, ID3D12Resource* resource_a, ID3D12Resource* resource_b)
-    {
-        if (temporary_buffer_)
-        {
-            DML_BUFFER_BINDING buffer_binding{ temporary_buffer_.Get(), 0, temporary_buffer_->GetDesc().Width };
-            DML_BINDING_DESC binding_desc{ DML_BINDING_TYPE_BUFFER, &buffer_binding };
-            dml_exec_binding_table->BindTemporaryResource(&binding_desc);
-        }
-
-        if (persistent_buffer_)
-        {
-            // The persistent resource should be bound as the output to the IDMLOperatorInitializer.
-            DML_BUFFER_BINDING buffer_binding{ persistent_buffer_.Get(), 0, persistent_buffer_->GetDesc().Width };
-            DML_BINDING_DESC binding_desc{ DML_BINDING_TYPE_BUFFER, &buffer_binding };
-            dml_exec_binding_table->BindPersistentResource(&binding_desc);
-        }
-
-        DML_BUFFER_BINDING input_buffer_a_binding{ resource_a, 0, resource_a->GetDesc().Width};
-        DML_BUFFER_BINDING input_buffer_b_binding{ resource_b, 0, resource_b->GetDesc().Width};
+        assert(resource_a);
+        assert(resource_b);
+        assert(resource_out);
+        DML_BUFFER_BINDING input_a_buffer_binding{ resource_a, 0, resource_a->GetDesc().Width };
+        DML_BUFFER_BINDING input_b_buffer_binding{ resource_b, 0, resource_b->GetDesc().Width };
+  
 
         std::vector<DML_BINDING_DESC> input_bindings;
-        input_bindings.reserve(2);
-        input_bindings.push_back({ DML_BINDING_TYPE_BUFFER, &input_buffer_a_binding });
-        input_bindings.push_back({ DML_BINDING_TYPE_BUFFER, &input_buffer_b_binding });
-        dml_exec_binding_table->BindInputs(static_cast<std::uint32_t>(input_bindings.size()), input_bindings.data());
+        input_bindings.reserve(3);
+        input_bindings.push_back({ DML_BINDING_TYPE_BUFFER, &input_a_buffer_binding });
+        input_bindings.push_back({ DML_BINDING_TYPE_BUFFER, &input_b_buffer_binding });
+        input_bindings.push_back({ DML_BINDING_TYPE_NONE, nullptr });  //C tensor not supported yet
 
-        DML_BUFFER_BINDING output_buffer_binding{ resource_out, 0, resource_out->GetDesc().Width};
+        DML_BUFFER_BINDING output_buffer_binding{ resource_out, 0, resource_out->GetDesc().Width };
         DML_BINDING_DESC output_binding_desc{ DML_BINDING_TYPE_BUFFER, &output_buffer_binding };
-        dml_exec_binding_table->BindOutputs(1u, &output_binding_desc);
 
-        dml_cmd_recorder->RecordDispatch(cmd_list, dml_op_executor_.Get(), dml_exec_binding_table.Get());
+        record_execute_impl(dml_cmd_recorder, cmd_list, input_bindings, output_binding_desc);
     }
 
-    uint32_t get_total_descriptor_count() const
-    {
-        const auto initialize_binding_properties = dml_op_initializer_->GetBindingProperties();
-        const auto execute_binding_properties = dml_op_executor_->GetBindingProperties();
-        return initialize_binding_properties.RequiredDescriptorCount +
-            execute_binding_properties.RequiredDescriptorCount;
-    }
-
-    void create_binding_tables(D3D12_CPU_DESCRIPTOR_HANDLE cpu_handle, D3D12_GPU_DESCRIPTOR_HANDLE gpu_handle)
-    {
-        const auto desc_inc = d3d12_device_->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
-        const auto init_desc_count = dml_op_initializer_->GetBindingProperties().RequiredDescriptorCount;
-        const auto exec_desc_count = dml_op_executor_->GetBindingProperties().RequiredDescriptorCount;
-
-        {
-            DML_BINDING_TABLE_DESC dml_binding_table_desc{};
-            dml_binding_table_desc.Dispatchable = dml_op_initializer_.Get();
-            dml_binding_table_desc.CPUDescriptorHandle = cpu_handle;
-            dml_binding_table_desc.GPUDescriptorHandle = gpu_handle;
-            dml_binding_table_desc.SizeInDescriptors = dml_op_initializer_->GetBindingProperties().RequiredDescriptorCount;
-            throw_if_failed(dml_device_->CreateBindingTable(
-                &dml_binding_table_desc, IID_PPV_ARGS(dml_init_binding_table.ReleaseAndGetAddressOf())), "dml create init binding table");
-        }
-
-        {
-            DML_BINDING_TABLE_DESC dml_binding_table_desc{};
-            dml_binding_table_desc.Dispatchable = dml_op_executor_.Get();
-            dml_binding_table_desc.CPUDescriptorHandle = CD3DX12_CPU_DESCRIPTOR_HANDLE(cpu_handle, init_desc_count, desc_inc);
-            dml_binding_table_desc.GPUDescriptorHandle = CD3DX12_GPU_DESCRIPTOR_HANDLE(gpu_handle, init_desc_count, desc_inc);
-            dml_binding_table_desc.SizeInDescriptors = exec_desc_count;
-            throw_if_failed(dml_device_->CreateBindingTable(
-                &dml_binding_table_desc, IID_PPV_ARGS(dml_exec_binding_table.ReleaseAndGetAddressOf())), "dml create exec binding table");
-        }
-    }
 
 private:
-    IDMLDevice* dml_device_;
-    ID3D12Device* d3d12_device_;
-
-    dml::Graph graph_;
-    dml::Expression tensor_a_;
-    dml::Expression tensor_b_;
-    dml::Expression tensor_out_;
-
-    ComPtr<IDMLCompiledOperator> dml_op_executor_;
-    ComPtr<IDMLOperatorInitializer> dml_op_initializer_;
-
-    ComPtr<ID3D12Resource> temporary_buffer_;
-    ComPtr<ID3D12Resource> persistent_buffer_;
-
-    ComPtr<IDMLBindingTable> dml_init_binding_table;
-    ComPtr<IDMLBindingTable> dml_exec_binding_table;
+    DML_BUFFER_TENSOR_DESC tensor_input_a_desc_{};
+    DML_BUFFER_TENSOR_DESC tensor_input_b_desc_{};
+    DML_BUFFER_TENSOR_DESC tensor_output_desc_{};
+    ComPtr<IDMLOperator> dml_operator_;
 };
 }
 
 
-namespace cpu_op
-{
-
-template<typename T>
-void gemm(std::uint32_t M, std::uint32_t K, std::uint32_t N, float alpha, float beta, T* src0, T* src1, T* src2, T* dst)
-{
-    for (std::uint32_t y = 0; y < M; ++y)
-    {
-        for (std::uint32_t x = 0; x < N; ++x)
-        {
-            T sum = T(0);
-            for (std::uint32_t k = 0; k < K; ++k)
-            {
-                sum += src0[k + y * K] * src1[k * N + x];
-            }
-            dst[x + y * N] = alpha * sum + (src2 ? (beta * src2[x + y * N]) : T(0));
-        }
-    }
-}
-}
-
-
-
-class GemmDispatcher : public NodeDispatcher
+class GemmBaseDispatcher : public NodeDispatcher
 {
 public:
     struct create_params_t
     {
+        DataType dt;
+        DataLayout layout_a;
+        DataLayout layout_b;
+        DataLayout layout_out;
+
+        std::uint32_t B = 1; // batch
+        std::uint32_t C = 1; // channels
         std::uint32_t M;
         std::uint32_t K;
         std::uint32_t N;
 
+        bool transform_a = false;
+        bool transform_b = false;
+
+        float alpha = 1.0f;
+        float beta = 0.0f;
+
         inline static void add_cli_options(CLI::App* opts, create_params_t& params)
         {
-            opts->add_option("M", params.M)->required();
-            opts->add_option("K", params.K)->required();
-            opts->add_option("N", params.N)->required();
+            add_data_type_cli_option(opts, "--data_type", params.dt)->required();
+            add_data_layout_cli_option(opts, "--layout_a", params.layout_a)->required();
+            add_data_layout_cli_option(opts, "--layout_b", params.layout_b)->required();
+            add_data_layout_cli_option(opts, "--layout_out", params.layout_out)->required();
+            opts->add_option("--B", params.B);
+            opts->add_option("--C", params.C);
+            opts->add_option("--M", params.M)->required();
+            opts->add_option("--K", params.K)->required();
+            opts->add_option("--N", params.N)->required();
+            opts->add_option("--alpha", params.alpha);
+            opts->add_option("--beta", params.beta);
+            opts->add_flag("--transform_a", params.transform_a);
+            opts->add_flag("--transform_b", params.transform_b);
         }
     };
 public:
-    GemmDispatcher(create_params_t&& params, ID3D12Device* d3d12_device, IDMLDevice* dml_device, IDMLCommandRecorder* dml_cmd_recorder, ID3D12GraphicsCommandList* cmd_list)
+    GemmBaseDispatcher(create_params_t&& params, ID3D12Device* d3d12_device, IDMLDevice* dml_device, IDMLCommandRecorder* dml_cmd_recorder, ID3D12GraphicsCommandList* cmd_list)
         : params_(std::move(params))
         , dml_cmd_recorder_(dml_cmd_recorder)
-        , gemm_(dml::TensorDimensions{ 1, 1, params_.M, params_.K }, dml::TensorDimensions{ 1, 1, params_.K, params_.N }, dml_device, d3d12_device)
+        , dml_device_(dml_device)
         , d3d12_device_(d3d12_device)
-        , input_data_a_(params_.M* params_.K)
-        , input_data_b_(params_.K* params_.N)
+        , input_data_a_(params_.B * params_.C * params_.M * params_.K * get_data_type_bytes_width(params_.dt))
+        , input_data_b_(params_.B * params_.C * params_.K * params_.N * get_data_type_bytes_width(params_.dt))
     {
-        const auto tensor_a_desc = gemm_.get_tensor_a_desc();
-        const auto tensor_b_desc = gemm_.get_tensor_b_desc();
-        const auto tensor_out_desc = gemm_.get_tensor_out_desc();
-        const auto tensor_a_bytes_width = tensor_a_desc.totalTensorSizeInBytes;
-        const auto tensor_b_bytes_width = tensor_b_desc.totalTensorSizeInBytes;
-        const auto tensor_out_bytes_width = tensor_out_desc.totalTensorSizeInBytes;
-
-
-        upload_buffer_ = create_buffer(d3d12_device, tensor_a_bytes_width + tensor_b_bytes_width, D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ);
-        input_buffer_a_ = create_buffer(d3d12_device, tensor_a_bytes_width,
-            D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
-        input_buffer_b_ = create_buffer(d3d12_device, tensor_b_bytes_width,
-            D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
-        output_buffer_ = create_buffer(d3d12_device, tensor_out_bytes_width,
-            D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
-
         // randomize data
         std::mt19937 random_generator(42); // static, create it once!
-        std::uniform_real_distribution<float> uniform_distribution(-0.5f, 0.5f);
+        std::uniform_real_distribution<float> uniform_distribution(0.0f, 5.0f);
 
-        for (auto& a : input_data_a_)
+        if (params_.dt == DataType::eFp32)
         {
-            a = uniform_distribution(random_generator);
+            randomize_linear_container_float(random_generator, uniform_distribution, input_data_a_);
+            randomize_linear_container_float(random_generator, uniform_distribution, input_data_b_);
         }
-        for (auto& b : input_data_b_)
+        else if (params_.dt == DataType::eFp16)
         {
-            b = uniform_distribution(random_generator);
+            randomize_linear_container_half(random_generator, uniform_distribution, input_data_a_);
+            randomize_linear_container_half(random_generator, uniform_distribution, input_data_b_);
         }
+        else
+        {
+            assert(false && "Unsupported data type in convolution dispatcher!");
+        }
+
+        const auto tensor_input_a_bytes_width = input_data_a_.size();
+        const auto tensor_input_b_bytes_width = input_data_b_.size();
+        const auto tensor_output_bytes_width = params_.B * params_.C * params_.M * params_.N * get_data_type_bytes_width(params_.dt);
+
+        upload_buffer_ = create_buffer(d3d12_device_, tensor_input_a_bytes_width + tensor_input_b_bytes_width,
+            D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ);
+        input_buffer_a_ = create_buffer(d3d12_device, tensor_input_a_bytes_width,
+            D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+        input_buffer_b_ = create_buffer(d3d12_device, tensor_input_b_bytes_width,
+            D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+        output_buffer_ = create_buffer(d3d12_device, tensor_output_bytes_width,
+            D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
 
         // copy data into buffer
         std::byte* upload_mapped_ptr = nullptr;
         upload_buffer_->Map(0, nullptr, reinterpret_cast<void**>(&upload_mapped_ptr));
-        std::memcpy(upload_mapped_ptr, input_data_a_.data(), tensor_a_bytes_width);
-        std::memcpy(upload_mapped_ptr + tensor_a_bytes_width, input_data_b_.data(), tensor_b_bytes_width);
+        std::size_t memcopy_offset = 0;
+        std::memcpy(upload_mapped_ptr, input_data_a_.data(), tensor_input_a_bytes_width);
+        memcopy_offset += tensor_input_a_bytes_width;
+        std::memcpy(upload_mapped_ptr + memcopy_offset, input_data_b_.data(), tensor_input_b_bytes_width);
+        memcopy_offset += tensor_input_b_bytes_width;
         // unmap memory
         upload_buffer_->Unmap(0, nullptr);
 
-
-        cmd_list->CopyBufferRegion(input_buffer_a_.Get(), 0, upload_buffer_.Get(), 0, tensor_a_bytes_width);
-        cmd_list->CopyBufferRegion(input_buffer_b_.Get(), 0, upload_buffer_.Get(), tensor_a_bytes_width, tensor_b_bytes_width);
+        memcopy_offset = 0;
+        cmd_list->CopyBufferRegion(input_buffer_a_.Get(), 0, upload_buffer_.Get(), 0, tensor_input_a_bytes_width);
+        memcopy_offset += tensor_input_a_bytes_width;
+        cmd_list->CopyBufferRegion(input_buffer_b_.Get(), 0, upload_buffer_.Get(), memcopy_offset, tensor_input_b_bytes_width);
+        memcopy_offset += tensor_input_b_bytes_width;
 
         std::vector<CD3DX12_RESOURCE_BARRIER> barriers;
         barriers.push_back(CD3DX12_RESOURCE_BARRIER::Transition(input_buffer_a_.Get(),
             D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_UNORDERED_ACCESS));
         barriers.push_back(CD3DX12_RESOURCE_BARRIER::Transition(input_buffer_b_.Get(),
             D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_UNORDERED_ACCESS));
+
         cmd_list->ResourceBarrier(static_cast<std::uint32_t>(barriers.size()), barriers.data());
     }
 
-    std::uint32_t get_total_descriptor_count() override
+    virtual ConformanceResult validate_conformance(ID3D12CommandQueue* command_queue, ID3D12CommandAllocator* command_allocator, ID3D12GraphicsCommandList* command_list)
     {
-        return gemm_.get_total_descriptor_count();
-    }
-
-    void initialize(ID3D12GraphicsCommandList* cmd_list, D3D12_CPU_DESCRIPTOR_HANDLE cpu_handle, D3D12_GPU_DESCRIPTOR_HANDLE gpu_handle)
-    {
-        gemm_.create_binding_tables(cpu_handle, gpu_handle);
-
-        // Record execution of the operator initializer.
-        gemm_.record_initialize(dml_cmd_recorder_, cmd_list);
-    }
-
-    void execute(ID3D12GraphicsCommandList* cmd_list)
-    {
-        gemm_.record_execute(dml_cmd_recorder_, cmd_list, output_buffer_.Get(), input_buffer_a_.Get(), input_buffer_b_.Get());
-    }
-
-    ConformanceResult validate_conformance(ID3D12CommandQueue* command_queue,
-        ID3D12CommandAllocator* command_allocator, ID3D12GraphicsCommandList* command_list)
-    {
-        const auto tensor_a_desc = gemm_.get_tensor_a_desc();
-        const auto tensor_b_desc = gemm_.get_tensor_b_desc();
-        const auto tensor_out_desc = gemm_.get_tensor_out_desc();
-        const auto tensor_a_bytes_width = tensor_a_desc.totalTensorSizeInBytes;
-        const auto tensor_b_bytes_width = tensor_b_desc.totalTensorSizeInBytes;
-        const auto tensor_out_bytes_width = tensor_out_desc.totalTensorSizeInBytes;
+        const auto tensor_out_bytes_width = output_buffer_->GetDesc().Width;
 
         // readback data and validate
         auto readback_buffer = create_buffer(d3d12_device_, tensor_out_bytes_width, D3D12_HEAP_TYPE_READBACK, D3D12_RESOURCE_STATE_COPY_DEST);
@@ -330,41 +263,145 @@ public:
         std::memcpy(data_out.data(), readback_mapped_ptr, data_out.size());
         readback_buffer->Unmap(0, nullptr);
 
-        std::vector<float> cpu_data_f32(params_.M * params_.N);
-        cpu_op::gemm<float>(params_.M, params_.K, params_.N, 1.0f, 1.0f, input_data_a_.data(), input_data_b_.data(), nullptr, cpu_data_f32.data());
+        //
+        //  calc reference with dml non-mc 
+        //
+        readback_output_barrirer = CD3DX12_RESOURCE_BARRIER::Transition(output_buffer_.Get(),
+            D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        command_list->ResourceBarrier(1, &readback_output_barrirer);
 
-        const auto* gpu_data_out_f32 = reinterpret_cast<const float*>(data_out.data());
-        // compare results
-        ConformanceResult ret;
-        ret.epsilon = 0.001f;
-        for (std::uint32_t i = 0; i < params_.M * params_.N; i++)
+        gpu_op::Gemm gemm_ref(to_dml_data_type(params_.dt), get_shape_input_a(), to_dml_tensor_policy(params_.layout_a), params_.transform_a,
+            get_shape_input_b(), to_dml_tensor_policy(params_.layout_b), params_.transform_b,
+            get_shape_output(), to_dml_tensor_policy(params_.layout_out), params_.alpha, params_.beta, dml_device_, d3d12_device_, true);
+
+        // bind descriptor heap
+        auto descriptor_heap = create_descriptor_heap(d3d12_device_, gemm_ref.get_total_descriptor_count());
+        ID3D12DescriptorHeap* d3d12_descriptor_heaps[] = { descriptor_heap.Get() };
+        command_list->SetDescriptorHeaps(1, d3d12_descriptor_heaps);
+
+        gemm_ref.create_binding_tables(descriptor_heap->GetCPUDescriptorHandleForHeapStart(), descriptor_heap->GetGPUDescriptorHandleForHeapStart());
+        gemm_ref.record_initialize(dml_cmd_recorder_, command_list);
+        close_execute_reset_wait(d3d12_device_, command_queue, command_allocator, command_list);
+
+        command_list->SetDescriptorHeaps(1, d3d12_descriptor_heaps);
+        gemm_ref.record_execute(dml_cmd_recorder_, command_list, output_buffer_.Get(), input_buffer_a_.Get(), input_buffer_b_.Get());
+        close_execute_reset_wait(d3d12_device_, command_queue, command_allocator, command_list);
+
+        readback_output_barrirer = CD3DX12_RESOURCE_BARRIER::Transition(output_buffer_.Get(),
+            D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
+        command_list->ResourceBarrier(1, &readback_output_barrirer);
+        command_list->CopyResource(readback_buffer.Get(), output_buffer_.Get());
+        close_execute_reset_wait(d3d12_device_, command_queue, command_allocator, command_list);
+
+        std::vector<std::byte> ref_untyped_result(tensor_out_bytes_width);
+        readback_mapped_ptr = nullptr;
+        readback_buffer->Map(0, nullptr, reinterpret_cast<void**>(&readback_mapped_ptr));
+        std::memcpy(ref_untyped_result.data(), readback_mapped_ptr, ref_untyped_result.size());
+        readback_buffer->Unmap(0, nullptr);
+
+        if (params_.dt == DataType::eFp32)
         {
-            ret.node_value = gpu_data_out_f32[i];
-            ret.reference_value = cpu_data_f32[i];
-            const auto abs_diff = std::abs(ret.node_value - ret.reference_value);
-
-            if (abs_diff > ret.epsilon)
-            {
-                ret.passed = false;
-
-                std::cout << std::format("Mismatch, gpu: {}, cpu: {}, at index: {}. Absolute differece: \n", ret.node_value, ret.reference_value, i, abs_diff);
-            }
-            ret.biggest_difference = std::max(ret.biggest_difference, abs_diff);
-            ret.tested_samples_count++;
+            return run_conformance_check<float>(data_out, ref_untyped_result, 0.001f);
         }
+        else if (params_.dt == DataType::eFp16)
+        {
+            return run_conformance_check<Half>(data_out, ref_untyped_result, 0.05f);
+        }
+        assert(false && "Unsupported output data type!");
+        ConformanceResult ret{};
+        return ret;
+
+    }
+
+protected:
+    TensorShape get_shape_input_a() const
+    {
+        TensorShape ret{};
+        ret.n = params_.B;
+        ret.c = params_.C;
+        ret.h = params_.M;
+        ret.w = params_.K;
+
+        if (params_.transform_a)
+        {
+            std::swap(ret.h, ret.w);
+        }
+
         return ret;
     }
 
-private:
+    TensorShape get_shape_input_b() const
+    {
+        TensorShape ret{};
+        ret.n = params_.B;
+        ret.c = params_.C;
+        ret.h = params_.K;
+        ret.w = params_.N;
+
+        if (params_.transform_b)
+        {
+            std::swap(ret.h, ret.w);
+        }
+
+        return ret;
+    }
+
+    TensorShape get_shape_output() const
+    {
+        TensorShape ret{};
+        ret.n = params_.B;
+        ret.c = params_.C;
+        ret.h = params_.M;
+        ret.w = params_.N;
+
+        return ret;
+    }
+
+protected:
     create_params_t params_;
-    gpu_op::Gemm gemm_;
     ID3D12Device* d3d12_device_;
+    IDMLDevice* dml_device_;
     IDMLCommandRecorder* dml_cmd_recorder_;
 
-    std::vector<float> input_data_a_;
+    std::vector<std::byte> input_data_a_;
+    std::vector<std::byte> input_data_b_;
+
     ComPtr<ID3D12Resource> input_buffer_a_;
-    std::vector<float> input_data_b_;
     ComPtr<ID3D12Resource> input_buffer_b_;
     ComPtr<ID3D12Resource> output_buffer_;
     ComPtr<ID3D12Resource> upload_buffer_;
+};
+
+class GemmDmlDispatcher : public GemmBaseDispatcher
+{
+public:
+    GemmDmlDispatcher(create_params_t&& params, ID3D12Device* d3d12_device, IDMLDevice* dml_device, IDMLCommandRecorder* dml_cmd_recorder, ID3D12GraphicsCommandList* cmd_list)
+        : GemmBaseDispatcher(std::move(params), d3d12_device, dml_device, dml_cmd_recorder, cmd_list)
+        , gemm_(to_dml_data_type(params_.dt), get_shape_input_a(), to_dml_tensor_policy(params_.layout_a), params_.transform_a,
+            get_shape_input_b(), to_dml_tensor_policy(params_.layout_b), params_.transform_b,
+            get_shape_output(), to_dml_tensor_policy(params_.layout_out), params_.alpha, params_.beta, dml_device, d3d12_device, false)
+    {
+
+    }
+
+
+    std::uint32_t get_total_descriptor_count() override
+    {
+        return gemm_.get_total_descriptor_count();
+    }
+
+    void initialize(ID3D12GraphicsCommandList* cmd_list, D3D12_CPU_DESCRIPTOR_HANDLE cpu_handle, D3D12_GPU_DESCRIPTOR_HANDLE gpu_handle)
+    {
+        gemm_.create_binding_tables(cpu_handle, gpu_handle);
+        gemm_.record_initialize(dml_cmd_recorder_, cmd_list);
+    }
+
+    void execute(ID3D12GraphicsCommandList* cmd_list)
+    {
+        gemm_.record_execute(dml_cmd_recorder_, cmd_list,
+            output_buffer_.Get(), input_buffer_a_.Get(), input_buffer_b_.Get());
+    }
+
+private:
+    gpu_op::Gemm gemm_;
 };
