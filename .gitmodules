@@ -4,3 +4,6 @@
 [submodule "thirdparty/CLI11"]
 	path = thirdparty/CLI11
 	url = https://github.com/CLIUtils/CLI11.git
+[submodule "thirdparty/libraries.performance.math.onednn"]
+	path = thirdparty/libraries.performance.math.onednn
+	url = https://github.com/intel-innersource/libraries.performance.math.onednn.git

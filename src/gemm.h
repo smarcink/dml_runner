@@ -519,13 +519,6 @@ private:
 
 class GemmCmDispatcher : public GemmBaseDispatcher
 {
-private:
-    struct cm_dispatch_params_t
-    {
-        std::uint32_t tile_m = 0;
-        std::uint32_t tile_k = 0;
-        std::uint32_t tile_n = 0;
-    };
 public:
     struct cm_params_t
     {
@@ -534,11 +527,23 @@ public:
         bool print_reg_usage;
         std::array<std::uint32_t, 3> lws{ 1u, 1u, 1u };
 
+        std::uint32_t tile_m = 0;
+        std::uint32_t tile_k = 0;
+        std::uint32_t tile_n = 0;
+
+        std::uint32_t slice_k = 1;
+
         inline static void add_cli_options(CLI::App* opts, cm_params_t& params)
         {
             opts->add_flag("--dump_asm", params.dump_asm)->default_val(false);
             opts->add_flag("--large_grf", params.large_grf)->default_val(false);
             opts->add_flag("--print_reg_usage", params.print_reg_usage)->default_val(false);
+
+            opts->add_option("--tile_m", params.tile_m);
+            opts->add_option("--tile_k", params.tile_k);
+            opts->add_option("--tile_n", params.tile_n);
+
+            opts->add_option("--slice_k", params.slice_k);
         }
     };
 
@@ -556,29 +561,40 @@ public:
         const std::vector<std::uint32_t> accepted_tile_k_sizes = { 16, 32, 64, 128 };
         const std::vector<std::uint32_t> accepted_tile_n_sizes = { 16, 32, 64, 128 };
 
-        for (const auto tm : accepted_tile_m_sizes)
+        if (cm_params_.tile_m == 0)
         {
-            if (params_.M % tm == 0)
+            for (const auto tm : accepted_tile_m_sizes)
             {
-                cm_dispatch_params_.tile_m = tm;
+                if (params_.M % tm == 0)
+                {
+                    cm_params_.tile_m = tm;
+                }
             }
         }
 
-        for (const auto tk : accepted_tile_k_sizes)
+        if (cm_params_.tile_k == 0)
         {
-            if (params_.K % tk == 0)
+            for (const auto tk : accepted_tile_k_sizes)
             {
-                cm_dispatch_params_.tile_k = tk;
+                if (params_.K % tk == 0)
+                {
+                    cm_params_.tile_k = tk;
+                }
             }
         }
 
-        for (const auto tn : accepted_tile_n_sizes)
+        if (cm_params_.tile_n == 0)
         {
-            if (params_.N % tn == 0)
+            for (const auto tn : accepted_tile_n_sizes)
             {
-                cm_dispatch_params_.tile_n = tn;
+                if (params_.N % tn == 0)
+                {
+                    cm_params_.tile_n = tn;
+                }
             }
         }
+
+        cm_params_.lws[2] = cm_params_.slice_k;
 
         {
             std::vector< DescType> desc_list =
@@ -626,9 +642,10 @@ public:
 
         add_define("DT", "half");
 
-        add_define("TILE_K", cm_dispatch_params_.tile_k);
-        add_define("TILE_N", cm_dispatch_params_.tile_n);
-        add_define("TILE_M", cm_dispatch_params_.tile_m);
+        add_define("TILE_K", cm_params_.tile_k);
+        add_define("TILE_N", cm_params_.tile_n);
+        add_define("TILE_M", cm_params_.tile_m);
+        add_define("SLICE_K", cm_params_.slice_k);
 
         // kernel compilation
         const auto dump_asm_str = cm_params_.dump_asm ? " -mdump_asm" : "";
@@ -661,6 +678,9 @@ public:
         byte_code.BytecodeLength = kernel_source_content.size();
         pso_ = intc_ext_.create_pipeline(byte_code, build_options_final, root_signature_.Get());
 
+        const auto gws = get_gws();
+        const auto lws = cm_params_.lws;
+        std::cout << std::format("gws: [{}, {}, {}], lws: [{}, {}, {}]\n", gws[0], gws[1], gws[2], lws[0], lws[1], lws[2]);
     }
 
 
@@ -703,9 +723,11 @@ public:
             cmd_list->SetComputeRootDescriptorTable(root_index++, gpu_heap_handle);
         }
 
-        const auto gws_x = params_.M / cm_dispatch_params_.tile_m;
-        const auto gws_y = params_.N / cm_dispatch_params_.tile_n;
-        const auto gws_z = 1;
+        const auto gws = get_gws();
+
+        const auto gws_x = gws[0];
+        const auto gws_y = gws[1];
+        const auto gws_z = gws[2];
 
         assert(gws_x % cm_params_.lws[0] == 0);
         assert(gws_y % cm_params_.lws[1] == 0);
@@ -717,9 +739,17 @@ public:
         cmd_list->Dispatch(thg_x, thg_y, thg_z);
     }
 
+    private:
+        std::vector<std::uint32_t> get_gws() const
+        {
+            const auto gws_x = params_.M / cm_params_.tile_m;
+            const auto gws_y = params_.N / cm_params_.tile_n;
+            const auto gws_z = cm_params_.slice_k;
+            return { gws_x, gws_y, gws_z };
+        }
+
 private:
     cm_params_t cm_params_;
-    cm_dispatch_params_t cm_dispatch_params_;
     IntelExtension& intc_ext_;
     std::vector<CD3DX12_GPU_DESCRIPTOR_HANDLE> gpu_handles_;
 
