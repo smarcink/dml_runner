@@ -15,6 +15,8 @@ std::vector<std::byte> cpu_op::convolution(const bindings_t& bindings, opts_t op
     static dnnl::stream stream(engine);
     const auto engine_kind = engine.get_kind();
 
+    dnnl::set_jit_dump(true);
+
     stream.wait();  // just to be sure we can freely upload the input data    
 
     dnnl::memory input_memory = [&](const auto& binding)
@@ -73,6 +75,8 @@ std::vector<std::byte> cpu_op::convolution(const bindings_t& bindings, opts_t op
     const dnnl::convolution_forward::primitive_desc conv_desc(engine,
         dnnl::prop_kind::forward_inference, dnnl::algorithm::convolution_direct,
         input_memory.get_desc(), filter_memory.get_desc(), bindings.bias.data ? bias_memory.get_desc() : dnnl::memory::desc{}, output_memory.get_desc(), stride, pad, pad);
+
+    const auto guery_impl_str = conv_desc.impl_info_str();
 
     dnnl::convolution_forward convolution(conv_desc);
     convolution.execute(stream, { { DNNL_ARG_SRC, input_memory }, {DNNL_ARG_WEIGHTS, filter_memory}, {DNNL_ARG_BIAS, bias_memory}, {DNNL_ARG_DST, output_memory} });

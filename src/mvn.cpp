@@ -10,6 +10,8 @@ std::vector<std::byte> cpu_op::mvn(const TensorShape& in_out_shape, DataLayout i
     static dnnl::stream stream(engine);
     const auto engine_kind = engine.get_kind();
 
+    dnnl::set_jit_dump(true);
+
     stream.wait();  // just to be sure we can freely upload the input data    
 
     dnnl::memory input_memory = [&]()
