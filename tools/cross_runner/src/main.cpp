@@ -3,7 +3,11 @@
 #include "conv.h"
 #include "softmax.h"
 #include "mvn.h"
+#include "memory_bandwidth.h"
 #include "layers_utils.h"
+
+#include <dml_types.hpp>
+#include <dml_convolution.hpp>
 
 #include <iostream>
 #include <optional>
@@ -52,38 +56,52 @@ struct CliOptions
     NodeType node_type = NodeType::eCount;
     std::uint32_t dispatch_iterations = 1;
     bool no_conformance_check = false;
+    bool print_opts = false;
 
     // generic type of layers params
     GemmBaseDispatcher::create_params_t gemm_opts{};
     ConvolutionBaseDispatcher::create_params_t conv_opts{};
-    SoftmaxDispatcher::create_params_t softmax_opts{};
+    SoftmaxBaseDispatcher::create_params_t softmax_opts{};
     MvnBaseDispatcher::create_params_t mvn_opts{};
 
     // specific for implementation
     ConvolutionCmDispatcher::conv_cm_params_t conv_cm_params{};
     MvnCmDispatcher::mvn_cm_params_t mvn_cm_params{};
+    SoftmaxCmDispatcher::softmax_cm_params_t softmax_cm_params{};
     GemmCmDispatcher::cm_params_t gemm_cm_params{};
+    
+    gpu_op::MemoryBandwidthDispatcher::create_params_t memory_bw_params{};
 };
 
 int main()
 {
+    libdml::DeviceInfo device_info{};
+    device_info.platform = libdml::HwPlatform::eDG2;
+    device_info.eu_count = 512;
+
+    libdml::ConvolutionDescriptor conv_desc{};
+    const auto convs_impls = libdml::get_convolution_implementation_list(device_info, conv_desc);
+
     constexpr const std::uint32_t MAX_ITERATIONS = 10'000;
 
     CliOptions opts;
     CLI::App dml_runner_app{ "App to microbenchmark and developer dml kernels.", "DirectML runner." };
     dml_runner_app.add_option("--type", opts.node_type, "Name of the type of layer to run.")
-        ->required()->check(CLI::IsMember({ NodeType::eConvDml, NodeType::eConvCm, NodeType::eGemmDml, NodeType::eGemmCm, NodeType::eSoftmax, NodeType::eMvnDml, NodeType::eMvnCm }))->
+        ->required()->check(CLI::IsMember({ NodeType::eConvDml, NodeType::eConvCm, NodeType::eGemmDml, NodeType::eGemmCm, NodeType::eSoftmaxDml, NodeType::eSoftmaxCm, NodeType::eMvnDml, NodeType::eMvnCm, NodeType::eMemoryBandwidth }))->
         transform(CLI::Transformer(std::map<std::string, NodeType>{
             { "conv_dml", NodeType::eConvDml },
             { "conv_cm", NodeType::eConvCm },
             { "gemm_dml", NodeType::eGemmDml },
             { "gemm_cm", NodeType::eGemmCm },
-            { "softmax", NodeType::eSoftmax },
+            { "softmax_dml", NodeType::eSoftmaxDml },
+            { "softmax_cm", NodeType::eSoftmaxCm },
             { "mvn_dml", NodeType::eMvnDml },
             { "mvn_cm", NodeType::eMvnCm },
+            { "mem_bw", NodeType::eMemoryBandwidth },
     }, CLI::ignore_case, CLI::ignore_underscore));
     dml_runner_app.add_option("--iters", opts.dispatch_iterations, "How many iterations to run.")->check(CLI::Range(1u, MAX_ITERATIONS));
     dml_runner_app.add_flag("--no_conform", opts.no_conformance_check);
+    dml_runner_app.add_flag("--print_opts", opts.print_opts);
 
     // generic type of layers options
     auto gemm_option_groups = dml_runner_app.add_subcommand("gemm_opts", "Options for genn layer.");
@@ -91,7 +109,7 @@ int main()
     auto conv_option_groups = dml_runner_app.add_subcommand("conv_opts", "Options for convolution layer.");
     ConvolutionBaseDispatcher::create_params_t::add_cli_options(conv_option_groups, opts.conv_opts);
     auto softmax_option_groups = dml_runner_app.add_subcommand("softmax_opts", "Options for softmax layer.");
-    SoftmaxDispatcher::create_params_t::add_cli_options(softmax_option_groups, opts.softmax_opts);
+    SoftmaxBaseDispatcher::create_params_t::add_cli_options(softmax_option_groups, opts.softmax_opts);
     auto mvn_option_groups = dml_runner_app.add_subcommand("mvn_opts", "Options for mvn layer.");
     MvnBaseDispatcher::create_params_t::add_cli_options(mvn_option_groups, opts.mvn_opts);
 
@@ -100,8 +118,12 @@ int main()
     ConvolutionCmDispatcher::conv_cm_params_t::add_cli_options(conv_cm_option_groups, opts.conv_cm_params);
     auto mvn_cm_option_groups = dml_runner_app.add_subcommand("mvn_cm_opts", "Options for mvn layer with CM implementation.");
     MvnCmDispatcher::mvn_cm_params_t::add_cli_options(mvn_cm_option_groups, opts.mvn_cm_params);
+    auto softmax_cm_option_groups = dml_runner_app.add_subcommand("softmax_cm_opts", "Options for softmax layer with CM implementation.");
+    SoftmaxCmDispatcher::softmax_cm_params_t::add_cli_options(softmax_cm_option_groups, opts.softmax_cm_params);
     auto gemm_cm_option_groups = dml_runner_app.add_subcommand("gemm_cm_opts", "Options for gemm layer with CM implementation.");
     GemmCmDispatcher::cm_params_t::add_cli_options(gemm_cm_option_groups, opts.gemm_cm_params);
+    auto mem_bw_option_group = dml_runner_app.add_subcommand("mem_bw_opts", "Options for memory banddiwth measurments");
+    gpu_op::MemoryBandwidthDispatcher::MemoryBandwidthDispatcher::create_params_t::add_cli_options(mem_bw_option_group, opts.memory_bw_params);
 
     try {
         dml_runner_app.parse();
@@ -110,8 +132,11 @@ int main()
         return dml_runner_app.exit(e);
     }
 
-    const auto dumped_config = dml_runner_app.config_to_str(true);
-    std::cout << std::format("Running app with config:\n {}", dumped_config);
+    if (opts.print_opts)
+    {
+        const auto dumped_config = dml_runner_app.config_to_str(true);
+        std::cout << std::format("Running app with config:\n {}", dumped_config);
+    }
 
     assert(opts.node_type != NodeType::eCount);
     if ((opts.node_type == NodeType::eConvCm || opts.node_type == NodeType::eConvDml)
@@ -125,7 +150,7 @@ int main()
         std::cout << "Gemm options not set.\n";
         return -1;
     }
-    if (opts.node_type == NodeType::eSoftmax && !softmax_option_groups->parsed())
+    if ((opts.node_type == NodeType::eSoftmaxDml || opts.node_type == NodeType::eSoftmaxCm) && !softmax_option_groups->parsed())
     {
         std::cout << "Softmax options not set.\n";
         return -1;
@@ -168,10 +193,15 @@ int main()
             node = std::make_unique<ConvolutionCmDispatcher>(std::move(opts.conv_opts), std::move(opts.conv_cm_params),
                 intel_extension_d3d12, d3d12_device.Get(), command_list.Get());
         }
-        else if (opts.node_type == NodeType::eSoftmax)
+        else if (opts.node_type == NodeType::eSoftmaxDml)
         {
-            node = std::make_unique<SoftmaxDispatcher>(std::move(opts.softmax_opts),
+            node = std::make_unique<SoftmaxDmlDispatcher>(std::move(opts.softmax_opts),
                 d3d12_device.Get(), dml_device.Get(), dml_command_recorder.Get(), command_list.Get());
+        }
+        else if (opts.node_type == NodeType::eSoftmaxCm)
+        {
+            node = std::make_unique<SoftmaxCmDispatcher>(std::move(opts.softmax_opts), std::move(opts.softmax_cm_params),
+                intel_extension_d3d12, d3d12_device.Get(), dml_device.Get(), dml_command_recorder.Get(), command_list.Get());
         }
         else if (opts.node_type == NodeType::eMvnDml)
         {
@@ -182,6 +212,10 @@ int main()
         {
             node = std::make_unique<MvnCmDispatcher>(std::move(opts.mvn_opts), std::move(opts.mvn_cm_params),
                 intel_extension_d3d12, d3d12_device.Get(), dml_device.Get(), dml_command_recorder.Get(), command_list.Get());
+        }
+        else if (opts.node_type == NodeType::eMemoryBandwidth)
+        {
+            node = std::make_unique<gpu_op::MemoryBandwidthDispatcher>(std::move(opts.memory_bw_params), d3d12_device.Get(), command_list.Get(), intel_extension_d3d12);
         }
         else
         {
@@ -260,8 +294,8 @@ int main()
     }
     catch (std::exception e)
     {
-        std::cout << std::format("Exception caught: {} \n", e.what());
+        std::cerr << std::format("Exception caught: {} \n", e.what());
+        return -1; 
     }
-
     return 0;
 }

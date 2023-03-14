@@ -159,7 +159,7 @@ public:
 
     INTCExtensionContext* get() { return ext_ctx_; }
 
-    ComPtr<ID3D12PipelineState> create_pipeline(const CD3DX12_SHADER_BYTECODE& shader_byte_code, std::string_view build_opts, ID3D12RootSignature* root_signature)
+    ComPtr<ID3D12PipelineState> create_pipeline(const CD3DX12_SHADER_BYTECODE& shader_byte_code, std::string_view build_opts, ID3D12RootSignature* root_signature, INTC_D3D12_SHADER_INPUT_TYPE lang)
     {
         if (!ext_ctx_)
         {
@@ -176,7 +176,7 @@ public:
         pso_desc_csext.CS = shader_byte_code;
         pso_desc_csext.CompileOptions = (void*)build_opts.data();
         pso_desc_csext.InternalOptions = nullptr;// driver folks addes (void*)"-xess"; in xefx //ToDo: what it gives?
-        pso_desc_csext.ShaderInputType = INTC_D3D12_SHADER_INPUT_TYPE::CM;
+        pso_desc_csext.ShaderInputType = lang;
 
         ComPtr<ID3D12PipelineState> ret;
         throw_if_failed(INTC_D3D12_CreateComputePipelineState(ext_ctx_, &pso_desc_csext, IID_PPV_ARGS(&ret)),
@@ -202,6 +202,12 @@ inline ComPtr<IDMLDevice> create_dml_device(ID3D12Device* d3d12_device)
     return dml_device;
 }
 
+inline int64_t align(const int64_t value, const int64_t alignment)
+{
+    assert(alignment >= 1);
+    return ((value + alignment - 1ll) / alignment) * alignment;
+}
+
 inline ComPtr<ID3D12DescriptorHeap> create_descriptor_heap(ID3D12Device* d3d12_device, uint32_t descriptors_count)
 {
     // Create descriptor heaps.
@@ -219,7 +225,7 @@ inline ComPtr<ID3D12Resource> create_buffer(ID3D12Device* d3d12_device, std::siz
 {
     ComPtr<ID3D12Resource> ret;
     const auto heap_props = CD3DX12_HEAP_PROPERTIES(heap_type);
-    const auto buffer_desc = CD3DX12_RESOURCE_DESC::Buffer(bytes_width, resource_flag);
+    const auto buffer_desc = CD3DX12_RESOURCE_DESC::Buffer(align(bytes_width, 256), resource_flag);
     throw_if_failed(d3d12_device->CreateCommittedResource(
         &heap_props,
         D3D12_HEAP_FLAG_NONE,

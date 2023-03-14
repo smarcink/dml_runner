@@ -11,6 +11,11 @@
 #include "CLI/Config.hpp"
 
 
+inline bool is_power_of_2(std::size_t n)
+{
+    return (n & (n - 1)) == 0;
+}
+
 struct TensorShape
 {
     std::uint32_t n = 0;
@@ -28,9 +33,12 @@ struct TensorShape
 
     TensorShape(std::span<std::uint32_t> in_v)
     {
-        assert((in_v.size() == 2 || in_v.size() == 4 || in_v.size() == 5) && "Not supported shape!");
+        assert(!(in_v.size() <3 || in_v.size() > 5) && "Not supported shape!");
         std::int32_t current_idx = static_cast<std::int32_t>(in_v.size()) - 1;
-        w = in_v[current_idx--];
+        if (in_v.size() > 3)
+        {
+            w = in_v[current_idx--];
+        }
         h = in_v[current_idx--];
         if (in_v.size() == 5)
         {
@@ -46,6 +54,10 @@ struct TensorShape
 
     inline std::size_t get_elements_count() const
     {
+        if (get_dims_count() == 0)
+        {
+            return 0;
+        }
         std::size_t acc = 1;
         acc *= n ? n : 1;
         acc *= c ? c : 1;
@@ -53,6 +65,18 @@ struct TensorShape
         acc *= h ? h : 1;
         acc *= w ? w : 1;
         return acc;
+    }
+
+    inline std::uint8_t get_dims_count() const
+    {
+        std::uint8_t ret = 0;
+        if (n) ret++;
+        if (c) ret++;
+        if (d) ret++;
+        if (h) ret++;
+        if (w) ret++;
+
+        return ret;
     }
 };
 
@@ -96,8 +120,43 @@ enum class DataLayout
     eNCHW = 0,
     eNHWC = 1,
     eW,
+
+
+    // ..
+    // ..
+
+    // weights layouts
+    eWeightsLayoutStart = 1000,
+    eOIYX,          // nchw and oiyx layouts are the same format, this is just to express it with proper name
+    eIO_i8_o8_i2,  // layout for 1x1 fp16 CM simd8 dpas kernel
+
+    eOYXI_o8,   // layout for non dpas CM kernel for simd8 mad
+    eOYXI_o16,  // layout for non dpas CM kernel for simd16 mad
+
+    // ..
+    // ..
+
     eCount
 };
+
+inline std::string data_layout_name(DataLayout l)
+{
+    switch (l)
+    {
+    case DataLayout::eNCHW: return "NCHW";
+    case DataLayout::eNHWC: return "NHWC";
+    case DataLayout::eW:    return "W";
+    case DataLayout::eOIYX: return "OIYX";
+    case DataLayout::eIO_i8_o8_i2: return "IO_i8_o8_i2";
+    case DataLayout::eOYXI_o8:  return "OYXI_o8";
+    case DataLayout::eOYXI_o16: return "OYXI_o16";
+    default:
+        assert(false && "Unknown data layout name.");
+        return "";
+    }
+    return "";
+
+}
 
 inline std::uint8_t data_layout_dimensions_count(DataLayout l)
 {
@@ -148,9 +207,11 @@ enum class NodeType
     eGemmCm,
     eConvDml,
     eConvCm,
-    eSoftmax,
+    eSoftmaxDml,
+    eSoftmaxCm,
     eMvnDml,
     eMvnCm,
+    eMemoryBandwidth,
     eCount
 };
 
@@ -217,7 +278,7 @@ inline ConformanceResult run_conformance_check(const std::vector<std::byte>& gpu
 
         const auto abs_diff = std::abs(ret.node_value - ret.reference_value);
 
-        if (abs_diff > ret.epsilon)
+        if (abs_diff > ret.epsilon || std::isnan(ret.node_value) || std::isnan(ret.reference_value))
         {
             ret.passed = false;
 
@@ -249,7 +310,7 @@ enum class DescType
     eUav
 };
 
-inline ComPtr<ID3D12RootSignature> create_root_signature(ID3D12Device* d3d12_device, std::span<DescType> desc_list)
+inline ComPtr<ID3D12RootSignature> create_root_signature(ID3D12Device* d3d12_device, std::span<const DescType> desc_list)
 {
     const auto bindings_size = desc_list.size();
     std::vector<D3D12_DESCRIPTOR_RANGE1> ranges;
@@ -317,7 +378,7 @@ inline ComPtr<ID3D12RootSignature> create_root_signature(ID3D12Device* d3d12_dev
     return ret;
 }
 
-inline std::vector<CD3DX12_GPU_DESCRIPTOR_HANDLE> create_resource_views_and_handles(ID3D12Device* d3d12_device, std::span<std::pair<DescType, ID3D12Resource*>> resources_list, D3D12_CPU_DESCRIPTOR_HANDLE cpu_handle, D3D12_GPU_DESCRIPTOR_HANDLE gpu_handle)
+inline std::vector<CD3DX12_GPU_DESCRIPTOR_HANDLE> create_resource_views_and_handles(ID3D12Device* d3d12_device, std::span<const std::pair<DescType, ID3D12Resource*>> resources_list, D3D12_CPU_DESCRIPTOR_HANDLE cpu_handle, D3D12_GPU_DESCRIPTOR_HANDLE gpu_handle)
 {
     const auto desc_heap_incrs_size = d3d12_device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 
@@ -334,6 +395,7 @@ inline std::vector<CD3DX12_GPU_DESCRIPTOR_HANDLE> create_resource_views_and_hand
 
         auto& resource_view_type = resources_list[i].first;
         auto& resource = resources_list[i].second;
+        assert(resource != nullptr);
         const auto res_desc = resource->GetDesc();
         assert(res_desc.Dimension == D3D12_RESOURCE_DIMENSION::D3D12_RESOURCE_DIMENSION_BUFFER);
 
@@ -367,4 +429,27 @@ inline std::vector<CD3DX12_GPU_DESCRIPTOR_HANDLE> create_resource_views_and_hand
     }
 
     return gpu_handles;
+}
+
+inline void dispatch_kernel(ID3D12GraphicsCommandList* cmd_list, ID3D12PipelineState* pso, ID3D12RootSignature* root_signature, std::span<CD3DX12_GPU_DESCRIPTOR_HANDLE> gpu_handles, std::uint32_t thg_x, std::uint32_t thg_y, std::uint32_t thg_z)
+{
+    assert(thg_x > 0);
+    assert(thg_y > 0);
+    assert(thg_z > 0);
+    assert(cmd_list);
+    assert(root_signature);
+    assert(pso);
+    assert(!gpu_handles.empty());
+
+    cmd_list->SetComputeRootSignature(root_signature);
+    cmd_list->SetPipelineState(pso);
+
+    uint32_t root_index = 1; // start with 1, beacuse Cross compiler CM driver path needs that
+    for (uint32_t i = 0; i < gpu_handles.size(); i++)
+    {
+        const auto gpu_heap_handle = gpu_handles[i];
+        cmd_list->SetComputeRootDescriptorTable(root_index++, gpu_heap_handle);
+    }
+
+    cmd_list->Dispatch(thg_x, thg_y, thg_z);
 }
