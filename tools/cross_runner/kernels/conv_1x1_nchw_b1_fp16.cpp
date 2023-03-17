@@ -42,6 +42,7 @@ implied warranties, other than those that are expressly stated in the License.
 
 #define WIDTH_LEFTOVER (OUTPUT_WIDTH % BLOCK_W)
 #define HAS_LEFTOVER (WIDTH_LEFTOVER != 0)
+#define LEFTOVER_COVERS_FULL_WIDTH (OUTPUT_WIDTH == WIDTH_LEFTOVER)
 
 #define EXEC_SIZE 8
 #define DPAS_DEPTH 8 
@@ -69,7 +70,7 @@ implied warranties, other than those that are expressly stated in the License.
 #define INPUT_NCHW_PLANE_SIZE (INPUT_WIDTH * INPUT_HEIGHT * sizeof(DT_IN))
 #define OUTPUT_NCHW_PLANE_SIZE (OUTPUT_WIDTH * OUTPUT_HEIGHT * sizeof(DT_OUT))
 
-static const uint32_t input_init_offsets[] = { 0, 2, 4, 6, 8, 10, 12, 14 };
+static const uint32_t init_linear_offsets[] = { 0, 2, 4, 6, 8, 10, 12, 14 };
 
 static const uint32_t output_init_offsets[] = {
                                             0 * OUTPUT_NCHW_PLANE_SIZE, 1 * OUTPUT_NCHW_PLANE_SIZE,
@@ -108,7 +109,7 @@ _GENX_ inline vector<DT_IN, BLOCK_W * DPAS_INPUT_CHANNELS> load_input_nchw_and_r
     }  
 #else
     // non transposed scattered reads
-    vector<uint32_t, 8> offsets(input_init_offsets);
+    vector<uint32_t, 8> offsets(init_linear_offsets);
     offsets += byte_offset;
     #pragma unroll
     for(int i = 0; i < DPAS_INPUT_CHANNELS; i++)
@@ -128,7 +129,7 @@ _GENX_ inline vector<DT_WEIGHTS, WEIGHTS_REG_SIZE> load_filter_nchw_data(Surface
     const uint32_t INPUT_CHANNELS_CHUNKS = DPAS_INPUT_CHANNELS / PACKED_ELEMENT;
     const uint32_t LOAD_SIZE = PACKED_ELEMENT * DPAS_OUTPUT_CHANNELS;
     vector<DT_WEIGHTS, WEIGHTS_REG_SIZE> data_out;
-#if 0
+#if 1
     vector<DT_WEIGHTS, DPAS_INPUT_CHANNELS> data_load;
     vector_ref<uint32_t, DPAS_INPUT_CHANNELS / 2> data_load_view = data_load.format<uint32_t>();
     #pragma unroll
@@ -143,7 +144,7 @@ _GENX_ inline vector<DT_WEIGHTS, WEIGHTS_REG_SIZE> load_filter_nchw_data(Surface
         }
 
     }
-#elif 1
+#elif 0
     vector_ref<uint32_t, 64> data_load_view =data_out.format<uint32_t>();
     data_load_view = cm_load<uint32_t, 64, DataSize::Default, CacheHint::Cached, CacheHint::Cached>(surface, byte_offset);  
 #else 
@@ -165,35 +166,39 @@ _GENX_ inline vector<DT_WEIGHTS, WEIGHTS_REG_SIZE> load_filter_nchw_data(Surface
 template<uint32_t STORE_W>
 _GENX_ inline void store_output_wc8_as_nchw(SurfaceIndex surface [[type("buffer_t")]], vector_ref<DT_OUT, BLOCK_W * DPAS_OUTPUT_CHANNELS> grf_chunk, uint32_t byte_offset, uint32_t w_chunk_id)
 {    
-    // non transposed scattered writes
-    vector<uint32_t, DPAS_OUTPUT_CHANNELS> offsets(output_init_offsets);
-    offsets += byte_offset;
-    
+
 #if HAS_LEFTOVER
     if(w_chunk_id == ((details::roundUpNextMultiple(OUTPUT_WIDTH, BLOCK_W)/BLOCK_W) -1))
     {
-      #pragma unroll
+        // non transposed scattered writes
+        vector<uint32_t, DPAS_OUTPUT_CHANNELS> offsets_leftovers(output_init_offsets);
+        offsets_leftovers += byte_offset;
+        #pragma unroll
         for(int i = 0; i < WIDTH_LEFTOVER; i++)
         {
             // pick data to store
-            vector<DT_OUT, DPAS_OUTPUT_CHANNELS> grf_chunk_store = grf_chunk.select<DPAS_OUTPUT_CHANNELS, 1>(i * DPAS_OUTPUT_CHANNELS);
+            vector_ref<DT_OUT, DPAS_OUTPUT_CHANNELS> grf_chunk_store = grf_chunk.select<DPAS_OUTPUT_CHANNELS, 1>(i * DPAS_OUTPUT_CHANNELS);
             // store with non-transposed msg
-            cm_store<half, VectorSize::N1, DataSize::Default, CacheHint::WriteBack, CacheHint::WriteBack>(surface, offsets, grf_chunk_store);
-            offsets += sizeof(DT_OUT);  // move by one element
-        }   
+            cm_store<half, VectorSize::N1, DataSize::Default, CacheHint::WriteBack, CacheHint::WriteBack>(surface, offsets_leftovers, grf_chunk_store);
+            offsets_leftovers += sizeof(DT_OUT);  // move by one element
+        }  
     }
     else
     {
 #endif
-    #pragma unroll
-    for(int i = 0; i < STORE_W; i++)
-    {
-        // pick data to store
-        vector<DT_OUT, DPAS_OUTPUT_CHANNELS> grf_chunk_store = grf_chunk.select<DPAS_OUTPUT_CHANNELS, 1>(i * DPAS_OUTPUT_CHANNELS);
-        // store with non-transposed msg
-        cm_store<half, VectorSize::N1, DataSize::Default, CacheHint::WriteBack, CacheHint::WriteBack>(surface, offsets, grf_chunk_store);
-        offsets += sizeof(DT_OUT);  // move by one element
-    }  
+#if !LEFTOVER_COVERS_FULL_WIDTH
+        vector<uint32_t, STORE_W> offsets(init_linear_offsets);
+        offsets += byte_offset;
+        // block stores could be used here, but I havent seen any advtange of using it yet. Leaving this code for  
+        #pragma unroll
+        for(int i = 0; i < DPAS_OUTPUT_CHANNELS; i++)
+        {
+            // pick data to store
+            vector<DT_OUT, STORE_W> grf_chunk_store = grf_chunk.select<STORE_W, DPAS_OUTPUT_CHANNELS>(i);                  
+            cm_store<half, VectorSize::N1, DataSize::Default, CacheHint::WriteBack, CacheHint::WriteBack>(surface, offsets, grf_chunk_store);
+            offsets += OUTPUT_NCHW_PLANE_SIZE;
+        }
+#endif // !LEFTOVER_COVERS_FULL_WIDTH
 #if HAS_LEFTOVER
     }
 #endif
@@ -306,7 +311,7 @@ extern "C" _GENX_MAIN_ void convolution_nchw_1x1(
     const uint output_w_chunk_offset = w_chunk_id * BLOCK_W;
     const uint output_h_chunk_offset = h_chunk_id * BLOCK_H * OUTPUT_WIDTH;
     uint32_t output_offset = (output_batch_offset + output_oc_chunk_offset + output_h_chunk_offset + output_w_chunk_offset) * sizeof(DT_OUT);
-    
+      
     store_output_wc8_as_nchw<BLOCK_W>(surface_output, output_row_0, output_offset, w_chunk_id);  
 #if BLOCK_H == 2
     store_output_wc8_as_nchw<BLOCK_W>(surface_output, output_row_1, output_offset + OUTPUT_WIDTH * sizeof(DT_OUT), w_chunk_id);  
