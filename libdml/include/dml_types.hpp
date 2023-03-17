@@ -6,7 +6,16 @@
 
 namespace libdml
 {
-enum class HwGen
+enum class ErrorCode
+{
+    eSuccess = 0,
+    eGeneralError = 1,
+
+    // ..
+    // ..
+};
+
+enum class HwPlatform
 {
     eUndefined = 0,
     eSKL,
@@ -122,7 +131,7 @@ struct Activation
 
 struct DeviceInfo
 {
-    HwGen gen;
+    HwPlatform platform;
     std::uint32_t eu_count;
 };
 

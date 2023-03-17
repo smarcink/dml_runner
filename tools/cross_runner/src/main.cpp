@@ -71,7 +71,7 @@ struct CliOptions
 int main()
 {
     libdml::DeviceInfo device_info{};
-    device_info.gen = libdml::HwGen::eDG2;
+    device_info.platform = libdml::HwPlatform::eDG2;
     device_info.eu_count = 512;
 
     libdml::ConvolutionDescriptor conv_desc{};

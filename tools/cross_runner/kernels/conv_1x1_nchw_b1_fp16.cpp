@@ -1,3 +1,20 @@
+/*========================== begin_copyright_notice ============================
+
+INTEL CONFIDENTIAL
+
+Copyright (C) 2023 Intel Corporation
+
+This software and the related documents are Intel copyrighted materials,
+and your use of them is governed by the express license under which they were
+provided to you ("License"). Unless the License provides otherwise,
+you may not use, modify, copy, publish, distribute, disclose or transmit this
+software or the related documents without Intel's prior written permission.
+
+This software and the related documents are provided as is, with no express or
+implied warranties, other than those that are expressly stated in the License.
+
+============================= end_copyright_notice ===========================*/
+
 #include <cm/cm.h>
 #include <cm/cmtl.h>
 
@@ -52,16 +69,7 @@
 #define INPUT_NCHW_PLANE_SIZE (INPUT_WIDTH * INPUT_HEIGHT * sizeof(DT_IN))
 #define OUTPUT_NCHW_PLANE_SIZE (OUTPUT_WIDTH * OUTPUT_HEIGHT * sizeof(DT_OUT))
 
-static const uint32_t input_init_offsets[] = {
-                                            0 * INPUT_NCHW_PLANE_SIZE, 1 * INPUT_NCHW_PLANE_SIZE,
-                                            2 * INPUT_NCHW_PLANE_SIZE, 3 * INPUT_NCHW_PLANE_SIZE,
-                                            4 * INPUT_NCHW_PLANE_SIZE, 5 * INPUT_NCHW_PLANE_SIZE,
-                                            6 * INPUT_NCHW_PLANE_SIZE, 7 * INPUT_NCHW_PLANE_SIZE,
-                                            8 * INPUT_NCHW_PLANE_SIZE, 9 * INPUT_NCHW_PLANE_SIZE,
-                                            10 * INPUT_NCHW_PLANE_SIZE, 11 * INPUT_NCHW_PLANE_SIZE,
-                                            12 * INPUT_NCHW_PLANE_SIZE, 13 * INPUT_NCHW_PLANE_SIZE,
-                                            14 * INPUT_NCHW_PLANE_SIZE,15 * INPUT_NCHW_PLANE_SIZE,
-                                            };
+static const uint32_t input_init_offsets[] = { 0, 2, 4, 6, 8, 10, 12, 14 };
 
 static const uint32_t output_init_offsets[] = {
                                             0 * OUTPUT_NCHW_PLANE_SIZE, 1 * OUTPUT_NCHW_PLANE_SIZE,
@@ -100,17 +108,15 @@ _GENX_ inline vector<DT_IN, BLOCK_W * DPAS_INPUT_CHANNELS> load_input_nchw_and_r
     }  
 #else
     // non transposed scattered reads
-    vector<uint32_t, DPAS_INPUT_CHANNELS> offsets(input_init_offsets);
+    vector<uint32_t, 8> offsets(input_init_offsets);
     offsets += byte_offset;
     #pragma unroll
-    for(int i = 0; i < LOAD_W; i++)
+    for(int i = 0; i < DPAS_INPUT_CHANNELS; i++)
     {
-        // pick registers
-        vector_ref<DT_IN, DPAS_INPUT_CHANNELS> grf_chunk_store = data_out.select<DPAS_INPUT_CHANNELS, 1>(i * DPAS_INPUT_CHANNELS);
-        // read with non-transposed msg
-        grf_chunk_store = cm_load<half, VectorSize::N1, DataSize::Default, CacheHint::Default, CacheHint::Default>(surface, offsets);
-        offsets += sizeof(DT_IN);  // move by one element
-    } 
+        vector<half, 8> w_grf_chunk = cm_load<half, VectorSize::N1, DataSize::Default, CacheHint::Default, CacheHint::Default>(surface, offsets);
+        data_out.select<8, DPAS_INPUT_CHANNELS>(i) = w_grf_chunk;
+        offsets += INPUT_NCHW_PLANE_SIZE;
+    }
 #endif
     return data_out;
 }
@@ -122,7 +128,7 @@ _GENX_ inline vector<DT_WEIGHTS, WEIGHTS_REG_SIZE> load_filter_nchw_data(Surface
     const uint32_t INPUT_CHANNELS_CHUNKS = DPAS_INPUT_CHANNELS / PACKED_ELEMENT;
     const uint32_t LOAD_SIZE = PACKED_ELEMENT * DPAS_OUTPUT_CHANNELS;
     vector<DT_WEIGHTS, WEIGHTS_REG_SIZE> data_out;
-#if 1
+#if 0
     vector<DT_WEIGHTS, DPAS_INPUT_CHANNELS> data_load;
     vector_ref<uint32_t, DPAS_INPUT_CHANNELS / 2> data_load_view = data_load.format<uint32_t>();
     #pragma unroll
@@ -137,7 +143,7 @@ _GENX_ inline vector<DT_WEIGHTS, WEIGHTS_REG_SIZE> load_filter_nchw_data(Surface
         }
 
     }
-#elif 0
+#elif 1
     vector_ref<uint32_t, 64> data_load_view =data_out.format<uint32_t>();
     data_load_view = cm_load<uint32_t, 64, DataSize::Default, CacheHint::Cached, CacheHint::Cached>(surface, byte_offset);  
 #else 
@@ -204,14 +210,19 @@ extern "C" _GENX_MAIN_ void convolution_nchw_1x1(
 {
     const uint w_chunk_id = cm_group_id(0) * cm_local_size(0) + cm_local_id(0);
     const uint h_chunk_id = cm_group_id(1) * cm_local_size(1) + cm_local_id(1);
-    const uint oc_chunk_id = (cm_group_id(2) * cm_local_size(2) + cm_local_id(2)) * (BLOCK_OC / DPAS_OUTPUT_CHANNELS);
-         
+    const uint thread_id_2 = (cm_group_id(2) * cm_local_size(2) + cm_local_id(2));
+    
+    const uint THREADS_FOR_OC = (OUTPUT_CHANNELS / BLOCK_OC);
+    const uint batch_id = (thread_id_2 / THREADS_FOR_OC);
+    const uint oc_chunk_id = (thread_id_2 % THREADS_FOR_OC) * (BLOCK_OC / DPAS_OUTPUT_CHANNELS);
+    
     const uint32_t input_row_offset_size = INPUT_WIDTH;
     const uint32_t input_dpas_ic_offset_size = INPUT_HEIGHT * DPAS_INPUT_CHANNELS * input_row_offset_size;
     
+    const uint input_batch_offset = batch_id * INPUT_WIDTH * INPUT_HEIGHT * INPUT_CHANNELS;
     const uint input_w_chunk_offset = w_chunk_id * BLOCK_W * STRIDE_W;
     const uint input_h_chunk_offset = h_chunk_id * BLOCK_H * STRIDE_H * input_row_offset_size;
-    uint32_t input_offset = (input_h_chunk_offset + input_w_chunk_offset) * sizeof(DT_IN);
+    uint32_t input_offset = (input_batch_offset + input_h_chunk_offset + input_w_chunk_offset) * sizeof(DT_IN);
         
       
     const uint32_t weights_nchw_oc_offset_size = DPAS_OUTPUT_CHANNELS * INPUT_CHANNELS * sizeof(DT_WEIGHTS);
@@ -290,11 +301,11 @@ extern "C" _GENX_MAIN_ void convolution_nchw_1x1(
 #error ToDo: add support for use_bias case here.
 #endif 
   
-   
+    const uint output_batch_offset = batch_id * OUTPUT_HEIGHT * OUTPUT_WIDTH * OUTPUT_CHANNELS;
     const uint output_oc_chunk_offset = oc_chunk_id * DPAS_OUTPUT_CHANNELS * OUTPUT_HEIGHT * OUTPUT_WIDTH;
     const uint output_w_chunk_offset = w_chunk_id * BLOCK_W;
     const uint output_h_chunk_offset = h_chunk_id * BLOCK_H * OUTPUT_WIDTH;
-    uint32_t output_offset = (output_oc_chunk_offset + output_h_chunk_offset + output_w_chunk_offset) * sizeof(DT_OUT);
+    uint32_t output_offset = (output_batch_offset + output_oc_chunk_offset + output_h_chunk_offset + output_w_chunk_offset) * sizeof(DT_OUT);
     
     store_output_wc8_as_nchw<BLOCK_W>(surface_output, output_row_0, output_offset, w_chunk_id);  
 #if BLOCK_H == 2

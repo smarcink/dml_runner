@@ -2,7 +2,7 @@
 #include "impl/convolution/convolution_impl.h"
 
 #include <vector>
-
+#include <cassert>
 
 void libdml::ConvolutionPrimitive::ImplDeleter::operator()(ConvolutionImplementation* impl) const
 {
@@ -19,6 +19,19 @@ libdml::ConvolutionPrimitive::ConvolutionPrimitive(ConvolutionImplementation* im
 libdml::ConvolutionPrimitive::~ConvolutionPrimitive() = default;
 
 
+libdml::ConvolutionExecutionParams libdml::ConvolutionPrimitive::get_execution_map(ErrorCode* error_code) const
+{
+    if (!impl_)
+    {
+        if (error_code)
+        {
+            *error_code = ErrorCode::eGeneralError;
+        }
+        return {};
+    }
+
+    return impl_->get_execution_map();
+}
 
 std::vector<libdml::ConvolutionPrimitive> libdml::get_convolution_implementation_list(const DeviceInfo& device_info, const ConvolutionDescriptor& desc)
 {

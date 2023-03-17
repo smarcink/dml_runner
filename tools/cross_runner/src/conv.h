@@ -22,7 +22,7 @@ public:
         const dml::TensorDimensions bias_dims{ 1, output_shape.c, 1, 1 };
 
         const std::array<std::uint32_t, 2> strides = { stride_shape.h, stride_shape.w };
-        const std::vector<std::uint32_t> dilations = { 0u, 0u };
+        const std::vector<std::uint32_t> dilations = { 1u, 1u };
         const std::vector<std::uint32_t> start_pad = { input_pad, input_pad };
         const std::vector<std::uint32_t> end_pad = { input_pad, input_pad };
         const std::vector<std::uint32_t> out_pad = { output_pad, output_pad };
@@ -118,6 +118,7 @@ public:
         DML_OPERATOR_DESC dml_operator_desc{};
         dml_operator_desc.Type = DML_OPERATOR_CONVOLUTION;
         dml_operator_desc.Desc = &desc;
+
 
         throw_if_failed(dml_device->CreateOperator(
             &dml_operator_desc, IID_PPV_ARGS(dml_operator_.ReleaseAndGetAddressOf())), "create convolution operator");
@@ -770,7 +771,7 @@ public:
 
         const auto gws_x = round_up_next_multiple(output_shape_.w, cm_params_.block_w) / cm_params_.block_w;
         const auto gws_y = round_up_next_multiple(output_shape_.h, cm_params_.block_h) / cm_params_.block_h;
-        const auto gws_z = params_.filter_shape.n / cm_params_.block_oc;
+        const auto gws_z = params_.input_shape.n * (params_.filter_shape.n / cm_params_.block_oc);
 
         assert(gws_x % cm_params_.lws[0] == 0);
         assert(gws_y % cm_params_.lws[1] == 0);

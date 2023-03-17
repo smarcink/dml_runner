@@ -14,14 +14,14 @@ enum class ConvolutionDirection
     eBackward
 };
 
-enum class ConvolutionExecParamsType
+enum ConvolutionExecParamsType
 {
-    eUndefined = 0,
-    eInput,
-    eOutput,
-    eWeights,
-    eBias,
-    eScalars  //ToDo: can we assume that scalar are always packed together? Or should be seperated list of scalaras?
+    CONVOLUTION_EXEC_PARAM_TYPE_UNDEFINED = 0,
+    CONVOLUTION_EXEC_PARAM_TYPE_INPUT,
+    CONVOLUTION_EXEC_PARAM_TYPE_OUTPUT,
+    CONVOLUTION_EXEC_PARAM_TYPE_WEIGHTS,
+    CONVOLUTION_EXEC_PARAM_TYPE_BIAS,
+    CONVOLUTION_EXEC_PARAM_TYPE_SCALARS  //ToDo: can we assume that scalar are always packed together? Or should be seperated list of scalaras?
 };
 
 /*
@@ -60,9 +60,14 @@ struct ConvolutionPrefferedLayout
     std::optional<DataLayout> bias_layout = std::nullopt;
 };
 
+struct ExecParamInfo
+{
+    std::uint32_t index;
+};
+
 struct ConvolutionExecutionParams
 {
-    std::map<std::uint32_t, ConvolutionExecParamsType> params_map;
+    std::map<ConvolutionExecParamsType, ExecParamInfo> params_map;
     std::vector<std::byte> scalars_buffer;
 };
 
@@ -94,7 +99,7 @@ public:
     ConvolutionPrefferedLayout query_preffered_layouts() const;
     KernelInfo get_kernel_info(const ConvolutionPrefferedLayout& layouts) const;
 
-    ConvolutionExecutionParams get_execution_map() const;
+    ConvolutionExecutionParams get_execution_map(ErrorCode* error_code) const;
 
     struct ImplDeleter
     {
