@@ -38,14 +38,17 @@ implied warranties, other than those that are expressly stated in the License.
 #error [Error_kernel_config_unsupported_block_h] Kernel designed to work with block_h = {1, 2}.
 #endif
 
+#define DPAS_DEPTH 8 
+#if(CM_GENX >= 1280)
+#define EXEC_SIZE 16
+#else
+#define EXEC_SIZE 8
+#endif
 
 
 #define WIDTH_LEFTOVER (OUTPUT_WIDTH % BLOCK_W)
 #define HAS_LEFTOVER (WIDTH_LEFTOVER != 0)
 #define LEFTOVER_COVERS_FULL_WIDTH (OUTPUT_WIDTH == WIDTH_LEFTOVER)
-
-#define EXEC_SIZE 8
-#define DPAS_DEPTH 8 
 
 #define DT_OUT half
 #define DT_IN half

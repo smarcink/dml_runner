@@ -611,7 +611,7 @@ public:
         CD3DX12_SHADER_BYTECODE byte_code;
         byte_code.pShaderBytecode = kernel_source_content.data();
         byte_code.BytecodeLength = kernel_source_content.size();
-        pso_ = intc_ext_.create_pipeline(byte_code, build_options_final, root_signature_.Get());
+        pso_ = intc_ext_.create_pipeline(byte_code, build_options_final, root_signature_.Get(), INTC_D3D12_SHADER_INPUT_TYPE::CM);
     }
 
     std::uint32_t get_total_descriptor_count() override

@@ -507,6 +507,7 @@ public:
         std::uint32_t block_w = 8;
         std::uint32_t block_h = 1;
         std::uint32_t block_oc = 8;
+        bool reorder_weights = true;
 
         inline static void add_cli_options(CLI::App* opts, conv_cm_params_t& params)
         {
@@ -517,6 +518,7 @@ public:
             opts->add_option("--block_h", params.block_h);
             opts->add_option("--block_oc", params.block_oc);
             opts->add_option("--lws", params.lws)->delimiter(',');
+            opts->add_flag("--reorder_weights", params.reorder_weights);
         }
     };
 public:
@@ -528,6 +530,22 @@ public:
         , output_shape_(get_output_shape())
     {
         assert(params_.filter_shape.h == params_.filter_shape.w);
+
+        // weights reoder
+        if(cm_params_.reorder_weights)
+        {
+            WeightsReorder::create_params_t wr_params{};
+            wr_params.input_dt = params_.dt;
+            wr_params.output_dt = params_.dt;
+            wr_params.ic = params_.filter_shape.c;
+            wr_params.oc = params_.filter_shape.n;
+            wr_params.k_size = params_.filter_shape.w;
+
+            wr_params.ic_block = 16;
+            wr_params.oc_block = cm_params_.block_oc;
+            weights_reorder_.emplace(WeightsReorder(std::move(wr_params), intc_ext, d3d12_device, cmd_list));
+        }
+
         // root signature
         {
             // input, filter
@@ -613,7 +631,7 @@ public:
         byte_code.pShaderBytecode = kernel_source_content.data();
         byte_code.BytecodeLength = kernel_source_content.size();
 
-        pso_ = intc_ext_.create_pipeline(byte_code, build_options_final, root_signature_.Get());
+        pso_ = intc_ext_.create_pipeline(byte_code, build_options_final, root_signature_.Get(), INTC_D3D12_SHADER_INPUT_TYPE::CM);
         assert(pso_);
     }
 
@@ -625,6 +643,12 @@ public:
         {
             descriptor_count++;
         }
+
+        if (weights_reorder_.has_value())
+        {
+            descriptor_count++;
+        }
+
         return descriptor_count;
     }
 
@@ -658,18 +682,6 @@ public:
             weights_reorder_->execute(cmd_list);
         }
 
-        // disaptch convolution
-
-        //cmd_list->SetComputeRootSignature(root_signature_.Get());
-        //cmd_list->SetPipelineState(pso_.Get());
-
-        //uint32_t root_index = 1; // start with 1, beacuse Cross compiler CM driver path needs that
-        //for (uint32_t i = 0; i < gpu_handles_.size(); i++)
-        //{
-        //    const auto gpu_heap_handle = gpu_handles_[i];
-        //    cmd_list->SetComputeRootDescriptorTable(root_index++, gpu_heap_handle);
-        //}
-
         const auto gws_x = round_up_next_multiple(output_shape_.w, cm_params_.block_w) / cm_params_.block_w;
         const auto gws_y = round_up_next_multiple(output_shape_.h, cm_params_.block_h) / cm_params_.block_h;
         const auto gws_z = params_.input_shape.n * (params_.filter_shape.n / cm_params_.block_oc);
@@ -681,28 +693,113 @@ public:
         const auto thg_x = gws_x / cm_params_.lws[0];
         const auto thg_y = gws_y / cm_params_.lws[1];
         const auto thg_z = gws_z / cm_params_.lws[2];
-        //cmd_list->Dispatch(thg_x, thg_y, thg_z);
 
         dispatch_kernel(cmd_list, pso_.Get(), root_signature_.Get(), gpu_handles_, thg_x, thg_y, thg_z);
     }
 
 private:
-    struct weights_reorder_t
+    class WeightsReorder
     {
-        ComPtr<ID3D12PipelineState> pso_;
-        ComPtr<ID3D12RootSignature> root_signature_;
-        std::vector<CD3DX12_GPU_DESCRIPTOR_HANDLE> gpu_handles_;
+    public:
+        struct create_params_t
+        {
+            DataType input_dt = DataType::eCount;
+            DataType output_dt = DataType::eCount;
+            std::uint32_t ic = 0;
+            std::uint32_t oc = 0;
+            std::uint32_t k_size = 0;
+            std::uint32_t ic_block = 0;
+            std::uint32_t oc_block = 0;
+        };
+    public:
+        WeightsReorder(create_params_t&& params, IntelExtension& intc_ext, ID3D12Device* d3d12_device, ID3D12GraphicsCommandList* cmd_list)
+            : params_(std::move(params))
+            , intc_ext_(intc_ext)
+            , d3d12_device_(d3d12_device)
+        {
+            // root signature
+            {
+                // input, filter
+                const std::vector<DescType> desc_list = { DescType::eSrv, DescType::eUav };
+                root_signature_ = create_root_signature(d3d12_device_, desc_list);
+                assert(root_signature_);
+            }
+
+
+            // kernel jits
+            std::string build_options = "";
+            const std::string pre_jit = "-D";
+            const std::string post_jit = " ";
+            const std::string between_name_and_value = "=";
+
+            auto add_define = [&](const std::string& name, auto value) {
+                using namespace std;
+                std::string value_str;
+                if (std::is_floating_point<decltype(value)>::value)
+                {// to_*string precision is not enough to ensure good match betweeen GPU and CPU or pytorch execution results:
+                    value_str = (std::stringstream() << std::setiosflags(std::ios_base::showpoint | std::ios_base::fixed) << std::setprecision((std::numeric_limits<decltype(value)>::max_digits10 + 1)) << value).str();
+                }
+                else
+                { // fine for other types:
+                    value_str = to_string(value);
+                }
+
+                build_options += pre_jit + name + between_name_and_value + value_str + post_jit;
+            };
+
+            add_define("LWS_SIZE_X", 1);
+            add_define("LWS_SIZE_Y", 1);
+            add_define("LWS_SIZE_Z", 1);
+            add_define("INPUT_TYPE", "half");
+            add_define("OUTPUT_TYPE", "half");
+            add_define("WEI_OFFSET", 0);
+            add_define("IC", params_.ic);
+            add_define("OC", params_.oc);
+            add_define("K_SIZE", params_.k_size);
+            add_define("IC_BLOCK", params_.ic_block);
+            add_define("OC_BLOCK", params_.oc_block);
+
+            auto kernel_source_content = []()
+            {
+                const auto path = "Reorder_weights_cm.cl";
+                std::fstream file(path);
+                if (!file.is_open())
+                {
+                    const auto msg = std::format("Kernel file cant be opened:{} \n.", path);
+                    throw std::runtime_error(msg);
+                }
+                return std::string((std::istreambuf_iterator<char>(file)), (std::istreambuf_iterator<char>()));
+            }();
+
+            CD3DX12_SHADER_BYTECODE byte_code;
+            byte_code.pShaderBytecode = kernel_source_content.data();
+            byte_code.BytecodeLength = kernel_source_content.size();
+
+            pso_ = intc_ext_.create_pipeline(byte_code, build_options, root_signature_.Get(), INTC_D3D12_SHADER_INPUT_TYPE::OpenCL);
+            assert(pso_);
+        }
 
         void execute(ID3D12GraphicsCommandList* cmd_list) 
         {
+            assert(cmd_list);
             assert(pso_);
             assert(root_signature_);
+            assert(!gpu_handles_.empty());
 
             const auto thg_x = 1;
             const auto thg_y = 1;
             const auto thg_z = 1;
             dispatch_kernel(cmd_list, pso_.Get(), root_signature_.Get(), gpu_handles_, thg_x, thg_y, thg_z);
         }
+
+    private:
+        create_params_t params_;
+        IntelExtension& intc_ext_;
+        ID3D12Device* d3d12_device_;
+        ComPtr<ID3D12Resource> output_resource_;
+        ComPtr<ID3D12PipelineState> pso_;
+        ComPtr<ID3D12RootSignature> root_signature_;
+        std::vector<CD3DX12_GPU_DESCRIPTOR_HANDLE> gpu_handles_;
     };
 
 private:
@@ -714,7 +811,7 @@ private:
     ComPtr<ID3D12PipelineState> pso_;
     ComPtr<ID3D12RootSignature> root_signature_;
 
-    std::optional<weights_reorder_t> weights_reorder_;
+    std::optional<WeightsReorder> weights_reorder_;
 
     const TensorShape output_shape_;
 };

@@ -249,7 +249,7 @@ enum class DescType
     eUav
 };
 
-inline ComPtr<ID3D12RootSignature> create_root_signature(ID3D12Device* d3d12_device, std::span<DescType> desc_list)
+inline ComPtr<ID3D12RootSignature> create_root_signature(ID3D12Device* d3d12_device, std::span<const DescType> desc_list)
 {
     const auto bindings_size = desc_list.size();
     std::vector<D3D12_DESCRIPTOR_RANGE1> ranges;
@@ -317,7 +317,7 @@ inline ComPtr<ID3D12RootSignature> create_root_signature(ID3D12Device* d3d12_dev
     return ret;
 }
 
-inline std::vector<CD3DX12_GPU_DESCRIPTOR_HANDLE> create_resource_views_and_handles(ID3D12Device* d3d12_device, std::span<std::pair<DescType, ID3D12Resource*>> resources_list, D3D12_CPU_DESCRIPTOR_HANDLE cpu_handle, D3D12_GPU_DESCRIPTOR_HANDLE gpu_handle)
+inline std::vector<CD3DX12_GPU_DESCRIPTOR_HANDLE> create_resource_views_and_handles(ID3D12Device* d3d12_device, std::span<const std::pair<DescType, ID3D12Resource*>> resources_list, D3D12_CPU_DESCRIPTOR_HANDLE cpu_handle, D3D12_GPU_DESCRIPTOR_HANDLE gpu_handle)
 {
     const auto desc_heap_incrs_size = d3d12_device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 

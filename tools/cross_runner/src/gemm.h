@@ -8,8 +8,6 @@
 
 #include "dml_base_node.h"
 
-std::string to_string(const std::string& value) { return value; }
-
 namespace gpu_op
 {
 class Gemm : public DirectMlBaseNode
@@ -676,7 +674,7 @@ public:
         CD3DX12_SHADER_BYTECODE byte_code;
         byte_code.pShaderBytecode = kernel_source_content.data();
         byte_code.BytecodeLength = kernel_source_content.size();
-        pso_ = intc_ext_.create_pipeline(byte_code, build_options_final, root_signature_.Get());
+        pso_ = intc_ext_.create_pipeline(byte_code, build_options_final, root_signature_.Get(), INTC_D3D12_SHADER_INPUT_TYPE::CM);
 
         const auto gws = get_gws();
         const auto lws = cm_params_.lws;

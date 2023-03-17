@@ -159,7 +159,7 @@ public:
 
     INTCExtensionContext* get() { return ext_ctx_; }
 
-    ComPtr<ID3D12PipelineState> create_pipeline(const CD3DX12_SHADER_BYTECODE& shader_byte_code, std::string_view build_opts, ID3D12RootSignature* root_signature)
+    ComPtr<ID3D12PipelineState> create_pipeline(const CD3DX12_SHADER_BYTECODE& shader_byte_code, std::string_view build_opts, ID3D12RootSignature* root_signature, INTC_D3D12_SHADER_INPUT_TYPE lang)
     {
         if (!ext_ctx_)
         {
@@ -176,7 +176,7 @@ public:
         pso_desc_csext.CS = shader_byte_code;
         pso_desc_csext.CompileOptions = (void*)build_opts.data();
         pso_desc_csext.InternalOptions = nullptr;// driver folks addes (void*)"-xess"; in xefx //ToDo: what it gives?
-        pso_desc_csext.ShaderInputType = INTC_D3D12_SHADER_INPUT_TYPE::CM;
+        pso_desc_csext.ShaderInputType = lang;
 
         ComPtr<ID3D12PipelineState> ret;
         throw_if_failed(INTC_D3D12_CreateComputePipelineState(ext_ctx_, &pso_desc_csext, IID_PPV_ARGS(&ret)),

@@ -49,6 +49,8 @@ namespace
 
 }
 
+inline std::string to_string(const std::string& value) { return value; }
+
 inline DML_TENSOR_DATA_TYPE to_dml_data_type(DataType dt)
 {
     switch (dt)
