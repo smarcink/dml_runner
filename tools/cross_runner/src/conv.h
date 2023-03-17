@@ -246,6 +246,7 @@ public:
         TensorShape stride;
         bool no_bias = false;
         bool allow_fp16_computations = false;
+        bool managaed_weights = false; // ToDo: pass it to DML class so its actually beigned used
 
         inline static void add_cli_options(CLI::App* opts, create_params_t& params)
         {
@@ -529,79 +530,16 @@ public:
         assert(params_.filter_shape.h == params_.filter_shape.w);
         // root signature
         {
-            const auto bindings_size = get_total_descriptor_count();
-            std::vector<D3D12_DESCRIPTOR_RANGE1> ranges;
-            std::vector<CD3DX12_ROOT_PARAMETER1> root_params;
-            ranges.reserve(bindings_size);
-            root_params.reserve(bindings_size + 1); // + 1 beacuse of the CM driver path
-
-            std::uint32_t srv_range_reg = 0;
-            std::uint32_t uav_range_reg = 0;
-            std::uint32_t cbv_range_reg = 0;
-
-            {
-                // driver thing
-                CD3DX12_ROOT_PARAMETER1 rp{};
-                rp.InitAsConstants(1, cbv_range_reg++);
-                root_params.push_back(rp);
-            }
-            enum class DescType
-            {
-                eSrv,
-                eUav
-            };
-            auto add_desc_table = [&](DescType type)
-            {
-                if (type == DescType::eSrv)
-                {
-                    ranges.push_back({ D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, srv_range_reg++, 0, D3D12_DESCRIPTOR_RANGE_FLAG_DESCRIPTORS_VOLATILE });
-                }
-                else
-                {
-                    ranges.push_back({ D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, uav_range_reg++, 0, D3D12_DESCRIPTOR_RANGE_FLAG_DATA_VOLATILE });
-                }
-                CD3DX12_ROOT_PARAMETER1 rp{};
-                rp.InitAsDescriptorTable(1u, &ranges.back());
-                root_params.push_back(rp);
-            };
-
-            // input
-            add_desc_table(DescType::eSrv);
-            // filter
-            add_desc_table(DescType::eSrv);
+            // input, filter
+            std::vector<DescType> desc_list = { DescType::eSrv, DescType::eSrv };
             if (!params_.no_bias)
             {
-                // bias
-                add_desc_table(DescType::eSrv);
+                desc_list.push_back(DescType::eSrv);
             }
-            // output uav
-            add_desc_table(DescType::eUav);
-
-            if (root_params.size() == 0)
-            {
-                throw std::runtime_error("Something gone wrong. Why kernel has 0 root params?");
-            }
-
-            CD3DX12_VERSIONED_ROOT_SIGNATURE_DESC compute_root_signature_desc;
-            compute_root_signature_desc.Init_1_1(static_cast<UINT>(root_params.size()), root_params.data(), 0, nullptr);
-
-            ComPtr<ID3DBlob> signature;
-            ComPtr<ID3DBlob> error;
-            throw_if_failed(D3DX12SerializeVersionedRootSignature(
-                &compute_root_signature_desc,
-                D3D_ROOT_SIGNATURE_VERSION_1_1,
-                &signature,
-                &error), "D3DX12SerializeVersionedRootSignature failed.");
-
-            if (error)
-            {
-                throw_with_msg("Failed to create root signature, error:" + std::string((LPCSTR)error->GetBufferPointer()));
-            }
-            throw_if_failed(d3d12_device_->CreateRootSignature(
-                0,
-                signature->GetBufferPointer(),
-                signature->GetBufferSize(),
-                IID_PPV_ARGS(&root_signature_)), "CreateRootSignature(...) failed.");
+            // output 
+            desc_list.push_back(DescType::eUav);
+            root_signature_ = create_root_signature(d3d12_device_, desc_list);
+            assert(root_signature_);
         }
 
         // kernel jits
@@ -674,7 +612,9 @@ public:
         CD3DX12_SHADER_BYTECODE byte_code;
         byte_code.pShaderBytecode = kernel_source_content.data();
         byte_code.BytecodeLength = kernel_source_content.size();
+
         pso_ = intc_ext_.create_pipeline(byte_code, build_options_final, root_signature_.Get());
+        assert(pso_);
     }
 
     std::uint32_t get_total_descriptor_count() override
@@ -693,81 +633,42 @@ public:
         const auto desc_heap_incrs_size = d3d12_device_->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
         // i.e. add weights reorder
 
-
         const auto base_cpu_handle = CD3DX12_CPU_DESCRIPTOR_HANDLE{ cpu_handle };
         const auto base_gpu_handle = CD3DX12_GPU_DESCRIPTOR_HANDLE{ gpu_handle };
 
-        enum class ViewType
-        {
-            eSrv = 0,
-            eUav = 1
-        };
-
-        std::vector<std::pair<ViewType, ID3D12Resource*>> resources_list;
+        std::vector<std::pair<DescType, ID3D12Resource*>> resources_list;
         resources_list.reserve(get_total_descriptor_count());
-        resources_list.push_back({ ViewType::eSrv, input_buffer_.Get() });
-        resources_list.push_back({ ViewType::eSrv, filter_buffer_.Get() });
+        resources_list.push_back({ DescType::eSrv, input_buffer_.Get() });
+        resources_list.push_back({ DescType::eSrv, filter_buffer_.Get() });
         if (bias_buffer_)
         {
-            resources_list.push_back({ ViewType::eSrv, bias_buffer_.Get() });
+            resources_list.push_back({ DescType::eSrv, bias_buffer_.Get() });
         }
-        resources_list.push_back({ ViewType::eUav, output_buffer_.Get() });
+        resources_list.push_back({ DescType::eUav, output_buffer_.Get() });
 
-        // reserve handles
-        gpu_handles_.reserve(get_total_descriptor_count());
-        // create handles
-
-        for (std::size_t i = 0; i < resources_list.size(); i++)
-        {
-            auto cpu_handle = CD3DX12_CPU_DESCRIPTOR_HANDLE(base_cpu_handle, static_cast<int32_t>(i), desc_heap_incrs_size);
-            gpu_handles_.push_back(CD3DX12_GPU_DESCRIPTOR_HANDLE(base_gpu_handle, static_cast<int32_t>(i), desc_heap_incrs_size));
-
-            auto& resource_view_type = resources_list[i].first;
-            auto& resource = resources_list[i].second;
-            const auto res_desc = resource->GetDesc();
-            assert(res_desc.Dimension == D3D12_RESOURCE_DIMENSION::D3D12_RESOURCE_DIMENSION_BUFFER);
-
-            if (resource_view_type == ViewType::eSrv)
-            {
-                D3D12_SHADER_RESOURCE_VIEW_DESC desc{};
-                desc.Format = DXGI_FORMAT_R8_UINT;
-                desc.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
-                desc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-
-                desc.Buffer.StructureByteStride = 0;
-                desc.Buffer.NumElements = static_cast<UINT>(res_desc.Width);
-                desc.Buffer.FirstElement = 0;
-                desc.Buffer.Flags = D3D12_BUFFER_SRV_FLAG_NONE;
-
-                d3d12_device_->CreateShaderResourceView(resource, &desc, cpu_handle);
-            }
-            else
-            {
-                D3D12_UNORDERED_ACCESS_VIEW_DESC desc{};
-                desc.Format = DXGI_FORMAT_R8_UINT;
-                desc.ViewDimension = D3D12_UAV_DIMENSION_BUFFER;
-
-                desc.Buffer.StructureByteStride = 0;
-                desc.Buffer.NumElements = static_cast<UINT>(res_desc.Width);
-                desc.Buffer.FirstElement = 0;
-                desc.Buffer.Flags = D3D12_BUFFER_UAV_FLAG_NONE;
-
-                d3d12_device_->CreateUnorderedAccessView(resource, nullptr, &desc, cpu_handle);
-            }
-        }
+        gpu_handles_ = create_resource_views_and_handles(d3d12_device_, resources_list, base_cpu_handle, base_gpu_handle);
+        assert(!gpu_handles_.empty());
     }
 
     void execute(ID3D12GraphicsCommandList* cmd_list) override
     {
-        cmd_list->SetComputeRootSignature(root_signature_.Get());
-        cmd_list->SetPipelineState(pso_.Get());
-
-        uint32_t root_index = 1; // start with 1, beacuse Cross compiler CM driver path needs that
-        for (uint32_t i = 0; i < gpu_handles_.size(); i++)
+        // dispatch weights reorder if needed
+        if (!params_.managaed_weights && weights_reorder_.has_value())
         {
-            const auto gpu_heap_handle = gpu_handles_[i];
-            cmd_list->SetComputeRootDescriptorTable(root_index++, gpu_heap_handle);
+            weights_reorder_->execute(cmd_list);
         }
+
+        // disaptch convolution
+
+        //cmd_list->SetComputeRootSignature(root_signature_.Get());
+        //cmd_list->SetPipelineState(pso_.Get());
+
+        //uint32_t root_index = 1; // start with 1, beacuse Cross compiler CM driver path needs that
+        //for (uint32_t i = 0; i < gpu_handles_.size(); i++)
+        //{
+        //    const auto gpu_heap_handle = gpu_handles_[i];
+        //    cmd_list->SetComputeRootDescriptorTable(root_index++, gpu_heap_handle);
+        //}
 
         const auto gws_x = round_up_next_multiple(output_shape_.w, cm_params_.block_w) / cm_params_.block_w;
         const auto gws_y = round_up_next_multiple(output_shape_.h, cm_params_.block_h) / cm_params_.block_h;
@@ -780,8 +681,29 @@ public:
         const auto thg_x = gws_x / cm_params_.lws[0];
         const auto thg_y = gws_y / cm_params_.lws[1];
         const auto thg_z = gws_z / cm_params_.lws[2];
-        cmd_list->Dispatch(thg_x, thg_y, thg_z);
+        //cmd_list->Dispatch(thg_x, thg_y, thg_z);
+
+        dispatch_kernel(cmd_list, pso_.Get(), root_signature_.Get(), gpu_handles_, thg_x, thg_y, thg_z);
     }
+
+private:
+    struct weights_reorder_t
+    {
+        ComPtr<ID3D12PipelineState> pso_;
+        ComPtr<ID3D12RootSignature> root_signature_;
+        std::vector<CD3DX12_GPU_DESCRIPTOR_HANDLE> gpu_handles_;
+
+        void execute(ID3D12GraphicsCommandList* cmd_list) 
+        {
+            assert(pso_);
+            assert(root_signature_);
+
+            const auto thg_x = 1;
+            const auto thg_y = 1;
+            const auto thg_z = 1;
+            dispatch_kernel(cmd_list, pso_.Get(), root_signature_.Get(), gpu_handles_, thg_x, thg_y, thg_z);
+        }
+    };
 
 private:
     conv_cm_params_t cm_params_;
@@ -791,6 +713,8 @@ private:
 
     ComPtr<ID3D12PipelineState> pso_;
     ComPtr<ID3D12RootSignature> root_signature_;
+
+    std::optional<weights_reorder_t> weights_reorder_;
 
     const TensorShape output_shape_;
 };

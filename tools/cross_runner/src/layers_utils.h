@@ -368,3 +368,18 @@ inline std::vector<CD3DX12_GPU_DESCRIPTOR_HANDLE> create_resource_views_and_hand
 
     return gpu_handles;
 }
+
+inline void dispatch_kernel(ID3D12GraphicsCommandList* cmd_list, ID3D12PipelineState* pso, ID3D12RootSignature* root_signature, std::span<CD3DX12_GPU_DESCRIPTOR_HANDLE> gpu_handles, std::uint32_t thg_x, std::uint32_t thg_y, std::uint32_t thg_z)
+{
+    cmd_list->SetComputeRootSignature(root_signature);
+    cmd_list->SetPipelineState(pso);
+
+    uint32_t root_index = 1; // start with 1, beacuse Cross compiler CM driver path needs that
+    for (uint32_t i = 0; i < gpu_handles.size(); i++)
+    {
+        const auto gpu_heap_handle = gpu_handles[i];
+        cmd_list->SetComputeRootDescriptorTable(root_index++, gpu_heap_handle);
+    }
+
+    cmd_list->Dispatch(thg_x, thg_y, thg_z);
+}
