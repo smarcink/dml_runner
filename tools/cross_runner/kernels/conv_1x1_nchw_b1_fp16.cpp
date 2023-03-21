@@ -34,10 +34,6 @@ implied warranties, other than those that are expressly stated in the License.
 #error [Error_kernel_config_unsupported_block_w] Kernel designed to with with block_w in range: <1; 7>;
 #endif
 
-#if BLOCK_H != 1 && BLOCK_H != 2
-#error [Error_kernel_config_unsupported_block_h] Kernel designed to work with block_h = {1, 2}.
-#endif
-
 #define DPAS_DEPTH 8 
 #if(CM_GENX >= 1280)
 #define EXEC_SIZE 16
@@ -45,7 +41,7 @@ implied warranties, other than those that are expressly stated in the License.
 #define EXEC_SIZE 8
 #endif
 
-
+#define BLOCK_H 1
 #define WIDTH_LEFTOVER (OUTPUT_WIDTH % BLOCK_W)
 #define HAS_LEFTOVER (WIDTH_LEFTOVER != 0)
 #define LEFTOVER_COVERS_FULL_WIDTH (OUTPUT_WIDTH == WIDTH_LEFTOVER)
@@ -244,28 +240,17 @@ extern "C" _GENX_MAIN_ void convolution_nchw_1x1(
 
     
     vector<DT_IN, BLOCK_W * DPAS_INPUT_CHANNELS> input_row_0 = load_input_nchw_and_reorder_to_wc16<BLOCK_W>(surface_input, input_offset);
-#if BLOCK_H == 2
-    vector<DT_IN, BLOCK_W * DPAS_INPUT_CHANNELS> input_row_1 = load_input_nchw_and_reorder_to_wc16<BLOCK_W>(surface_input, input_offset + input_row_offset_size * sizeof(DT_IN));
-#endif
     vector<DT_WEIGHTS, WEIGHTS_REG_SIZE> weights_0 = load_filter_nchw_data(surface_weights, weights_offset_0);
 #if BLOCK_OC == 16
     vector<DT_WEIGHTS, WEIGHTS_REG_SIZE> weights_1 = load_filter_nchw_data(surface_weights, weights_offset_1);
 #endif
     const uint ACCU_REG_SIZE = BLOCK_W * DPAS_OUTPUT_CHANNELS;
-    vector<DT_ACCU, ACCU_REG_SIZE> accu_row_0;
-    vector<DT_ACCU, ACCU_REG_SIZE> accu_row_1;
+    vector<DT_ACCU, ACCU_REG_SIZE> accu_row_0_oc_0;
     vector<DT_ACCU, ACCU_REG_SIZE> accu_row_0_oc_1;
-    vector<DT_ACCU, ACCU_REG_SIZE> accu_row_1_oc_1;
-    accu_row_0 = cm_dpas<CM_PRECISION_HF, CM_PRECISION_HF, 8, DPAS_RC, float, uint, uint, 8 * DPAS_RC>(0, weights_0.format<uint32_t>(), input_row_0.format<uint32_t>());
-#if BLOCK_H == 2
-    accu_row_1 = cm_dpas<CM_PRECISION_HF, CM_PRECISION_HF, 8, DPAS_RC, float, uint, uint, 8 * DPAS_RC>(0, weights_0.format<uint32_t>(), input_row_1.format<uint32_t>());
-#endif    
+    accu_row_0_oc_0 = cm_dpas<CM_PRECISION_HF, CM_PRECISION_HF, 8, DPAS_RC, float, uint, uint, 8 * DPAS_RC>(0, weights_0.format<uint32_t>(), input_row_0.format<uint32_t>());   
 
 #if BLOCK_OC == 16
     accu_row_0_oc_1 = cm_dpas<CM_PRECISION_HF, CM_PRECISION_HF, 8, DPAS_RC, float, uint, uint, 8 * DPAS_RC>(0, weights_1.format<uint32_t>(), input_row_0.format<uint32_t>());
-#if BLOCK_H == 2
-    accu_row_1_oc_1 = cm_dpas<CM_PRECISION_HF, CM_PRECISION_HF, 8, DPAS_RC, float, uint, uint, 8 * DPAS_RC>(0, weights_1.format<uint32_t>(), input_row_1.format<uint32_t>());
-#endif
 #endif
     // todo debug performance with pragma unroll
     //#pragma unroll
@@ -276,9 +261,6 @@ extern "C" _GENX_MAIN_ void convolution_nchw_1x1(
         weights_offset_1 += weights_ic_offset_size;
         
         input_row_0 = load_input_nchw_and_reorder_to_wc16<BLOCK_W>(surface_input, input_offset);
-#if BLOCK_H == 2
-        input_row_1 = load_input_nchw_and_reorder_to_wc16<BLOCK_W>(surface_input, input_offset + input_row_offset_size * sizeof(DT_IN));
-#endif
 
         weights_0 = load_filter_nchw_data(surface_weights, weights_offset_0);
 #if BLOCK_OC == 16
@@ -286,16 +268,9 @@ extern "C" _GENX_MAIN_ void convolution_nchw_1x1(
 #endif  
 
 
-        accu_row_0 = cm_dpas<CM_PRECISION_HF, CM_PRECISION_HF, 8, DPAS_RC>(accu_row_0, weights_0.format<uint32_t>(), input_row_0.format<uint32_t>());
-#if BLOCK_H == 2
-        accu_row_1 = cm_dpas<CM_PRECISION_HF, CM_PRECISION_HF, 8, DPAS_RC>(accu_row_1, weights_0.format<uint32_t>(), input_row_1.format<uint32_t>());
-#endif
-
+        accu_row_0_oc_0 = cm_dpas<CM_PRECISION_HF, CM_PRECISION_HF, 8, DPAS_RC>(accu_row_0_oc_0, weights_0.format<uint32_t>(), input_row_0.format<uint32_t>());
 #if BLOCK_OC == 16
         accu_row_0_oc_1 = cm_dpas<CM_PRECISION_HF, CM_PRECISION_HF, 8, DPAS_RC>(accu_row_0_oc_1, weights_1.format<uint32_t>(), input_row_0.format<uint32_t>());
-#if BLOCK_H == 2
-        accu_row_1_oc_1 = cm_dpas<CM_PRECISION_HF, CM_PRECISION_HF, 8, DPAS_RC>(accu_row_1_oc_1, weights_1.format<uint32_t>(), input_row_1.format<uint32_t>());
-#endif
 #endif
 
     }
@@ -305,8 +280,8 @@ extern "C" _GENX_MAIN_ void convolution_nchw_1x1(
     const uint32_t ACCU_REG_TYPED_SIZE = ACCU_REG_SIZE * (sizeof(uint32_t) / sizeof(DT_ACCU));
     if(slice_ic_id > 0)
     {
-        vector_ref<uint32_t, ACCU_REG_TYPED_SIZE> accu_row_0_typed = accu_row_0.format<uint32_t>();
-        cm_store_slm<uint32_t, ACCU_REG_TYPED_SIZE>(0, accu_row_0_typed);
+        vector_ref<uint32_t, ACCU_REG_TYPED_SIZE> accu_row_0_oc_0_typed = accu_row_0_oc_0.format<uint32_t>();
+        cm_store_slm<uint32_t, ACCU_REG_TYPED_SIZE>(0, accu_row_0_oc_0_typed);
 #if BLOCK_OC == 16
         vector_ref<uint32_t, ACCU_REG_TYPED_SIZE> accu_row_0_oc_1_typed = accu_row_0_oc_1.format<uint32_t>();
         cm_store_slm<uint32_t, ACCU_REG_TYPED_SIZE>(ACCU_REG_TYPED_SIZE * sizeof(uint32_t), accu_row_0_oc_1_typed);
@@ -323,7 +298,7 @@ extern "C" _GENX_MAIN_ void convolution_nchw_1x1(
     // Step 4: Sum up the result (load data from slm)
     vector<uint32_t, ACCU_REG_TYPED_SIZE> accu_part_oc_0_typed = cm_load_slm<uint32_t, ACCU_REG_TYPED_SIZE>(0);
     vector_ref<DT_ACCU, ACCU_REG_SIZE> accu_part_oc_0 = accu_part_oc_0_typed.format<DT_ACCU>();
-    accu_row_0 += accu_part_oc_0;
+    accu_row_0_oc_0 += accu_part_oc_0;
 #if BLOCK_OC == 16   
     vector<uint32_t, ACCU_REG_TYPED_SIZE> accu_part_oc_1_typed = cm_load_slm<uint32_t, ACCU_REG_TYPED_SIZE>(ACCU_REG_TYPED_SIZE * sizeof(uint32_t));
     vector_ref<DT_ACCU, ACCU_REG_SIZE> accu_part_oc_1 = accu_part_oc_1_typed.format<DT_ACCU>();
@@ -331,15 +306,9 @@ extern "C" _GENX_MAIN_ void convolution_nchw_1x1(
 #endif // BLOCK_OC == 16  
 #endif // SLICE_IC > 1
     
-    vector<DT_OUT, ACCU_REG_SIZE> output_row_0 = vector<DT_OUT, ACCU_REG_SIZE>(accu_row_0);
-#if BLOCK_H == 2
-    vector<DT_OUT, ACCU_REG_SIZE> output_row_1 = vector<DT_OUT, ACCU_REG_SIZE>(accu_row_1);
-#endif
+    vector<DT_OUT, ACCU_REG_SIZE> output_row_0_oc_0 = vector<DT_OUT, ACCU_REG_SIZE>(accu_row_0_oc_0);
 #if BLOCK_OC == 16
     vector<DT_OUT, ACCU_REG_SIZE> output_row_0_oc_1 = vector<DT_OUT, ACCU_REG_SIZE>(accu_row_0_oc_1);
-#if BLOCK_H == 2
-    vector<DT_OUT, ACCU_REG_SIZE> output_row_1_oc_1 = vector<DT_OUT, ACCU_REG_SIZE>(accu_row_1_oc_1);
-#endif
 #endif
 #if USE_BIAS
 #error ToDo: add support for use_bias case here.
@@ -351,17 +320,11 @@ extern "C" _GENX_MAIN_ void convolution_nchw_1x1(
     const uint output_h_chunk_offset = h_chunk_id * BLOCK_H * OUTPUT_WIDTH;
     uint32_t output_offset = (output_batch_offset + output_oc_chunk_offset + output_h_chunk_offset + output_w_chunk_offset) * sizeof(DT_OUT);
       
-    store_output_wc8_as_nchw<BLOCK_W>(surface_output, output_row_0, output_offset, w_chunk_id);  
-#if BLOCK_H == 2
-    store_output_wc8_as_nchw<BLOCK_W>(surface_output, output_row_1, output_offset + OUTPUT_WIDTH * sizeof(DT_OUT), w_chunk_id);  
-#endif
-
+    store_output_wc8_as_nchw<BLOCK_W>(surface_output, output_row_0_oc_0, output_offset, w_chunk_id);  
+    
 #if BLOCK_OC == 16
     output_offset += (DPAS_OUTPUT_CHANNELS * OUTPUT_HEIGHT * OUTPUT_WIDTH) * sizeof(DT_OUT);
     store_output_wc8_as_nchw<BLOCK_W>(surface_output, output_row_0_oc_1, output_offset, w_chunk_id); 
-#if BLOCK_H == 2
-    store_output_wc8_as_nchw<BLOCK_W>(surface_output, output_row_1_oc_1, output_offset + OUTPUT_WIDTH * sizeof(DT_OUT), w_chunk_id);  
-#endif
 #endif
 
 }

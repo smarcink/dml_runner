@@ -511,7 +511,7 @@ public:
         bool print_reg_usage;
         std::array<std::uint32_t, 3> lws{ 1u, 1u, 1u };
         std::uint32_t block_w = 8;
-        std::uint32_t block_h = 1;
+        const std::uint32_t block_h = 1;  //ToDo: make configurable if needed
         std::uint32_t block_oc = 8;
         std::uint32_t slice_ic = 1;
         bool reorder_weights = true;
@@ -523,7 +523,6 @@ public:
             opts->add_flag("--large_grf", params.large_grf)->default_val(false);
             opts->add_flag("--print_reg_usage", params.print_reg_usage)->default_val(false);
             opts->add_option("--block_w", params.block_w);
-            opts->add_option("--block_h", params.block_h);
             opts->add_option("--block_oc", params.block_oc);
             opts->add_option("--slice_ic", params.slice_ic, "How many HW threads cooperate to compute final output. Setting to 1 is equal to having this feature disabled. It increases thread group size (lws) in X dimension.")->default_val(1);
             opts->add_option("--lws", params.lws)->delimiter(',');
