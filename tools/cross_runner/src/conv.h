@@ -292,6 +292,12 @@ public:
             //fill_with_constant_linear_container_half(input_data_, DirectX::PackedVector::XMConvertFloatToHalf(1.0f));
             randomize_linear_container_half(random_generator, uniform_distribution, input_data_);
             randomize_linear_container_half(random_generator, uniform_distribution, filter_data_);
+            //Half* ptr = reinterpret_cast<Half*>(filter_data_.data());
+            //for (int i = 0; i < params_.filter_shape.get_elements_count(); i++)
+            //{
+            //    ptr[i] = DirectX::PackedVector::XMConvertFloatToHalf(float(i));
+
+            //}
             //fill_with_constant_linear_container_half(filter_data_, DirectX::PackedVector::XMConvertFloatToHalf(1.0f));
             if (use_bias())
             {
@@ -508,6 +514,7 @@ public:
         std::uint32_t block_h = 1;
         std::uint32_t block_oc = 8;
         bool reorder_weights = true;
+        bool dispatch_only_weights_reorder = false;
 
         inline static void add_cli_options(CLI::App* opts, conv_cm_params_t& params)
         {
@@ -518,7 +525,8 @@ public:
             opts->add_option("--block_h", params.block_h);
             opts->add_option("--block_oc", params.block_oc);
             opts->add_option("--lws", params.lws)->delimiter(',');
-            opts->add_flag("--reorder_weights", params.reorder_weights);
+            opts->add_flag("--reorder_weights,!--no_reorder_weights", params.reorder_weights);
+            opts->add_flag("--dispatch_only_weights_reorder", params.dispatch_only_weights_reorder);
         }
     };
 public:
@@ -543,7 +551,7 @@ public:
 
             wr_params.ic_block = 16;
             wr_params.oc_block = cm_params_.block_oc;
-            weights_reorder_.emplace(WeightsReorder(std::move(wr_params), intc_ext, d3d12_device, cmd_list));
+            weights_reorder_.emplace(WeightsReorder(std::move(wr_params), filter_buffer_, intc_ext, d3d12_device, cmd_list));
         }
 
         // root signature
@@ -601,6 +609,8 @@ public:
         add_define("BLOCK_H", cm_params_.block_h);
         add_define("BLOCK_OC", cm_params_.block_oc);
 
+        add_define("WEIGHTS_IN_OPTIMAL_FORMAT", cm_params.reorder_weights);
+
         // kernel compilation
         const auto dump_asm_str = cm_params_.dump_asm ? " -mdump_asm" : "";
         const auto large_grf_str = cm_params_.large_grf ? " -Qxcm_doubleGRF" : "";
@@ -646,7 +656,7 @@ public:
 
         if (weights_reorder_.has_value())
         {
-            descriptor_count++;
+            descriptor_count += weights_reorder_->get_total_descriptor_count();
         }
 
         return descriptor_count;
@@ -657,13 +667,20 @@ public:
         const auto desc_heap_incrs_size = d3d12_device_->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
         // i.e. add weights reorder
 
-        const auto base_cpu_handle = CD3DX12_CPU_DESCRIPTOR_HANDLE{ cpu_handle };
-        const auto base_gpu_handle = CD3DX12_GPU_DESCRIPTOR_HANDLE{ gpu_handle };
+        auto base_cpu_handle = CD3DX12_CPU_DESCRIPTOR_HANDLE{ cpu_handle };
+        auto base_gpu_handle = CD3DX12_GPU_DESCRIPTOR_HANDLE{ gpu_handle };
+
+        if (weights_reorder_.has_value())
+        {
+            weights_reorder_->initialize(cmd_list, cpu_handle, gpu_handle);
+            base_cpu_handle.Offset(weights_reorder_->get_total_descriptor_count(), desc_heap_incrs_size);
+            base_gpu_handle.Offset(weights_reorder_->get_total_descriptor_count(), desc_heap_incrs_size);
+        }
 
         std::vector<std::pair<DescType, ID3D12Resource*>> resources_list;
         resources_list.reserve(get_total_descriptor_count());
         resources_list.push_back({ DescType::eSrv, input_buffer_.Get() });
-        resources_list.push_back({ DescType::eSrv, filter_buffer_.Get() });
+        resources_list.push_back({ DescType::eSrv, weights_reorder_.has_value() ? weights_reorder_->get_output_resource() : filter_buffer_.Get() });
         if (bias_buffer_)
         {
             resources_list.push_back({ DescType::eSrv, bias_buffer_.Get() });
@@ -672,14 +689,30 @@ public:
 
         gpu_handles_ = create_resource_views_and_handles(d3d12_device_, resources_list, base_cpu_handle, base_gpu_handle);
         assert(!gpu_handles_.empty());
+
+        // dispatch weights reorder here in initalized if weights are managed
+        if (params_.managaed_weights && weights_reorder_.has_value())
+        {
+            weights_reorder_->execute(cmd_list);
+
+            auto barrier = CD3DX12_RESOURCE_BARRIER::UAV(weights_reorder_->get_output_resource());
+            cmd_list->ResourceBarrier(1, &barrier);
+        }
     }
 
     void execute(ID3D12GraphicsCommandList* cmd_list) override
     {
-        // dispatch weights reorder if needed
+        // dispatch weights reorder if needed (non managed case)
         if (!params_.managaed_weights && weights_reorder_.has_value())
         {
             weights_reorder_->execute(cmd_list);
+            auto barrier = CD3DX12_RESOURCE_BARRIER::UAV(weights_reorder_->get_output_resource());
+            cmd_list->ResourceBarrier(1, &barrier);
+
+            if (cm_params_.dispatch_only_weights_reorder)
+            {
+                return;
+            }
         }
 
         const auto gws_x = round_up_next_multiple(output_shape_.w, cm_params_.block_w) / cm_params_.block_w;
@@ -697,8 +730,19 @@ public:
         dispatch_kernel(cmd_list, pso_.Get(), root_signature_.Get(), gpu_handles_, thg_x, thg_y, thg_z);
     }
 
+    ConformanceResult validate_conformance(ID3D12CommandQueue* command_queue,
+        ID3D12CommandAllocator* command_allocator, ID3D12GraphicsCommandList* command_list) override
+    {
+        if (weights_reorder_.has_value())
+        {
+            weights_reorder_->validate_conformance(command_queue, command_allocator, command_list);
+        }
+        const auto ret = ConvolutionBaseDispatcher::validate_conformance(command_queue, command_allocator, command_list);
+        return ret;
+    }
+
 private:
-    class WeightsReorder
+    class WeightsReorder : public NodeDispatcher
     {
     public:
         struct create_params_t
@@ -710,12 +754,18 @@ private:
             std::uint32_t k_size = 0;
             std::uint32_t ic_block = 0;
             std::uint32_t oc_block = 0;
+
+            std::uint32_t dpas_depth = 8;
+            std::uint32_t dpas_exec_size = 8;
+
+            std::array<std::uint32_t, 3> lws{ 2u, 1u, 1u };
         };
     public:
-        WeightsReorder(create_params_t&& params, IntelExtension& intc_ext, ID3D12Device* d3d12_device, ID3D12GraphicsCommandList* cmd_list)
+        WeightsReorder(create_params_t&& params, ComPtr<ID3D12Resource> input_resource, IntelExtension& intc_ext, ID3D12Device* d3d12_device, ID3D12GraphicsCommandList* cmd_list)
             : params_(std::move(params))
             , intc_ext_(intc_ext)
             , d3d12_device_(d3d12_device)
+            , input_buffer_(input_resource)
         {
             // root signature
             {
@@ -747,9 +797,6 @@ private:
                 build_options += pre_jit + name + between_name_and_value + value_str + post_jit;
             };
 
-            add_define("LWS_SIZE_X", 1);
-            add_define("LWS_SIZE_Y", 1);
-            add_define("LWS_SIZE_Z", 1);
             add_define("INPUT_TYPE", "half");
             add_define("OUTPUT_TYPE", "half");
             add_define("WEI_OFFSET", 0);
@@ -761,7 +808,7 @@ private:
 
             auto kernel_source_content = []()
             {
-                const auto path = "Reorder_weights_cm.cl";
+                const auto path = "reorder_weights.cpp";
                 std::fstream file(path);
                 if (!file.is_open())
                 {
@@ -771,32 +818,130 @@ private:
                 return std::string((std::istreambuf_iterator<char>(file)), (std::istreambuf_iterator<char>()));
             }();
 
+            // kernel compilation
+            const auto dump_asm_str = " -mdump_asm";
+            const auto print_reg_str = " -mCM_printregusage";
+            const auto lws_x = " -DLWS_SIZE_X=" + std::to_string(params_.lws[0]);
+            const auto lws_y = " -DLWS_SIZE_Y=" + std::to_string(params_.lws[1]);
+            const auto lws_z = " -DLWS_SIZE_Z=" + std::to_string(params_.lws[2]);
+            const auto build_options_final = " -I \" \" " + build_options + dump_asm_str + print_reg_str + lws_x + lws_y + lws_z;
+
             CD3DX12_SHADER_BYTECODE byte_code;
             byte_code.pShaderBytecode = kernel_source_content.data();
             byte_code.BytecodeLength = kernel_source_content.size();
 
-            pso_ = intc_ext_.create_pipeline(byte_code, build_options, root_signature_.Get(), INTC_D3D12_SHADER_INPUT_TYPE::OpenCL);
+            //if (cm_params_.dump_asm)
+            {
+                std::cout << build_options_final << std::endl;
+            }
+
+            pso_ = intc_ext_.create_pipeline(byte_code, build_options_final, root_signature_.Get(), INTC_D3D12_SHADER_INPUT_TYPE::CM);
             assert(pso_);
+
+            // compiled success -> create buffer
+            {
+                const auto size_bytes = params_.ic * params_.oc * params_.k_size * params_.k_size * get_data_type_bytes_width(params_.output_dt);
+                output_buffer_ = create_buffer(d3d12_device, size_bytes,
+                    D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+            }
         }
 
-        void execute(ID3D12GraphicsCommandList* cmd_list) 
+        ID3D12Resource* get_output_resource()
+        {
+            return output_buffer_.Get();
+        }
+
+        void initialize(ID3D12GraphicsCommandList* cmd_list, D3D12_CPU_DESCRIPTOR_HANDLE cpu_handle, D3D12_GPU_DESCRIPTOR_HANDLE gpu_handle) override
+        {
+            assert(input_buffer_);
+            assert(output_buffer_);
+
+            const auto desc_heap_incrs_size = d3d12_device_->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+            // i.e. add weights reorder
+
+            auto base_cpu_handle = CD3DX12_CPU_DESCRIPTOR_HANDLE{ cpu_handle };
+            auto base_gpu_handle = CD3DX12_GPU_DESCRIPTOR_HANDLE{ gpu_handle };
+
+            std::vector<std::pair<DescType, ID3D12Resource*>> resources_list;
+            resources_list.reserve(get_total_descriptor_count());
+            resources_list.push_back({ DescType::eSrv, input_buffer_.Get() });
+            resources_list.push_back({ DescType::eUav, output_buffer_.Get() });
+
+            gpu_handles_ = create_resource_views_and_handles(d3d12_device_, resources_list, base_cpu_handle, base_gpu_handle);
+        }
+
+        std::uint32_t get_total_descriptor_count() override
+        {
+            return 2;
+        }
+
+        void execute(ID3D12GraphicsCommandList* cmd_list) override
         {
             assert(cmd_list);
             assert(pso_);
             assert(root_signature_);
             assert(!gpu_handles_.empty());
 
-            const auto thg_x = 1;
-            const auto thg_y = 1;
-            const auto thg_z = 1;
+            const auto gws_x = params_.oc / params_.dpas_exec_size;
+            const auto gws_y = params_.ic / 2;
+            const auto gws_z = 1;
+
+            assert(gws_x % params_.lws[0] == 0);
+            assert(gws_x % params_.lws[1] == 0);
+            assert(gws_x % params_.lws[2] == 0);
+                   
+            const auto thg_x = gws_x / params_.lws[0];
+            const auto thg_y = gws_y / params_.lws[1];
+            const auto thg_z = gws_z / params_.lws[2];
+
             dispatch_kernel(cmd_list, pso_.Get(), root_signature_.Get(), gpu_handles_, thg_x, thg_y, thg_z);
+        }
+
+
+        ConformanceResult validate_conformance(ID3D12CommandQueue* command_queue,
+            ID3D12CommandAllocator* command_allocator, ID3D12GraphicsCommandList* command_list) override
+        {
+            // optional weights conformance check
+            if (false)
+            {
+                const auto tensor_out_bytes_width = output_buffer_->GetDesc().Width;
+
+                // readback data and validate
+                auto readback_buffer = create_buffer(d3d12_device_, tensor_out_bytes_width, D3D12_HEAP_TYPE_READBACK, D3D12_RESOURCE_STATE_COPY_DEST);
+                auto readback_output_barrirer = CD3DX12_RESOURCE_BARRIER::Transition(output_buffer_.Get(),
+                    D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
+                command_list->ResourceBarrier(1, &readback_output_barrirer);
+                command_list->CopyResource(readback_buffer.Get(), output_buffer_.Get());
+                close_execute_reset_wait(d3d12_device_, command_queue, command_allocator, command_list);
+
+                std::vector<std::byte> data_out(tensor_out_bytes_width);
+                std::byte* readback_mapped_ptr = nullptr;
+                readback_buffer->Map(0, nullptr, reinterpret_cast<void**>(&readback_mapped_ptr));
+                std::memcpy(data_out.data(), readback_mapped_ptr, data_out.size());
+                readback_buffer->Unmap(0, nullptr);
+
+                const Half* data_ptr = reinterpret_cast<const Half*>(data_out.data());
+                for (std::int32_t i = 0; i < tensor_out_bytes_width / get_data_type_bytes_width(params_.output_dt); i++)
+                {
+                    const auto f = DirectX::PackedVector::XMConvertHalfToFloat(data_ptr[i]);
+                    std::cout << (std::int32_t)f << " ";
+
+                    if ((i + 1) % 16 == 0 && i != 0)
+                    {
+                        std::cout << std::endl;
+                    }
+                }
+            }
+
+            return ConformanceResult{};
         }
 
     private:
         create_params_t params_;
         IntelExtension& intc_ext_;
         ID3D12Device* d3d12_device_;
-        ComPtr<ID3D12Resource> output_resource_;
+        ComPtr<ID3D12Resource> input_buffer_;
+        ComPtr<ID3D12Resource> output_buffer_;
         ComPtr<ID3D12PipelineState> pso_;
         ComPtr<ID3D12RootSignature> root_signature_;
         std::vector<CD3DX12_GPU_DESCRIPTOR_HANDLE> gpu_handles_;

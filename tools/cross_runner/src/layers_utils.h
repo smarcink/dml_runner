@@ -371,6 +371,14 @@ inline std::vector<CD3DX12_GPU_DESCRIPTOR_HANDLE> create_resource_views_and_hand
 
 inline void dispatch_kernel(ID3D12GraphicsCommandList* cmd_list, ID3D12PipelineState* pso, ID3D12RootSignature* root_signature, std::span<CD3DX12_GPU_DESCRIPTOR_HANDLE> gpu_handles, std::uint32_t thg_x, std::uint32_t thg_y, std::uint32_t thg_z)
 {
+    assert(thg_x > 0);
+    assert(thg_y > 0);
+    assert(thg_z > 0);
+    assert(cmd_list);
+    assert(root_signature);
+    assert(pso);
+    assert(!gpu_handles.empty());
+
     cmd_list->SetComputeRootSignature(root_signature);
     cmd_list->SetPipelineState(pso);
 
