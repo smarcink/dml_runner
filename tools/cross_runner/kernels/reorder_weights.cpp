@@ -29,13 +29,18 @@ implied warranties, other than those that are expressly stated in the License.
 #define EXEC_SIZE 8
 #endif
 
-//ToDo: update this check to match the error description
-#if IC_PER_HW_THREAD < 16
-#error [Error param] Not supported IC_PER_HW_THREAD. It should be mutiplication of dpas_depth * int_block
+#if IC_CHUNK_SIZE != 16 && IC_CHUNK_SIZE != 32 && IC_CHUNK_SIZE != 64 && IC_CHUNK_SIZE != 128 
+#error [Error param] Not tested ic chunk size. Probably this case works, but should be validated first.
+#endif
+
+#if OC_CHUNK_SIZE != 8
+#error [Error param] Not tested oc chunk size. Probably this case works, but should be validated first.
 #endif
 
 #define WEIGHTS_IC_OFSET sizeof(INPUT_TYPE)
 #define WEIGHTS_OC_OFSET (IC * WEIGHTS_IC_OFSET)
+
+#define IC_PER_HW_THREAD (IC_CHUNK_SIZE * IC_CHUNKS_PER_HW_THREAD)
 #define IC_PER_HW_THREAD_PACKED ((IC_PER_HW_THREAD * sizeof(INPUT_TYPE)) / sizeof(uint32_t))
 
 static const uint32_t weights_init_offsets[] = {
