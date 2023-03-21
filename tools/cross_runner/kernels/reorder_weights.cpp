@@ -30,11 +30,7 @@ implied warranties, other than those that are expressly stated in the License.
 #endif
 
 #if IC_CHUNK_SIZE != 16 && IC_CHUNK_SIZE != 32 && IC_CHUNK_SIZE != 64 && IC_CHUNK_SIZE != 128 
-#error [Error param] Not tested ic chunk size. Probably this case works, but should be validated first.
-#endif
-
-#if OC_CHUNK_SIZE != 8
-#error [Error param] Not tested oc chunk size. Probably this case works, but should be validated first.
+#error [Invalid param] Not tested ic chunk size. Probably this case works, but should be validated first.
 #endif
 
 #define WEIGHTS_IC_OFSET sizeof(INPUT_TYPE)
@@ -84,7 +80,7 @@ extern "C" _GENX_MAIN_ void weights_reorder(SurfaceIndex surface_input [[type("b
     uint32_t output_offset = (oc * dpas_input_channels + ic * OC) * sizeof(INPUT_TYPE);  
     vector<OUTPUT_TYPE, EXEC_SIZE * dpas_input_channels> data_out;
     #pragma unroll
-    for(int i = 0; i < IC_PER_HW_THREAD/dpas_input_channels; i++)
+    for(int i = 0; i < IC_CHUNKS_PER_HW_THREAD; i++)
     {
         #pragma unroll
         for(int j = 0; j < EXEC_SIZE; j++)

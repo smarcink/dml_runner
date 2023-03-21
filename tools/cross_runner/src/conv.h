@@ -750,17 +750,11 @@ private:
             std::uint32_t ic = 0;
             std::uint32_t oc = 0;
             std::uint32_t k_size = 0;
-            std::uint32_t oc_chunks_per_hw_thread = 1;
             std::uint32_t ic_chunks_per_hw_thread = 8;
 
             std::uint32_t dpas_depth = 8;
             std::uint32_t dpas_exec_size = 8;
             std::array<std::uint32_t, 3> lws{ 2u, 1u, 1u };
-
-            inline std::uint32_t oc_chunk_size() const
-            {
-                return dpas_exec_size;
-            }
 
             inline std::uint32_t ic_chunk_size() const
             {
@@ -811,9 +805,7 @@ private:
             add_define("OC", params_.oc);
             add_define("K_SIZE", params_.k_size);
             add_define("IC_CHUNK_SIZE", params_.ic_chunk_size());
-            add_define("OC_CHUNK_SIZE", params_.oc_chunk_size());
             add_define("IC_CHUNKS_PER_HW_THREAD", params_.ic_chunks_per_hw_thread);
-            add_define("OC_CHUNKS_PER_HW_THREAD", params_.oc_chunks_per_hw_thread);
 
             auto kernel_source_content = []()
             {
@@ -892,7 +884,7 @@ private:
             assert(root_signature_);
             assert(!gpu_handles_.empty());
 
-            const auto gws_x = params_.oc / (params_.oc_chunks_per_hw_thread * params_.oc_chunk_size());
+            const auto gws_x = params_.oc / params_.dpas_exec_size;
             const auto gws_y = params_.ic / (params_.ic_chunks_per_hw_thread * params_.ic_chunk_size());
             const auto gws_z = 1;
 
