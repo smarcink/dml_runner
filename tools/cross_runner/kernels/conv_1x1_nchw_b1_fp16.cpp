@@ -307,8 +307,9 @@ extern "C" _GENX_MAIN_ void convolution_nchw_1x1(
 
     // Step 1: one of the threads store data into SLM
     const uint32_t ACCU_REG_TYPED_SIZE = ACCU_REG_SIZE * (sizeof(uint32_t) / sizeof(DT_ACCU));
-    const uint32_t local_z = cm_local_id(2);
-    const uint32_t slm_base_offset = (slice_ic_id - 1) * BLOCK_W * BLOCK_OC * sizeof(uint32_t);
+    const uint32_t local_z_id = cm_local_id(2);
+    const uint32_t local_z_base_offset = local_z_id * LWS_SIZE_X * BLOCK_W * BLOCK_OC * sizeof(uint32_t);
+    const uint32_t slm_base_offset = (slice_ic_id - 1) * BLOCK_W * BLOCK_OC * sizeof(uint32_t) + local_z_base_offset;
     
     if(slice_ic_id > 0)
     {
@@ -332,7 +333,7 @@ extern "C" _GENX_MAIN_ void convolution_nchw_1x1(
     #pragma unroll
     for(int i = 0; i < LWS_SIZE_X; i++)
     {
-        const uint32_t slm_read_offset = i * BLOCK_W * BLOCK_OC * sizeof(uint32_t);
+        const uint32_t slm_read_offset = i * BLOCK_W * BLOCK_OC * sizeof(uint32_t) + local_z_base_offset;
         vector<uint32_t, ACCU_REG_TYPED_SIZE> accu_part_oc_0_typed = cm_load_slm<uint32_t, ACCU_REG_TYPED_SIZE>(slm_read_offset);
         vector_ref<DT_ACCU, ACCU_REG_SIZE> accu_part_oc_0 = accu_part_oc_0_typed.format<DT_ACCU>();
         accu_row_0_oc_0 += accu_part_oc_0;
