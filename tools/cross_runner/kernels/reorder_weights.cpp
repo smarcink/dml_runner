@@ -29,10 +29,14 @@ implied warranties, other than those that are expressly stated in the License.
 #define EXEC_SIZE 8
 #endif
 
-#define DPAS_OUTPUT_CHANNELS EXEC_SIZE
-#define DPAS_INPUT_CHANNELS 16
+//ToDo: update this check to match the error description
+#if IC_PER_HW_THREAD < 16
+#error [Error param] Not supported IC_PER_HW_THREAD. It should be mutiplication of dpas_depth * int_block
+#endif
+
 #define WEIGHTS_IC_OFSET sizeof(INPUT_TYPE)
 #define WEIGHTS_OC_OFSET (IC * WEIGHTS_IC_OFSET)
+#define IC_PER_HW_THREAD_PACKED ((IC_PER_HW_THREAD * sizeof(INPUT_TYPE)) / sizeof(uint32_t))
 
 static const uint32_t weights_init_offsets[] = {
                                                 0 * WEIGHTS_OC_OFSET, 0 * WEIGHTS_OC_OFSET + WEIGHTS_IC_OFSET,
@@ -53,24 +57,37 @@ extern "C" _GENX_MAIN_ void weights_reorder(SurfaceIndex surface_input [[type("b
     const uint thread_id_1 = cm_group_id(1) * cm_local_size(1) + cm_local_id(1);
     const uint thread_id_2 = cm_group_id(2) * cm_local_size(2) + cm_local_id(2);
     
-    const uint32_t oc = thread_id_0;
-    const uint32_t ic = thread_id_1;
-
+    
     const uint32_t int_block = (sizeof(uint32_t) / sizeof(OUTPUT_TYPE));
     const uint32_t dpas_input_channels = DPAS_DEPTH * int_block;
     
-    // load
-    vector<uint32_t, 16> input_offsets(weights_init_offsets);
-    input_offsets += (ic * int_block * WEIGHTS_IC_OFSET) + oc * EXEC_SIZE * WEIGHTS_OC_OFSET;
-    vector<INPUT_TYPE, 16> data_load = cm_load<half, VectorSize::N1, DataSize::Default, CacheHint::Default, CacheHint::Default>(surface_input, input_offsets); 
-
-    // store
-    const uint32_t ic_tile_id = ic / DPAS_DEPTH;
-    const uint32_t ic_chunk_id = ic % DPAS_DEPTH;
+    const uint32_t oc = thread_id_0 * EXEC_SIZE;
+    const uint32_t ic = thread_id_1 * IC_PER_HW_THREAD;
     
-    const uint32_t ic_tile_offset = ic_tile_id * OC * dpas_input_channels;  // move by full OC and ic chunk size (which is dpas depth * int block)
-    const uint32_t ic_chunk_offset = ic_chunk_id * EXEC_SIZE * int_block;   // chunk within tile (dpas depth number of ic * int block)
-    const uint32_t oc_offset = oc * EXEC_SIZE * DPAS_DEPTH * int_block;      // move by size needed for a single dpas (dg2: 64 uints)
-    const uint32_t output_offset = (ic_tile_offset + ic_chunk_offset + oc_offset) * sizeof(OUTPUT_TYPE);
-    cm_store<uint32_t, 8>(surface_output, output_offset, data_load.format<uint32_t>());
+    const uint chunks_count = EXEC_SIZE;
+    // load
+    matrix<uint32_t, chunks_count, IC_PER_HW_THREAD_PACKED> data_input_typed;
+    uint32_t input_offset = (oc * IC + ic) * sizeof(INPUT_TYPE);
+    #pragma unroll
+    for(int i = 0; i < chunks_count; i++)
+    {
+        data_input_typed.row(i) = cm_load<uint32_t, IC_PER_HW_THREAD_PACKED, DataSize::Default, CacheHint::Cached, CacheHint::Cached>(surface_input, input_offset);
+        input_offset += IC * sizeof(INPUT_TYPE);
+    }
+    matrix_ref<INPUT_TYPE, chunks_count, IC_PER_HW_THREAD> data_input = data_input_typed.format<INPUT_TYPE, chunks_count, IC_PER_HW_THREAD>();
+    
+    uint32_t output_offset = (oc * dpas_input_channels + ic * OC) * sizeof(INPUT_TYPE);  
+    vector<OUTPUT_TYPE, EXEC_SIZE * dpas_input_channels> data_out;
+    #pragma unroll
+    for(int i = 0; i < IC_PER_HW_THREAD/dpas_input_channels; i++)
+    {
+        #pragma unroll
+        for(int j = 0; j < EXEC_SIZE; j++)
+        {
+            data_out.select<dpas_input_channels, 1>(j * dpas_input_channels) = data_input.select<EXEC_SIZE, 1, int_block, 1>(0, int_block * j + i * dpas_input_channels);
+        }
+        const uint32_t packed_size = (EXEC_SIZE * dpas_input_channels)/2;
+        cm_store<uint32_t, packed_size>(surface_output, output_offset, data_out.format<uint32_t>());
+        output_offset += OC * dpas_input_channels * sizeof(OUTPUT_TYPE);
+    }
 }

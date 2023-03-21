@@ -549,8 +549,6 @@ public:
             wr_params.oc = params_.filter_shape.n;
             wr_params.k_size = params_.filter_shape.w;
 
-            wr_params.ic_block = 16;
-            wr_params.oc_block = cm_params_.block_oc;
             weights_reorder_.emplace(WeightsReorder(std::move(wr_params), filter_buffer_, intc_ext, d3d12_device, cmd_list));
         }
 
@@ -752,12 +750,10 @@ private:
             std::uint32_t ic = 0;
             std::uint32_t oc = 0;
             std::uint32_t k_size = 0;
-            std::uint32_t ic_block = 0;
-            std::uint32_t oc_block = 0;
+            std::uint32_t ic_per_hw_thread = 128;
 
             std::uint32_t dpas_depth = 8;
             std::uint32_t dpas_exec_size = 8;
-
             std::array<std::uint32_t, 3> lws{ 2u, 1u, 1u };
         };
     public:
@@ -803,8 +799,7 @@ private:
             add_define("IC", params_.ic);
             add_define("OC", params_.oc);
             add_define("K_SIZE", params_.k_size);
-            add_define("IC_BLOCK", params_.ic_block);
-            add_define("OC_BLOCK", params_.oc_block);
+            add_define("IC_PER_HW_THREAD", params_.ic_per_hw_thread);
 
             auto kernel_source_content = []()
             {
@@ -821,6 +816,7 @@ private:
             // kernel compilation
             const auto dump_asm_str = " -mdump_asm";
             const auto print_reg_str = " -mCM_printregusage";
+
             const auto lws_x = " -DLWS_SIZE_X=" + std::to_string(params_.lws[0]);
             const auto lws_y = " -DLWS_SIZE_Y=" + std::to_string(params_.lws[1]);
             const auto lws_z = " -DLWS_SIZE_Z=" + std::to_string(params_.lws[2]);
@@ -883,7 +879,7 @@ private:
             assert(!gpu_handles_.empty());
 
             const auto gws_x = params_.oc / params_.dpas_exec_size;
-            const auto gws_y = params_.ic / 2;
+            const auto gws_y = params_.ic / params_.ic_per_hw_thread;
             const auto gws_z = 1;
 
             assert(gws_x % params_.lws[0] == 0);
