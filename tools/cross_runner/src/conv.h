@@ -513,6 +513,7 @@ public:
         std::uint32_t block_w = 8;
         std::uint32_t block_h = 1;
         std::uint32_t block_oc = 8;
+        std::uint32_t slice_ic = 1;
         bool reorder_weights = true;
         bool dispatch_only_weights_reorder = false;
 
@@ -524,6 +525,7 @@ public:
             opts->add_option("--block_w", params.block_w);
             opts->add_option("--block_h", params.block_h);
             opts->add_option("--block_oc", params.block_oc);
+            opts->add_option("--slice_ic", params.slice_ic, "How many HW threads cooperate to compute final output. Setting to 1 is equal to having this feature disabled. It increases thread group size (lws) in X dimension.")->default_val(1);
             opts->add_option("--lws", params.lws)->delimiter(',');
             opts->add_flag("--reorder_weights,!--no_reorder_weights", params.reorder_weights);
             opts->add_flag("--dispatch_only_weights_reorder", params.dispatch_only_weights_reorder);
@@ -603,6 +605,7 @@ public:
         add_define("STRIDE_W", params_.stride.w);
         add_define("STRIDE_H", params_.stride.h);
 
+        add_define("SLICE_IC", cm_params_.slice_ic);
         add_define("BLOCK_W", cm_params_.block_w);
         add_define("BLOCK_H", cm_params_.block_h);
         add_define("BLOCK_OC", cm_params_.block_oc);
@@ -613,7 +616,7 @@ public:
         const auto dump_asm_str = cm_params_.dump_asm ? " -mdump_asm" : "";
         const auto large_grf_str = cm_params_.large_grf ? " -Qxcm_doubleGRF" : "";
         const auto print_reg_str = cm_params_.print_reg_usage ? " -mCM_printregusage" : "";
-        const auto lws_x = " -DLWS_SIZE_X=" + std::to_string(cm_params_.lws[0]);
+        const auto lws_x = " -DLWS_SIZE_X=" + std::to_string(cm_params_.lws[0] * cm_params_.slice_ic);
         const auto lws_y = " -DLWS_SIZE_Y=" + std::to_string(cm_params_.lws[1]);
         const auto lws_z = " -DLWS_SIZE_Z=" + std::to_string(cm_params_.lws[2]);
         const auto build_options_final = " -I \" \" " + build_options + dump_asm_str + large_grf_str + print_reg_str + lws_x + lws_y + lws_z;
@@ -713,7 +716,7 @@ public:
             }
         }
 
-        const auto gws_x = round_up_next_multiple(output_shape_.w, cm_params_.block_w) / cm_params_.block_w;
+        const auto gws_x = cm_params_.slice_ic * (round_up_next_multiple(output_shape_.w, cm_params_.block_w) / cm_params_.block_w);
         const auto gws_y = round_up_next_multiple(output_shape_.h, cm_params_.block_h) / cm_params_.block_h;
         const auto gws_z = params_.input_shape.n * (params_.filter_shape.n / cm_params_.block_oc);
 
@@ -721,7 +724,7 @@ public:
         assert(gws_y % cm_params_.lws[1] == 0);
         assert(gws_z % cm_params_.lws[2] == 0);
 
-        const auto thg_x = gws_x / cm_params_.lws[0];
+        const auto thg_x = gws_x / (cm_params_.slice_ic * cm_params_.lws[0]);
         const auto thg_y = gws_y / cm_params_.lws[1];
         const auto thg_z = gws_z / cm_params_.lws[2];
 

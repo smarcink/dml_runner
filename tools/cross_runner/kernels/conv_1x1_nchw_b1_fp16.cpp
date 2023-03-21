@@ -64,7 +64,7 @@ implied warranties, other than those that are expressly stated in the License.
 #define DPAS_OUTPUT_CHANNELS EXEC_SIZE
 #define DPAS_RC BLOCK_W
 
-#define CONV_LOOP_COUNT (INPUT_CHANNELS/DPAS_INPUT_CHANNELS)
+#define CONV_LOOP_COUNT ((INPUT_CHANNELS/DPAS_INPUT_CHANNELS) / SLICE_IC)
 
 #define WEIGHTS_REG_SIZE (DPAS_INPUT_CHANNELS * DPAS_OUTPUT_CHANNELS)
 #define WEIGHTS_IC_OFSET sizeof(DT_WEIGHTS)
@@ -204,9 +204,18 @@ extern "C" _GENX_MAIN_ void convolution_nchw_1x1(
 	SurfaceIndex surface_output [[type("buffer_t")]]
 )
 {
-    const uint w_chunk_id = cm_group_id(0) * cm_local_size(0) + cm_local_id(0);
+    const uint32_t thg_0 = (cm_group_id(0) * cm_local_size(0) + cm_local_id(0));
+    const uint w_chunk_id = thg_0 / SLICE_IC;
+    const uint slice_ic_id = thg_0 % SLICE_IC;
     const uint h_chunk_id = cm_group_id(1) * cm_local_size(1) + cm_local_id(1);
     const uint thread_id_2 = (cm_group_id(2) * cm_local_size(2) + cm_local_id(2));
+    
+#if SLICE_IC > 1
+#if (LWS_SIZE_X / SLICE_IC) != 1
+#error ToDo: add this case
+#endif
+   cm_slm_init((SLICE_IC - 1) * BLOCK_W * (BLOCK_OC/DPAS_OUTPUT_CHANNELS) * sizeof(DT_ACCU));
+#endif
     
     const uint THREADS_FOR_OC = (OUTPUT_CHANNELS / BLOCK_OC);
     const uint batch_id = (thread_id_2 / THREADS_FOR_OC);
@@ -215,10 +224,11 @@ extern "C" _GENX_MAIN_ void convolution_nchw_1x1(
     const uint32_t input_row_offset_size = INPUT_WIDTH;
     const uint32_t input_dpas_ic_offset_size = INPUT_HEIGHT * DPAS_INPUT_CHANNELS * input_row_offset_size;
     
-    const uint input_batch_offset = batch_id * INPUT_WIDTH * INPUT_HEIGHT * INPUT_CHANNELS;
-    const uint input_w_chunk_offset = w_chunk_id * BLOCK_W * STRIDE_W;
-    const uint input_h_chunk_offset = h_chunk_id * BLOCK_H * STRIDE_H * input_row_offset_size;
-    uint32_t input_offset = (input_batch_offset + input_h_chunk_offset + input_w_chunk_offset) * sizeof(DT_IN);
+    const uint32_t input_batch_offset = batch_id * INPUT_WIDTH * INPUT_HEIGHT * INPUT_CHANNELS;
+    const uint32_t input_w_chunk_offset = w_chunk_id * BLOCK_W * STRIDE_W;
+    const uint32_t input_h_chunk_offset = h_chunk_id * BLOCK_H * STRIDE_H * input_row_offset_size;
+    const uint32_t input_slice_ic_chunk_offset = slice_ic_id * CONV_LOOP_COUNT * input_dpas_ic_offset_size;
+    uint32_t input_offset = (input_batch_offset + input_slice_ic_chunk_offset + input_h_chunk_offset + input_w_chunk_offset) * sizeof(DT_IN);
         
         
 #if WEIGHTS_IN_OPTIMAL_FORMAT
@@ -229,7 +239,7 @@ extern "C" _GENX_MAIN_ void convolution_nchw_1x1(
     const uint32_t weights_ic_offset_size = DPAS_INPUT_CHANNELS * sizeof(DT_WEIGHTS);
 #endif
 
-    uint32_t weights_offset_0 = oc_chunk_id * weights_oc_chunk_offset;
+    uint32_t weights_offset_0 = oc_chunk_id * weights_oc_chunk_offset + (slice_ic_id * CONV_LOOP_COUNT * weights_ic_offset_size);
     uint32_t weights_offset_1 = weights_offset_0 + weights_oc_chunk_offset;
 
     
@@ -289,6 +299,37 @@ extern "C" _GENX_MAIN_ void convolution_nchw_1x1(
 #endif
 
     }
+    
+#if SLICE_IC > 1
+    // Step 1: one of the threads store data into SLM
+    const uint32_t ACCU_REG_TYPED_SIZE = ACCU_REG_SIZE * (sizeof(uint32_t) / sizeof(DT_ACCU));
+    if(slice_ic_id > 0)
+    {
+        vector_ref<uint32_t, ACCU_REG_TYPED_SIZE> accu_row_0_typed = accu_row_0.format<uint32_t>();
+        cm_store_slm<uint32_t, ACCU_REG_TYPED_SIZE>(0, accu_row_0_typed);
+#if BLOCK_OC == 16
+        vector_ref<uint32_t, ACCU_REG_TYPED_SIZE> accu_row_0_oc_1_typed = accu_row_0_oc_1.format<uint32_t>();
+        cm_store_slm<uint32_t, ACCU_REG_TYPED_SIZE>(ACCU_REG_TYPED_SIZE * sizeof(uint32_t), accu_row_0_oc_1_typed);
+#endif
+    }
+    // Step 2: sync point (on DG2 if lws_x == 2 then its not needed since Fused EU, but no perf difference observed, so its safer to leave it)
+    cm_slm_fence(CM_GLOBAL_COHERENT_FENCE);
+    cm_barrier();
+    // Step 3: Not needed threads can exit.
+    if(slice_ic_id > 0)
+    {
+        return;
+    }
+    // Step 4: Sum up the result (load data from slm)
+    vector<uint32_t, ACCU_REG_TYPED_SIZE> accu_part_oc_0_typed = cm_load_slm<uint32_t, ACCU_REG_TYPED_SIZE>(0);
+    vector_ref<DT_ACCU, ACCU_REG_SIZE> accu_part_oc_0 = accu_part_oc_0_typed.format<DT_ACCU>();
+    accu_row_0 += accu_part_oc_0;
+#if BLOCK_OC == 16   
+    vector<uint32_t, ACCU_REG_TYPED_SIZE> accu_part_oc_1_typed = cm_load_slm<uint32_t, ACCU_REG_TYPED_SIZE>(ACCU_REG_TYPED_SIZE * sizeof(uint32_t));
+    vector_ref<DT_ACCU, ACCU_REG_SIZE> accu_part_oc_1 = accu_part_oc_1_typed.format<DT_ACCU>();
+    accu_row_0_oc_1 += accu_part_oc_1;
+#endif // BLOCK_OC == 16  
+#endif // SLICE_IC > 1
     
     vector<DT_OUT, ACCU_REG_SIZE> output_row_0 = vector<DT_OUT, ACCU_REG_SIZE>(accu_row_0);
 #if BLOCK_H == 2
