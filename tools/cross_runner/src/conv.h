@@ -625,17 +625,27 @@ public:
             std::cout << build_options_final << std::endl;
         }
 
-        auto kernel_source_content = []()
+        auto kernel_source_content = [](const auto kernel_size)
         {
-            const auto path = "conv_1x1_nchw_b1_fp16.cpp";
+            std::string path = "";
+            if (kernel_size == 1)
+            {
+                path = "conv_1x1_nchw_fp16.cpp";
+            }
+            else
+            {
+                path = "conv_nchw_fp16.cpp";
+            }
+
             std::fstream file(path);
             if (!file.is_open())
             {
                 const auto msg = std::format("Kernel file cant be opened:{} \n.", path);
                 throw std::runtime_error(msg);
             }
+            std::cout << std::format("Read kernel file: \n", path);
             return std::string((std::istreambuf_iterator<char>(file)), (std::istreambuf_iterator<char>()));
-        }();
+        }(params_.filter_shape.w);
 
         CD3DX12_SHADER_BYTECODE byte_code;
         byte_code.pShaderBytecode = kernel_source_content.data();
