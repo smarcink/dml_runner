@@ -290,15 +290,16 @@ public:
         else if (params_.dt == DataType::eFp16)
         {
             //fill_with_constant_linear_container_half(input_data_, DirectX::PackedVector::XMConvertFloatToHalf(1.0f));
-            randomize_linear_container_half(random_generator, uniform_distribution, input_data_);
-            randomize_linear_container_half(random_generator, uniform_distribution, filter_data_);
+            //randomize_linear_container_half(random_generator, uniform_distribution, input_data_);
+            fill_with_constant_linear_container_half(input_data_, DirectX::PackedVector::XMConvertFloatToHalf(1.0f));
+           // randomize_linear_container_half(random_generator, uniform_distribution, filter_data_);
             //Half* ptr = reinterpret_cast<Half*>(filter_data_.data());
             //for (int i = 0; i < params_.filter_shape.get_elements_count(); i++)
             //{
             //    ptr[i] = DirectX::PackedVector::XMConvertFloatToHalf(float(i));
 
             //}
-            //fill_with_constant_linear_container_half(filter_data_, DirectX::PackedVector::XMConvertFloatToHalf(1.0f));
+            fill_with_constant_linear_container_half(filter_data_, DirectX::PackedVector::XMConvertFloatToHalf(1.0f));
             if (use_bias())
             {
                 randomize_linear_container_half(random_generator, uniform_distribution, bias_data_);
@@ -643,7 +644,7 @@ public:
                 const auto msg = std::format("Kernel file cant be opened:{} \n.", path);
                 throw std::runtime_error(msg);
             }
-            std::cout << std::format("Read kernel file: \n", path);
+            std::cout << std::format("Read kernel file: {} \n", path);
             return std::string((std::istreambuf_iterator<char>(file)), (std::istreambuf_iterator<char>()));
         }(params_.filter_shape.w);
 
@@ -736,6 +737,8 @@ public:
         const auto thg_x = gws_x / (cm_params_.slice_ic * cm_params_.lws[0]);
         const auto thg_y = gws_y / cm_params_.lws[1];
         const auto thg_z = gws_z / cm_params_.lws[2];
+
+        std::cout << std::format("gws: {}, {}, {}, thg: {}, {}, {}\n", gws_x, gws_y, gws_z, thg_x, thg_y, thg_z);
 
         dispatch_kernel(cmd_list, pso_.Get(), root_signature_.Get(), gpu_handles_, thg_x, thg_y, thg_z);
     }
