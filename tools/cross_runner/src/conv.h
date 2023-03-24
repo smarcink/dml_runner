@@ -292,13 +292,13 @@ public:
             //fill_with_constant_linear_container_half(input_data_, DirectX::PackedVector::XMConvertFloatToHalf(1.0f));
             randomize_linear_container_half(random_generator, uniform_distribution, input_data_);
             //fill_with_constant_linear_container_half(input_data_, DirectX::PackedVector::XMConvertFloatToHalf(1.0f));
-            randomize_linear_container_half(random_generator, uniform_distribution, filter_data_);
-            //Half* ptr = reinterpret_cast<Half*>(filter_data_.data());
-            //for (int i = 0; i < params_.filter_shape.get_elements_count(); i++)
-            //{
-            //    ptr[i] = DirectX::PackedVector::XMConvertFloatToHalf(float(i));
+            //randomize_linear_container_half(random_generator, uniform_distribution, filter_data_);
+            Half* ptr = reinterpret_cast<Half*>(filter_data_.data());
+            for (int i = 0; i < params_.filter_shape.get_elements_count(); i++)
+            {
+                ptr[i] = DirectX::PackedVector::XMConvertFloatToHalf(float(i));
 
-            //}
+            }
             //fill_with_constant_linear_container_half(filter_data_, DirectX::PackedVector::XMConvertFloatToHalf(1.0f));
             if (use_bias())
             {
@@ -550,6 +550,23 @@ public:
             wr_params.ic = params_.filter_shape.c;
             wr_params.oc = params_.filter_shape.n;
             wr_params.k_size = params_.filter_shape.w;
+            wr_params.input_layout = params_.layout == DataLayout::eNCHW ? DataLayout::eOIYX : DataLayout::eWeightsLayoutStart;
+
+            if (params_.dt == DataType::eFp16 && params_.filter_shape.w == 1 && params_.filter_shape.h == 1)
+            {
+                wr_params.output_layout = DataLayout::eIO_i8_o8_i2;
+            }
+            else if (params_.dt == DataType::eFp16 && params_.filter_shape.w != 1 && params_.filter_shape.h != 1)
+            {
+                if (cm_params_.block_oc == 8)
+                {
+                    wr_params.output_layout = DataLayout::eOYXI_o8;
+                }
+                if (cm_params_.block_oc == 16)
+                {
+                    wr_params.output_layout = DataLayout::eOYXI_o16;
+                }
+            }
 
             weights_reorder_.emplace(WeightsReorder(std::move(wr_params), filter_buffer_, intc_ext, d3d12_device, cmd_list));
         }
@@ -749,6 +766,7 @@ public:
         if (weights_reorder_.has_value())
         {
             weights_reorder_->validate_conformance(command_queue, command_allocator, command_list);
+            exit(-3);
         }
         const auto ret = ConvolutionBaseDispatcher::validate_conformance(command_queue, command_allocator, command_list);
         return ret;
@@ -762,18 +780,48 @@ private:
         {
             DataType input_dt = DataType::eCount;
             DataType output_dt = DataType::eCount;
+
+            DataLayout input_layout = DataLayout::eWeightsLayoutStart;
+            DataLayout output_layout = DataLayout::eWeightsLayoutStart;
+
             std::uint32_t ic = 0;
             std::uint32_t oc = 0;
             std::uint32_t k_size = 0;
-            std::uint32_t ic_chunks_per_hw_thread = 8;
 
-            std::uint32_t dpas_depth = 8;
-            std::uint32_t dpas_exec_size = 8;
-            std::array<std::uint32_t, 3> lws{ 2u, 1u, 1u };
+            std::array<std::uint32_t, 3> lws{ 1u, 1u, 1u };
 
-            inline std::uint32_t ic_chunk_size() const
+            std::array<std::uint32_t, 3> get_gws() const
             {
-                return dpas_depth * (sizeof(uint32_t) / get_data_type_bytes_width(input_dt));
+                std::uint32_t gws_x = 0;
+                std::uint32_t gws_y = 0;
+                std::uint32_t gws_z = 0;
+                if (output_layout == DataLayout::eIO_i8_o8_i2)
+                {
+                    const std::uint32_t ic_chunks_per_hw_thread = 8;
+                    const std::uint32_t exec_size = 8;
+                    const std::uint32_t dpas_depth = 8;
+                    const std::uint32_t out_dt_size = get_data_type_bytes_width(output_dt);
+                    gws_x = oc / exec_size;
+                    gws_y = ic / (ic_chunks_per_hw_thread * dpas_depth * out_dt_size);
+                    gws_z = 1;
+                }
+                else if (output_layout == DataLayout::eOYXI_o8)
+                {
+                    gws_x = oc / 8;
+                    gws_y = k_size;
+                    gws_z = 1;
+                }
+                else if (output_layout == DataLayout::eOYXI_o16)
+                {
+                    gws_x = oc / 16;
+                    gws_y = k_size;
+                    gws_z = 1;
+                }
+                else
+                {
+                    assert(false && "Unknown data layout for weights reorder CM kernel.");
+                }
+                return { gws_x, gws_y, gws_z };
             }
         };
     public:
@@ -783,6 +831,11 @@ private:
             , d3d12_device_(d3d12_device)
             , input_buffer_(input_resource)
         {
+            assert(params_.input_dt != DataType::eCount);
+            assert(params_.output_dt != DataType::eCount);
+            assert(params_.input_layout > DataLayout::eWeightsLayoutStart);
+            assert(params_.output_layout > DataLayout::eWeightsLayoutStart);
+
             // root signature
             {
                 // input, filter
@@ -819,8 +872,13 @@ private:
             add_define("IC", params_.ic);
             add_define("OC", params_.oc);
             add_define("K_SIZE", params_.k_size);
-            add_define("IC_CHUNK_SIZE", params_.ic_chunk_size());
-            add_define("IC_CHUNKS_PER_HW_THREAD", params_.ic_chunks_per_hw_thread);
+
+            for (std::int32_t i = static_cast<std::int32_t>(DataLayout::eWeightsLayoutStart) + 1; i < static_cast<std::int32_t>(DataLayout::eCount); i++)
+            {
+                add_define("LAYOUT_" + data_layout_name(static_cast<DataLayout>(i)), i);
+            }
+            add_define("INPUT_LAYOUT", static_cast<std::int32_t>(params_.input_layout));
+            add_define("OUTPUT_LAYOUT", static_cast<std::int32_t>(params_.output_layout));
 
             auto kernel_source_content = []()
             {
@@ -899,9 +957,10 @@ private:
             assert(root_signature_);
             assert(!gpu_handles_.empty());
 
-            const auto gws_x = params_.oc / params_.dpas_exec_size;
-            const auto gws_y = params_.ic / (params_.ic_chunks_per_hw_thread * params_.ic_chunk_size());
-            const auto gws_z = 1;
+            const auto gws_xyz = params_.get_gws();
+            const auto gws_x = gws_xyz.at(0);
+            const auto gws_y = gws_xyz.at(1);
+            const auto gws_z = gws_xyz.at(2);
 
             assert(gws_x % params_.lws[0] == 0);
             assert(gws_x % params_.lws[1] == 0);
@@ -919,7 +978,7 @@ private:
             ID3D12CommandAllocator* command_allocator, ID3D12GraphicsCommandList* command_list) override
         {
             // optional weights conformance check
-            if (false)
+            if (true)
             {
                 const auto tensor_out_bytes_width = output_buffer_->GetDesc().Width;
 
@@ -943,7 +1002,44 @@ private:
                     const auto f = DirectX::PackedVector::XMConvertHalfToFloat(data_ptr[i]);
                     std::cout << (std::int32_t)f << " ";
 
-                    if ((i + 1) % 16 == 0 && i != 0)
+                    if (params_.output_layout == DataLayout::eIO_i8_o8_i2)
+                    {
+                        if ((i + 1) % 16 == 0 && i != 0)
+                        {
+                            std::cout << std::endl;
+                        }
+                    }
+                    else if (params_.output_layout == DataLayout::eOYXI_o16)
+                    {
+                        if (i != 0)
+                        {
+                            const auto oc_block = 16;
+                            if ((i + 1) % oc_block == 0)
+                            {
+                                std::cout << std::endl;
+                            }
+                            if ((i + 1) % (oc_block * params_.ic) == 0)
+                            {
+                                std::cout << std::endl;
+                            }
+                        }
+                    }
+                    else if (params_.output_layout == DataLayout::eOYXI_o8)
+                    {
+                        if (i != 0)
+                        {
+                            const auto oc_block = 8;
+                            if ((i + 1) % oc_block == 0)
+                            {
+                                std::cout << std::endl;
+                            }
+                            if ((i + 1) % (oc_block * params_.ic) == 0)
+                            {
+                                std::cout << std::endl;
+                            }
+                        }
+                    }
+                    else
                     {
                         std::cout << std::endl;
                     }

@@ -24,20 +24,19 @@ implied warranties, other than those that are expressly stated in the License.
 
 #define DPAS_DEPTH 8 
 #if(CM_GENX >= 1280)
-#define EXEC_SIZE 16
+#define DPAS_EXEC_SIZE 16
 #else
-#define EXEC_SIZE 8
+#define DPAS_EXEC_SIZE 8
 #endif
 
-#if IC_CHUNK_SIZE != 16 && IC_CHUNK_SIZE != 32 && IC_CHUNK_SIZE != 64 && IC_CHUNK_SIZE != 128 
-#error [Invalid param] Not tested ic chunk size. Probably this case works, but should be validated first.
+#if OUTPUT_LAYOUT == LAYOUT_OYXI_o8
+#define SIMD_SIZE 8
+#elif OUTPUT_LAYOUT == LAYOUT_OYXI_o16
+#define SIMD_SIZE 16
 #endif
 
-#define WEIGHTS_IC_OFSET sizeof(INPUT_TYPE)
+#define WEIGHTS_IC_OFSET (K_SIZE * K_SIZE * sizeof(INPUT_TYPE))
 #define WEIGHTS_OC_OFSET (IC * WEIGHTS_IC_OFSET)
-
-#define IC_PER_HW_THREAD (IC_CHUNK_SIZE * IC_CHUNKS_PER_HW_THREAD)
-#define IC_PER_HW_THREAD_PACKED ((IC_PER_HW_THREAD * sizeof(INPUT_TYPE)) / sizeof(uint32_t))
 
 static const uint32_t weights_init_offsets[] = {
                                                 0 * WEIGHTS_OC_OFSET, 0 * WEIGHTS_OC_OFSET + WEIGHTS_IC_OFSET,
@@ -58,37 +57,46 @@ extern "C" _GENX_MAIN_ void weights_reorder(SurfaceIndex surface_input [[type("b
     const uint thread_id_1 = cm_group_id(1) * cm_local_size(1) + cm_local_id(1);
     const uint thread_id_2 = cm_group_id(2) * cm_local_size(2) + cm_local_id(2);
     
-    
+#if INPUT_LAYOUT == LAYOUT_OIYX && OUTPUT_LAYOUT == LAYOUT_IO_i8_o8_i2
+	const uint32_t ic_chunk_size = DPAS_DEPTH * (sizeof(uint32_t)/ sizeof(INPUT_TYPE));
+	const uint32_t ic_chunks_per_hw_thread = 8;
+	const uint32_t ic_per_hw_thread = (ic_chunk_size * ic_chunks_per_hw_thread);
+	const uint32_t ic_per_hw_thread_packed = (ic_per_hw_thread * sizeof(INPUT_TYPE)) / sizeof(uint32_t);
     const uint32_t int_block = (sizeof(uint32_t) / sizeof(OUTPUT_TYPE));
     const uint32_t dpas_input_channels = DPAS_DEPTH * int_block;
     
-    const uint32_t oc = thread_id_0 * EXEC_SIZE;
-    const uint32_t ic = thread_id_1 * IC_PER_HW_THREAD;
+    const uint32_t oc = thread_id_0 * DPAS_EXEC_SIZE;
+    const uint32_t ic = thread_id_1 * ic_per_hw_thread;
     
-    const uint chunks_count = EXEC_SIZE;
+    const uint chunks_count = DPAS_EXEC_SIZE;
     // load
-    matrix<uint32_t, chunks_count, IC_PER_HW_THREAD_PACKED> data_input_typed;
+    matrix<uint32_t, chunks_count, ic_per_hw_thread_packed> data_input_typed;
     uint32_t input_offset = (oc * IC + ic) * sizeof(INPUT_TYPE);
     #pragma unroll
     for(int i = 0; i < chunks_count; i++)
     {
-        data_input_typed.row(i) = cm_load<uint32_t, IC_PER_HW_THREAD_PACKED, DataSize::Default, CacheHint::Cached, CacheHint::Cached>(surface_input, input_offset);
+        data_input_typed.row(i) = cm_load<uint32_t, ic_per_hw_thread_packed, DataSize::Default, CacheHint::Cached, CacheHint::Cached>(surface_input, input_offset);
         input_offset += IC * sizeof(INPUT_TYPE);
     }
-    matrix_ref<INPUT_TYPE, chunks_count, IC_PER_HW_THREAD> data_input = data_input_typed.format<INPUT_TYPE, chunks_count, IC_PER_HW_THREAD>();
+    matrix_ref<INPUT_TYPE, chunks_count, ic_per_hw_thread> data_input = data_input_typed.format<INPUT_TYPE, chunks_count, ic_per_hw_thread>();
     
     uint32_t output_offset = (oc * dpas_input_channels + ic * OC) * sizeof(INPUT_TYPE);  
-    vector<OUTPUT_TYPE, EXEC_SIZE * dpas_input_channels> data_out;
+    vector<OUTPUT_TYPE, DPAS_EXEC_SIZE * dpas_input_channels> data_out;
     #pragma unroll
-    for(int i = 0; i < IC_CHUNKS_PER_HW_THREAD; i++)
+    for(int i = 0; i < ic_chunks_per_hw_thread; i++)
     {
         #pragma unroll
-        for(int j = 0; j < EXEC_SIZE; j++)
+        for(int j = 0; j < DPAS_EXEC_SIZE; j++)
         {
-            data_out.select<dpas_input_channels, 1>(j * dpas_input_channels) = data_input.select<EXEC_SIZE, 1, int_block, 1>(0, int_block * j + i * dpas_input_channels);
+            data_out.select<dpas_input_channels, 1>(j * dpas_input_channels) = data_input.select<DPAS_EXEC_SIZE, 1, int_block, 1>(0, int_block * j + i * dpas_input_channels);
         }
-        const uint32_t packed_size = (EXEC_SIZE * dpas_input_channels)/2;
+        const uint32_t packed_size = (DPAS_EXEC_SIZE * dpas_input_channels)/2;
         cm_store<uint32_t, packed_size>(surface_output, output_offset, data_out.format<uint32_t>());
         output_offset += OC * dpas_input_channels * sizeof(OUTPUT_TYPE);
     }
+#elif INPUT_LAYOUT == LAYOUT_OIYX && (OUTPUT_LAYOUT == LAYOUT_OYXI_o8 || OUTPUT_LAYOUT == LAYOUT_OYXI_o16)
+//#error ToDo: add implementation here
+#else
+#error Not supported layouts.
+#endif
 }

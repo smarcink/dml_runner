@@ -96,8 +96,43 @@ enum class DataLayout
     eNCHW = 0,
     eNHWC = 1,
     eW,
+
+
+    // ..
+    // ..
+
+    // weights layouts
+    eWeightsLayoutStart = 1000,
+    eOIYX,          // nchw and oiyx layouts are the same format, this is just to express it with proper name
+    eIO_i8_o8_i2,  // layout for 1x1 fp16 CM simd8 dpas kernel
+
+    eOYXI_o8,   // layout for non dpas CM kernel for simd8 mad
+    eOYXI_o16,  // layout for non dpas CM kernel for simd16 mad
+
+    // ..
+    // ..
+
     eCount
 };
+
+inline std::string data_layout_name(DataLayout l)
+{
+    switch (l)
+    {
+    case DataLayout::eNCHW: return "NCHW";
+    case DataLayout::eNHWC: return "NHWC";
+    case DataLayout::eW:    return "W";
+    case DataLayout::eOIYX: return "OIYX";
+    case DataLayout::eIO_i8_o8_i2: return "IO_i8_o8_i2";
+    case DataLayout::eOYXI_o8:  return "OYXI_o8";
+    case DataLayout::eOYXI_o16: return "OYXI_o16";
+    default:
+        assert(false && "Unknown data layout name.");
+        return "";
+    }
+    return "";
+
+}
 
 inline std::uint8_t data_layout_dimensions_count(DataLayout l)
 {
