@@ -808,14 +808,14 @@ private:
                 else if (output_layout == DataLayout::eOYXI_o8)
                 {
                     gws_x = oc / 8;
-                    gws_y = k_size;
-                    gws_z = 1;
+                    gws_y = ic;
+                    gws_z = k_size;  // kernel size Y
                 }
                 else if (output_layout == DataLayout::eOYXI_o16)
                 {
                     gws_x = oc / 16;
-                    gws_y = k_size;
-                    gws_z = 1;
+                    gws_y = ic;
+                    gws_z = k_size;  // kernel size Y
                 }
                 else
                 {

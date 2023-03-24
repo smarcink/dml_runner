@@ -35,8 +35,28 @@ implied warranties, other than those that are expressly stated in the License.
 #define SIMD_SIZE 16
 #endif
 
-#define WEIGHTS_IC_OFSET (K_SIZE * K_SIZE * sizeof(INPUT_TYPE))
+#define WEIGHT_TYPE_SIZE sizeof(INPUT_TYPE)
+#define WEIGHTS_IC_OFSET (K_SIZE * K_SIZE * WEIGHT_TYPE_SIZE)
 #define WEIGHTS_OC_OFSET (IC * WEIGHTS_IC_OFSET)
+
+static const uint32_t weights_init_linear_offsets[] = {
+													0 * WEIGHT_TYPE_SIZE,
+													1 * WEIGHT_TYPE_SIZE,
+													2 * WEIGHT_TYPE_SIZE,
+													3 * WEIGHT_TYPE_SIZE,
+													4 * WEIGHT_TYPE_SIZE,
+													5 * WEIGHT_TYPE_SIZE,
+													6 * WEIGHT_TYPE_SIZE,
+													7 * WEIGHT_TYPE_SIZE,
+													8 * WEIGHT_TYPE_SIZE,
+													9 * WEIGHT_TYPE_SIZE,
+													10 * WEIGHT_TYPE_SIZE,
+													11 * WEIGHT_TYPE_SIZE,
+													12 * WEIGHT_TYPE_SIZE,
+													13 * WEIGHT_TYPE_SIZE,
+													14 * WEIGHT_TYPE_SIZE,
+													15 * WEIGHT_TYPE_SIZE
+													};
 
 static const uint32_t weights_init_offsets[] = {
                                                 0 * WEIGHTS_OC_OFSET, 0 * WEIGHTS_OC_OFSET + WEIGHTS_IC_OFSET,
@@ -95,7 +115,36 @@ extern "C" _GENX_MAIN_ void weights_reorder(SurfaceIndex surface_input [[type("b
         output_offset += OC * dpas_input_channels * sizeof(OUTPUT_TYPE);
     }
 #elif INPUT_LAYOUT == LAYOUT_OIYX && (OUTPUT_LAYOUT == LAYOUT_OYXI_o8 || OUTPUT_LAYOUT == LAYOUT_OYXI_o16)
-//#error ToDo: add implementation here
+	
+	const uint32_t oc = thread_id_0 * SIMD_SIZE;
+    const uint32_t ic = thread_id_1;
+    const uint32_t kh = thread_id_2;
+	
+	const uint32_t chunks_count = SIMD_SIZE;
+    matrix<INPUT_TYPE, SIMD_SIZE, K_SIZE> data_input;
+	
+	vector<uint32_t, 8> offsets(weights_init_linear_offsets);
+	offsets += oc * WEIGHTS_OC_OFSET + ic * WEIGHTS_IC_OFSET + kh * K_SIZE * WEIGHT_TYPE_SIZE;
+	#pragma unroll
+	for(int i = 0; i < chunks_count; i++)
+	{
+		vector<INPUT_TYPE, 8> data_load = cm_load<INPUT_TYPE, VectorSize::N1, DataSize::Default, CacheHint::Default, CacheHint::Default>(surface_input, offsets);
+		data_input.select<1, 1, K_SIZE, 1>(i, 0) = data_load.select<K_SIZE, 1>();
+		offsets += K_SIZE * K_SIZE * WEIGHT_TYPE_SIZE;
+	}
+	
+	uint32_t ouput_offset = (oc * K_SIZE * K_SIZE * IC + ic * SIMD_SIZE + kh * K_SIZE * IC * SIMD_SIZE) * WEIGHT_TYPE_SIZE;
+	#pragma unroll
+	for(int kw = 0; kw < K_SIZE; kw++)
+	{
+		// #pragma unroll
+		// for(int i = 0; i < 1; i++)
+		// {
+			vector<OUTPUT_TYPE, SIMD_SIZE> data_out = data_input.select<SIMD_SIZE, 1, 1, 1>(0, kw);
+			cm_store<uint32_t, 8>(surface_output, ouput_offset /* + i * SIMD_SIZE * WEIGHT_TYPE_SIZE */, data_out.format<uint32_t>());
+		// }
+		ouput_offset += IC * SIMD_SIZE * WEIGHT_TYPE_SIZE;
+	}
 #else
 #error Not supported layouts.
 #endif
