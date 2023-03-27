@@ -514,6 +514,7 @@ public:
         std::uint32_t block_w = 8;
         const std::uint32_t block_h = 1;  //ToDo: make configurable if needed
         std::uint32_t block_oc = 8;
+        std::uint32_t block_batch = 1;  // block batch
         std::uint32_t slice_ic = 1;
         bool reorder_weights = true;
         bool dispatch_only_weights_reorder = false;
@@ -525,6 +526,7 @@ public:
             opts->add_flag("--print_reg_usage", params.print_reg_usage)->default_val(false);
             opts->add_option("--block_w", params.block_w);
             opts->add_option("--block_oc", params.block_oc);
+            opts->add_option("--block_batch", params.block_batch)->default_val(1);
             opts->add_option("--slice_ic", params.slice_ic, "How many HW threads cooperate to compute final output. Setting to 1 is equal to having this feature disabled. It increases thread group size (lws) in X dimension.")->default_val(1);
             opts->add_option("--lws", params.lws)->delimiter(',');
             opts->add_flag("--reorder_weights,!--no_reorder_weights", params.reorder_weights);
@@ -634,6 +636,7 @@ public:
         add_define("BLOCK_W", cm_params_.block_w);
         add_define("BLOCK_H", cm_params_.block_h);
         add_define("BLOCK_OC", cm_params_.block_oc);
+        add_define("BLOCK_BATCH", cm_params_.block_batch);
 
         add_define("WEIGHTS_IN_OPTIMAL_FORMAT", cm_params.reorder_weights);
 
@@ -753,7 +756,7 @@ public:
 
         const auto gws_x = cm_params_.slice_ic * (round_up_next_multiple(output_shape_.w, cm_params_.block_w) / cm_params_.block_w);
         const auto gws_y = round_up_next_multiple(output_shape_.h, cm_params_.block_h) / cm_params_.block_h;
-        const auto gws_z = params_.input_shape.n * (params_.filter_shape.n / cm_params_.block_oc);
+        const auto gws_z = (params_.input_shape.n / cm_params_.block_batch) * (params_.filter_shape.n / cm_params_.block_oc);
 
         assert(gws_x % cm_params_.lws[0] == 0);
         assert(gws_y % cm_params_.lws[1] == 0);

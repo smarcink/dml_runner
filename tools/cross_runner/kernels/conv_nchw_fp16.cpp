@@ -165,7 +165,7 @@ _GENX_ inline vector<DT_ACCU, INPUT_REG_SIZE> load_input_nchw(SurfaceIndex surfa
 	
 	offsets += h_offset_pad * INPUT_WIDTH * INPUT_ELEMENT_SIZE;
 	vector<uint32_t, LINEAR_LOAD_SIZE> offsets_u32 = offsets;
-
+	offsets_u32 += batch_base_offset_bytes;
 	#pragma unroll
 	for(int i = 0; i < INPUT_CHANNELS; i++)
 	{
@@ -261,19 +261,26 @@ extern "C" _GENX_MAIN_ void convolution_nchw_nondpas(
 
 	const uint32_t w_chunk_id = thg_0;
 	const uint32_t h_chunk_id = thg_1;
-	const uint32_t batch_id = 0;
-	const uint32_t oc_chunk_id = thg_2;
+	const uint32_t thread_per_full_oc = OUTPUT_CHANNELS / BLOCK_OC;
+	const uint32_t batch_id = thg_2 / thread_per_full_oc;
+	const uint32_t oc_chunk_id = thg_2 % thread_per_full_oc;
 
-    const uint32_t input_batch_offset = batch_id * INPUT_WIDTH * INPUT_HEIGHT * INPUT_CHANNELS * sizeof(DT_IN);
+    const uint32_t input_batch_offset = batch_id * BLOCK_BATCH * INPUT_WIDTH * INPUT_HEIGHT * INPUT_CHANNELS * sizeof(DT_IN);
     const uint32_t input_w_chunk_offset = w_chunk_id * BLOCK_W * STRIDE_W;
     const uint32_t input_h_chunk_offset = h_chunk_id * BLOCK_H * STRIDE_H;
 	
-	vector<DT_ACCU, ACCU_REG_SIZE> accu_row_0(0);
+	matrix<DT_ACCU, BLOCK_BATCH, ACCU_REG_SIZE> accu_row_0(0.0f);
 	
 	#pragma unroll
 	for(int kh = 0; kh < KERNEL_SIZE; kh++)
 	{
-		vector<DT_ACCU, INPUT_REG_SIZE> input_0 = load_input_nchw(surface_input, input_w_chunk_offset, input_h_chunk_offset + kh, input_batch_offset);
+		matrix<DT_ACCU, BLOCK_BATCH, INPUT_REG_SIZE> input_0;
+		#pragma unroll
+		for(int b = 0; b < BLOCK_BATCH; b++)
+		{
+			input_0.row(b) = load_input_nchw(surface_input, input_w_chunk_offset, input_h_chunk_offset + kh, input_batch_offset + b * INPUT_WIDTH * INPUT_HEIGHT * INPUT_CHANNELS * sizeof(DT_IN));
+		}
+
 		#pragma unroll
 		for(int kw = 0; kw < KERNEL_SIZE; kw++)
 		{
@@ -281,14 +288,18 @@ extern "C" _GENX_MAIN_ void convolution_nchw_nondpas(
 			#pragma unroll
 			for(int i = 0; i < INPUT_CHANNELS; i++)
 			{
-				vector_ref<DT_ACCU, BLOCK_W * STRIDE_W> input_chunk = input_0.select<BLOCK_W * STRIDE_W, 1>(kw + i * INPUT_REG_W);
+				matrix_ref<DT_ACCU, BLOCK_BATCH, BLOCK_W * STRIDE_W> input_chunk_0 = input_0.select<BLOCK_BATCH, 1, BLOCK_W * STRIDE_W, 1>(0, kw + i * INPUT_REG_W);
 				vector_ref<DT_ACCU, BLOCK_OC> weights_chunk_ic = weights_chunk_oc_ic.select<BLOCK_OC, 1>(i * BLOCK_OC);
 		
 				#pragma unroll
-				for(int bw = 0; bw < BLOCK_W; bw++)
+				for(int b = 0; b < BLOCK_BATCH; b++)
 				{
-					// as long as accumulator, input and weights are the same data type this will compile into single mad instruction				
-					accu_row_0.select<BLOCK_OC, 1>(bw * BLOCK_OC) += input_chunk.select<1, 1>(bw * STRIDE_W).replicate<BLOCK_OC>() * weights_chunk_ic;
+					#pragma unroll
+					for(int bw = 0; bw < BLOCK_W; bw++)
+					{
+						// as long as accumulator, input and weights are the same data type this will compile into single mad instruction				
+						accu_row_0.select<1, 1, BLOCK_OC, 1>(b, bw * BLOCK_OC) += input_chunk_0.select<1, 1, 1, 1>(b, bw * STRIDE_W).replicate<BLOCK_OC>() * weights_chunk_ic;
+					}
 				}
 			}		
 		}		
@@ -296,13 +307,15 @@ extern "C" _GENX_MAIN_ void convolution_nchw_nondpas(
 
 	// if the DT_OUT == DT_ACCU then compiler will not do anything here
 	// but if data types are different then this cast accumulator to output type
-    vector<DT_OUT, ACCU_REG_SIZE> output_row_0 = vector<DT_OUT, ACCU_REG_SIZE>(accu_row_0);
+    //vector<DT_OUT, ACCU_REG_SIZE> output_row_0 = vector<DT_OUT, ACCU_REG_SIZE>(accu_row_0);
+    matrix<DT_OUT, BLOCK_BATCH, ACCU_REG_SIZE> output_row_0 = matrix<DT_OUT, BLOCK_BATCH, ACCU_REG_SIZE>(accu_row_0);
 	
-	const uint output_batch_offset = batch_id * OUTPUT_HEIGHT * OUTPUT_WIDTH * OUTPUT_CHANNELS;
+	const uint output_batch_offset = batch_id * BLOCK_BATCH * OUTPUT_HEIGHT * OUTPUT_WIDTH * OUTPUT_CHANNELS;
     const uint output_oc_chunk_offset = oc_chunk_id * BLOCK_OC * OUTPUT_HEIGHT * OUTPUT_WIDTH;
     const uint output_w_chunk_offset = w_chunk_id * BLOCK_W;
     const uint output_h_chunk_offset = h_chunk_id * BLOCK_H * OUTPUT_WIDTH;
     uint32_t output_offset = (output_batch_offset + output_oc_chunk_offset + output_h_chunk_offset + output_w_chunk_offset) * sizeof(DT_OUT);
 	
-	store_output_wc8_as_nchw(surface_output, output_row_0, output_offset, w_chunk_id);
+	store_output_wc8_as_nchw(surface_output, output_row_0.row(0), output_offset, w_chunk_id);
+	store_output_wc8_as_nchw(surface_output, output_row_0.row(1), output_offset + OUTPUT_HEIGHT * OUTPUT_WIDTH * OUTPUT_CHANNELS * sizeof(DT_OUT), w_chunk_id);
 }
