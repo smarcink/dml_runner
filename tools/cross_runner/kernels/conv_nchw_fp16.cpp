@@ -281,14 +281,14 @@ extern "C" _GENX_MAIN_ void convolution_nchw_nondpas(
 			#pragma unroll
 			for(int i = 0; i < INPUT_CHANNELS; i++)
 			{
-				vector_ref<DT_ACCU, BLOCK_W> input_chunk = input_0.select<BLOCK_W, 1>(kw + i * INPUT_REG_W);
+				vector_ref<DT_ACCU, BLOCK_W * STRIDE_W> input_chunk = input_0.select<BLOCK_W * STRIDE_W, 1>(kw + i * INPUT_REG_W);
 				vector_ref<DT_ACCU, BLOCK_OC> weights_chunk_ic = weights_chunk_oc_ic.select<BLOCK_OC, 1>(i * BLOCK_OC);
 		
 				#pragma unroll
 				for(int bw = 0; bw < BLOCK_W; bw++)
 				{
 					// as long as accumulator, input and weights are the same data type this will compile into single mad instruction				
-					accu_row_0.select<BLOCK_OC, 1>(bw * BLOCK_OC) += input_chunk.select<1, 1>(bw).replicate<BLOCK_OC>() * weights_chunk_ic;
+					accu_row_0.select<BLOCK_OC, 1>(bw * BLOCK_OC) += input_chunk.select<1, 1>(bw * STRIDE_W).replicate<BLOCK_OC>() * weights_chunk_ic;
 				}
 			}		
 		}		
