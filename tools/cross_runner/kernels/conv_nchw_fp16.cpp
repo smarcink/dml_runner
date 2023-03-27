@@ -172,48 +172,14 @@ _GENX_ inline vector<DT_IN, INPUT_REG_SIZE> load_input_nchw(SurfaceIndex surface
 	
 	offsets += h_offset_pad * INPUT_WIDTH * INPUT_ELEMENT_SIZE;
 	vector<uint32_t, LINEAR_LOAD_SIZE> offsets_u32 = offsets;
-	
-#if 0
-	 //if(w_offset == 0 && h_offset == 0)
-	 {
-		printf("%d, %d \n", w_offset, h_offset);
-		 for(int i = 0; i < LINEAR_LOAD_SIZE; i++)
-		 {
-			printf("%d, ", predicate[i]); 
-		 }
-		printf("\n"); 
-				 for(int i = 0; i < LINEAR_LOAD_SIZE; i++)
-		 {
-			printf("%d, ", offsets[i]); 
-		 }
-		printf("\n"); 
-	 }
-#endif	
-
 
 	#pragma unroll
 	for(int i = 0; i < INPUT_CHANNELS; i++)
 	{
 		vector<DT_IN, LINEAR_LOAD_SIZE> load_chunk = cm_load<half, VectorSize::N1, DataSize::Default, CacheHint::Default, CacheHint::Default>(surface, offsets_u32);	
 		ret.select<INPUT_REG_W, 1>(i * INPUT_REG_W).merge(load_chunk.select<INPUT_REG_W, 1>(), predicate.select<INPUT_REG_W, 1>());
-		//ret.select<INPUT_REG_W, 1>(i * INPUT_REG_W) = offsets_u32.select<INPUT_REG_W, 1>();
 		offsets_u32 += (INPUT_WIDTH * INPUT_HEIGHT * INPUT_ELEMENT_SIZE);
 	}
-	
-#if 0
-	 //if(w_offset == 0 && h_offset == 0)
-	 {
-		 for(int i = 0; i < INPUT_CHANNELS; i++)
-		 {
-			 for(int w = 0; w < INPUT_REG_W; w++)
-			 {
-				 printf("%f, ", (float)ret[w + i * INPUT_REG_W]);
-			 }
-			printf("\n"); 
-		 }
-		printf("\n"); 
-	 }
-#endif
 	
 	return ret;
 }
@@ -241,8 +207,21 @@ _GENX_ inline vector<DT_IN, BLOCK_OC * INPUT_CHANNELS> load_weights(SurfaceIndex
 
 _GENX_ inline void store_output_wc8_as_nchw(SurfaceIndex surface [[type("buffer_t")]], vector_ref<DT_OUT, ACCU_REG_SIZE> grf_chunk, uint32_t byte_offset, uint32_t w_chunk_id)
 {    
-
-	if constexpr(BLOCK_W == 8 || BLOCK_W == 16)
+	// first: check if block stores can be used (address aligned to u32)
+	// second check if scattared cache-friendly writes can be used 
+	// third: use generic, slowest path with scattared, partial writes
+	if constexpr((OUTPUT_WIDTH * OUTPUT_ELEMENT_SIZE) % (BLOCK_W * OUTPUT_ELEMENT_SIZE / sizeof(uint32_t)) == 0)
+	{
+		#pragma unroll
+		for(int i = 0; i < BLOCK_OC; i++)
+		{
+			// pick data to store
+			vector<DT_OUT, BLOCK_W> grf_chunk_store = grf_chunk.select<BLOCK_W, BLOCK_OC>(i);                  
+			cm_store<uint32_t, BLOCK_W/2>(surface, byte_offset, grf_chunk_store.format<uint32_t>());
+			byte_offset += OUTPUT_WIDTH * OUTPUT_HEIGHT * OUTPUT_ELEMENT_SIZE;
+		}		
+	}
+	else if constexpr(BLOCK_W == 8 || BLOCK_W == 16)
 	{
 		vector<uint32_t, BLOCK_W> offsets(output_linear_init_offsets);
 		offsets += byte_offset;
@@ -253,7 +232,7 @@ _GENX_ inline void store_output_wc8_as_nchw(SurfaceIndex surface [[type("buffer_
 			vector<DT_OUT, BLOCK_W> grf_chunk_store = grf_chunk.select<BLOCK_W, BLOCK_OC>(i);                  
 			cm_store<half, VectorSize::N1, DataSize::Default, CacheHint::WriteBack, CacheHint::WriteBack>(surface, offsets, grf_chunk_store/*, predicate*/);
 			offsets += OUTPUT_NCHW_PLANE_SIZE;
-		}		
+		}
 	}
 	else
 	{
