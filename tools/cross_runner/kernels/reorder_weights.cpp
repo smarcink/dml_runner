@@ -130,19 +130,15 @@ extern "C" _GENX_MAIN_ void weights_reorder(SurfaceIndex surface_input [[type("b
 	{
 		vector<INPUT_TYPE, 8> data_load = cm_load<INPUT_TYPE, VectorSize::N1, DataSize::Default, CacheHint::Default, CacheHint::Default>(surface_input, offsets);
 		data_input.select<1, 1, K_SIZE, 1>(i, 0) = data_load.select<K_SIZE, 1>();
-		offsets += K_SIZE * K_SIZE * WEIGHT_TYPE_SIZE;
+		offsets += K_SIZE * K_SIZE * IC * WEIGHT_TYPE_SIZE;
 	}
 	
 	uint32_t ouput_offset = (oc * K_SIZE * K_SIZE * IC + ic * SIMD_SIZE + kh * K_SIZE * IC * SIMD_SIZE) * WEIGHT_TYPE_SIZE;
 	#pragma unroll
 	for(int kw = 0; kw < K_SIZE; kw++)
 	{
-		// #pragma unroll
-		// for(int i = 0; i < 1; i++)
-		// {
-			vector<OUTPUT_TYPE, SIMD_SIZE> data_out = data_input.select<SIMD_SIZE, 1, 1, 1>(0, kw);
-			cm_store<uint32_t, 8>(surface_output, ouput_offset /* + i * SIMD_SIZE * WEIGHT_TYPE_SIZE */, data_out.format<uint32_t>());
-		// }
+		vector<OUTPUT_TYPE, SIMD_SIZE> data_out = data_input.select<SIMD_SIZE, 1, 1, 1>(0, kw);
+		cm_store<uint32_t, SIMD_SIZE/2>(surface_output, ouput_offset, data_out.format<uint32_t>());
 		ouput_offset += IC * SIMD_SIZE * WEIGHT_TYPE_SIZE;
 	}
 #else
