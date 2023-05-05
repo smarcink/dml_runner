@@ -7,6 +7,10 @@
 #define ITEMNUM_PER_HW_PACKED ((ITEMNUM_PER_HW * sizeof(DT))/sizeof(uint32_t))
 #define MATH_E 2.7182818f
 
+#if INOUT_WIDTH == 77
+#define NON_ALIGNED_WIDTH 1
+#endif
+
 extern "C" _GENX_MAIN_ void softmax_nchw(
 	SurfaceIndex surface_input [[type("buffer_t")]],
 	SurfaceIndex surface_output [[type("buffer_t")]])
@@ -17,8 +21,14 @@ extern "C" _GENX_MAIN_ void softmax_nchw(
 	
 	const uint32_t in_out_offset = (global_x * ITEMNUM_PER_HW + global_y * INOUT_WIDTH + global_z * (INOUT_WIDTH * INOUT_HEIGHT)) * sizeof(DT);
 	
+#if NON_ALIGNED_WIDTH
+	vector<DT, ITEMNUM_PER_HW> my_data = 0;
+	vector_ref<uint32_t, 32> my_data_64_packed = in_data_packed.select<64, 1>()format<DT>();
+#else
 	vector<uint32_t, ITEMNUM_PER_HW_PACKED> in_data_packed = cm_load<uint32_t, ITEMNUM_PER_HW_PACKED, DataSize::Default, CacheHint::Cached, CacheHint::Cached>(surface_input, in_out_offset);
 	vector_ref<DT, ITEMNUM_PER_HW> my_data = in_data_packed.format<DT>();
+#endif
+
 	
 	// do the local (hw) reduce 
 	my_data = cm_pow(MATH_E, my_data);
@@ -44,6 +54,11 @@ extern "C" _GENX_MAIN_ void softmax_nchw(
 	my_data = my_data_accu;
 	
 	// store results
+#if NON_ALIGNED_WIDTH
+	vector_ref<uint32_t, ITEMNUM_PER_HW_PACKED> out_data_packed = in_data_packed;
+    cm_store<uint32_t, 16, DataSize::Default, CacheHint::WriteBack, CacheHint::WriteBack>(surface_output, in_out_offset, out_data_packed.select<16, 1>());
+#else
 	vector_ref<uint32_t, ITEMNUM_PER_HW_PACKED> out_data_packed = in_data_packed;
     cm_store<uint32_t, ITEMNUM_PER_HW_PACKED, DataSize::Default, CacheHint::WriteBack, CacheHint::WriteBack>(surface_output, in_out_offset, out_data_packed);
+#endif
 }
