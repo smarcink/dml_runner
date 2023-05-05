@@ -65,6 +65,7 @@ struct CliOptions
     // specific for implementation
     ConvolutionCmDispatcher::conv_cm_params_t conv_cm_params{};
     MvnCmDispatcher::mvn_cm_params_t mvn_cm_params{};
+    SoftmaxCmDispatcher::softmax_cm_params_t softmax_cm_params{};
     GemmCmDispatcher::cm_params_t gemm_cm_params{};
 };
 
@@ -111,6 +112,8 @@ int main()
     ConvolutionCmDispatcher::conv_cm_params_t::add_cli_options(conv_cm_option_groups, opts.conv_cm_params);
     auto mvn_cm_option_groups = dml_runner_app.add_subcommand("mvn_cm_opts", "Options for mvn layer with CM implementation.");
     MvnCmDispatcher::mvn_cm_params_t::add_cli_options(mvn_cm_option_groups, opts.mvn_cm_params);
+    auto softmax_cm_option_groups = dml_runner_app.add_subcommand("softmax_cm_opts", "Options for softmax layer with CM implementation.");
+    SoftmaxCmDispatcher::softmax_cm_params_t::add_cli_options(softmax_cm_option_groups, opts.softmax_cm_params);
     auto gemm_cm_option_groups = dml_runner_app.add_subcommand("gemm_cm_opts", "Options for gemm layer with CM implementation.");
     GemmCmDispatcher::cm_params_t::add_cli_options(gemm_cm_option_groups, opts.gemm_cm_params);
 
@@ -183,6 +186,11 @@ int main()
         {
             node = std::make_unique<SoftmaxDmlDispatcher>(std::move(opts.softmax_opts),
                 d3d12_device.Get(), dml_device.Get(), dml_command_recorder.Get(), command_list.Get());
+        }
+        else if (opts.node_type == NodeType::eSoftmaxCm)
+        {
+            node = std::make_unique<SoftmaxCmDispatcher>(std::move(opts.softmax_opts), std::move(opts.softmax_cm_params),
+                intel_extension_d3d12, d3d12_device.Get(), dml_device.Get(), dml_command_recorder.Get(), command_list.Get());
         }
         else if (opts.node_type == NodeType::eMvnDml)
         {
