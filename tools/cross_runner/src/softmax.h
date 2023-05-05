@@ -129,7 +129,7 @@ public:
 
         // randomize data
         std::mt19937 random_generator(42); // static, create it once!
-        std::uniform_real_distribution<float> uniform_distribution(0.0f, 5.0f);
+        std::uniform_real_distribution<float> uniform_distribution(0.0f, 1.0f);
 
         if (params_.dt == DataType::eFp32)
         {
@@ -182,11 +182,11 @@ public:
 
         if (params_.dt == DataType::eFp32)
         {
-            return run_conformance_check<float>(data_out, dnnl_untyped_result, 0.001f);
+            return run_conformance_check<float>(data_out, dnnl_untyped_result, 0.0001f);
         }
         else if (params_.dt == DataType::eFp16)
         {
-            return run_conformance_check<Half>(data_out, dnnl_untyped_result, 0.05f);
+            return run_conformance_check<Half>(data_out, dnnl_untyped_result, 0.005f);
         }
         assert(false && "Unsupported output data type!");
         ConformanceResult ret{};
@@ -246,7 +246,6 @@ public:
         bool large_grf;
         bool print_reg_usage;
         std::array<std::uint32_t, 3> lws{ 1u, 1u, 1u };
-        const std::uint32_t items_per_hw_th = 128;
 
         inline static void add_cli_options(CLI::App* opts, softmax_cm_params_t& params)
         {
@@ -261,6 +260,15 @@ public:
         , intc_ext_(intc_ext)
         , cm_params_(std::move(cm_params))
     {
+        const auto items_per_hw_th = get_items_per_hw();
+        if(items_per_hw_th == 0)
+        {
+            throw std::runtime_error("Unsupported width for softmax operator for MHA layer!");
+        }
+
+        cm_params_.lws[0] = params_.shape.w / items_per_hw_th;
+        cm_params_.lws[1] = 1;
+        cm_params_.lws[2] = 1;
 
         // root signature
         {
@@ -295,6 +303,7 @@ public:
         add_define("INOUT_HEIGHT", params_.shape.h);
         add_define("INOUT_CHANNELS", params_.shape.c);
         add_define("INOUT_BATCH", params_.shape.n);
+        add_define("ITEMNUM_PER_HW", items_per_hw_th);
 
         // kernel compilation
         const auto dump_asm_str = cm_params_.dump_asm ? " -mdump_asm" : "";
@@ -364,7 +373,7 @@ public:
             cmd_list->SetComputeRootDescriptorTable(root_index++, gpu_heap_handle);
         }
 
-        const auto gws_x = 1;
+        const auto gws_x = params_.shape.w / get_items_per_hw();
         const auto gws_y = params_.shape.h;
         const auto gws_z = params_.shape.n * params_.shape.c;
 
@@ -376,6 +385,25 @@ public:
         const auto thg_y = gws_y / cm_params_.lws[1];
         const auto thg_z = gws_z / cm_params_.lws[2];
         cmd_list->Dispatch(thg_x, thg_y, thg_z);
+    }
+
+private:
+    std::uint32_t get_items_per_hw()
+    {
+        std::uint32_t items_per_hw_th = 0;
+        if (params_.shape.w % 128 == 0)
+        {
+            items_per_hw_th = 128;
+        }
+        else if (params_.shape.w % 64 == 0)
+        {
+            items_per_hw_th = 64;
+        }
+        else if (params_.shape.w == 77)
+        {
+            items_per_hw_th = 77;
+        }
+        return items_per_hw_th;
     }
 
 private:
