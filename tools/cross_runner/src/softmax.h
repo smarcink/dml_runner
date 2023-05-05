@@ -301,8 +301,6 @@ public:
 
         add_define("INOUT_WIDTH", params_.shape.w);
         add_define("INOUT_HEIGHT", params_.shape.h);
-        add_define("INOUT_CHANNELS", params_.shape.c);
-        add_define("INOUT_BATCH", params_.shape.n);
         add_define("ITEMNUM_PER_HW", items_per_hw_th);
 
         // kernel compilation
