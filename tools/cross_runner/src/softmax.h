@@ -8,10 +8,12 @@ namespace gpu_op
 class Softmax : public DirectMlBaseNode
 {
 public:
-    Softmax(std::uint32_t axis, const dml::TensorDimensions& input_dims, const DML_TENSOR_DATA_TYPE data_type, const dml::TensorPolicy& tensor_policy, 
+    Softmax(std::uint32_t axis, const TensorShape& shape, const DML_TENSOR_DATA_TYPE data_type, const dml::TensorPolicy& tensor_policy,
         IDMLDevice* dml_device, ID3D12Device* d3d12_device)
         : DirectMlBaseNode(dml_device, d3d12_device)
     {
+        const dml::TensorDimensions input_dims{ shape.n, shape.c, shape.h, shape.w };
+
         tensor_input_desc_.DataType = data_type;
         tensor_input_desc_.Flags = DML_TENSOR_FLAG_NONE;
         tensor_input_desc_.DimensionCount = static_cast<std::uint32_t>(input_dims.size());
@@ -90,43 +92,33 @@ std::vector<std::byte> softmax(std::uint32_t axis, const std::byte* in_data, con
 }  // namespace cpu_op
 
 
-class SoftmaxDispatcher : public NodeDispatcher
+class SoftmaxBaseDispatcher : public NodeDispatcher
 {
 public:
     struct create_params_t
     {
         DataType dt;
         DataLayout layout;
-        std::uint32_t batch;
-        std::uint32_t ic;
-        std::uint32_t in_width;
-        std::uint32_t in_height;
+        TensorShape shape;
         std::uint32_t axis;
 
         inline static void add_cli_options(CLI::App* opts, create_params_t& params)
         {
             add_data_type_cli_option(opts, "--data_type", params.dt)->required();
             add_data_layout_cli_option(opts, "--layout", params.layout)->required();
-            opts->add_option("--batch", params.batch)->required();
-            opts->add_option("--ic", params.ic)->required();
-            opts->add_option("--in_width", params.in_width)->required();
-            opts->add_option("--in_height", params.in_height)->required();
+            opts->add_option("--shape", params.shape, "shape: <n,c,h,w>")->required();
             opts->add_option("--axis", params.axis, "axis represents the axis of which the SoftMax is calculated.")->required();
         }
     };
 public:
-    SoftmaxDispatcher(create_params_t&& params, ID3D12Device* d3d12_device, IDMLDevice* dml_device, IDMLCommandRecorder* dml_cmd_recorder, ID3D12GraphicsCommandList* cmd_list)
+    SoftmaxBaseDispatcher(create_params_t&& params, ID3D12Device* d3d12_device, IDMLDevice* dml_device, IDMLCommandRecorder* dml_cmd_recorder, ID3D12GraphicsCommandList* cmd_list)
         : params_(std::move(params))
         , dml_cmd_recorder_(dml_cmd_recorder)
-        , softmax_(params_.axis, dml::TensorDimensions{ params_.batch, params_.ic, params_.in_width, params.in_height },
-            to_dml_data_type(params_.dt), to_dml_tensor_policy(params_.layout), dml_device, d3d12_device)
         , d3d12_device_(d3d12_device)
-        , input_data_(params_.batch* params_.ic* params_.in_width* params.in_height* get_data_type_bytes_width(params_.dt))
+        , input_data_(params_.shape.get_elements_count() * get_data_type_bytes_width(params_.dt))
     {
-        const auto tensor_in_desc = softmax_.get_tensor_input_desc();
-        const auto tensor_out_desc = softmax_.get_tensor_out_desc();
-        const auto tensor_a_bytes_width = tensor_in_desc.totalTensorSizeInBytes;
-        const auto tensor_out_bytes_width = tensor_out_desc.totalTensorSizeInBytes;
+        const auto tensor_a_bytes_width = input_data_.size();
+        const auto tensor_out_bytes_width = input_data_.size();
 
 
         upload_buffer_ = create_buffer(d3d12_device, tensor_a_bytes_width, D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ);
@@ -167,22 +159,6 @@ public:
         cmd_list->ResourceBarrier(static_cast<std::uint32_t>(barriers.size()), barriers.data());
     }
 
-    std::uint32_t get_total_descriptor_count() override
-    {
-        return softmax_.get_total_descriptor_count();
-    }
-
-    void initialize(ID3D12GraphicsCommandList* cmd_list, D3D12_CPU_DESCRIPTOR_HANDLE cpu_handle, D3D12_GPU_DESCRIPTOR_HANDLE gpu_handle)
-    {
-        softmax_.create_binding_tables(cpu_handle, gpu_handle);
-        softmax_.record_initialize(dml_cmd_recorder_, cmd_list);
-    }
-
-    void execute(ID3D12GraphicsCommandList* cmd_list)
-    {
-        softmax_.record_execute(dml_cmd_recorder_, cmd_list, output_buffer_.Get(), input_buffer_.Get());
-    }
-
     ConformanceResult validate_conformance(ID3D12CommandQueue* command_queue,
         ID3D12CommandAllocator* command_allocator, ID3D12GraphicsCommandList* command_list)
     {
@@ -202,8 +178,7 @@ public:
         std::memcpy(data_out.data(), readback_mapped_ptr, data_out.size());
         readback_buffer->Unmap(0, nullptr);
 
-        const auto dnnl_untyped_result = cpu_op::softmax(params_.axis, input_data_.data(),
-            { params_.batch, params_.ic, params_.in_height, params_.in_width }, params_.dt, params_.layout);
+        const auto dnnl_untyped_result = cpu_op::softmax(params_.axis, input_data_.data(), params_.shape, params_.dt, params_.layout);
 
         if (params_.dt == DataType::eFp32)
         {
@@ -219,9 +194,8 @@ public:
     }
 
 
-private:
+protected:
     create_params_t params_;
-    gpu_op::Softmax softmax_;
     ID3D12Device* d3d12_device_;
     IDMLCommandRecorder* dml_cmd_recorder_;
 
@@ -230,4 +204,33 @@ private:
     ComPtr<ID3D12Resource> input_buffer_;
     ComPtr<ID3D12Resource> output_buffer_;
     ComPtr<ID3D12Resource> upload_buffer_;
+};
+
+class SoftmaxDmlDispatcher : public SoftmaxBaseDispatcher
+{
+public:
+    SoftmaxDmlDispatcher(SoftmaxBaseDispatcher::create_params_t&& params, ID3D12Device* d3d12_device, IDMLDevice* dml_device, IDMLCommandRecorder* dml_cmd_recorder, ID3D12GraphicsCommandList* cmd_list)
+        : SoftmaxBaseDispatcher(std::move(params), d3d12_device, dml_device, dml_cmd_recorder, cmd_list)
+        , softmax_(params_.axis, params_.shape, to_dml_data_type(params_.dt), to_dml_tensor_policy(params_.layout), dml_device, d3d12_device)
+    {
+    }
+
+    std::uint32_t get_total_descriptor_count() override
+    {
+        return softmax_.get_total_descriptor_count();
+    }
+
+    void initialize(ID3D12GraphicsCommandList* cmd_list, D3D12_CPU_DESCRIPTOR_HANDLE cpu_handle, D3D12_GPU_DESCRIPTOR_HANDLE gpu_handle) override
+    {
+        softmax_.create_binding_tables(cpu_handle, gpu_handle);
+        softmax_.record_initialize(dml_cmd_recorder_, cmd_list);
+    }
+
+    void execute(ID3D12GraphicsCommandList* cmd_list) override
+    {
+        softmax_.record_execute(dml_cmd_recorder_, cmd_list, output_buffer_.Get(), input_buffer_.Get());
+    }
+
+private:
+    gpu_op::Softmax softmax_;
 };

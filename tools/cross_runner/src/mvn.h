@@ -198,7 +198,7 @@ public:
         , dml_cmd_recorder_(dml_cmd_recorder)
         , d3d12_device_(d3d12_device)
         , dml_device_(dml_device)
-        , input_data_(params_.shape.get_elements_count()* get_data_type_bytes_width(params_.dt))
+        , input_data_(params_.shape.get_elements_count() * get_data_type_bytes_width(params_.dt))
     {
         if (use_bias())
         {
@@ -430,13 +430,13 @@ public:
         return mvn_.get_total_descriptor_count();
     }
 
-    void initialize(ID3D12GraphicsCommandList* cmd_list, D3D12_CPU_DESCRIPTOR_HANDLE cpu_handle, D3D12_GPU_DESCRIPTOR_HANDLE gpu_handle)
+    void initialize(ID3D12GraphicsCommandList* cmd_list, D3D12_CPU_DESCRIPTOR_HANDLE cpu_handle, D3D12_GPU_DESCRIPTOR_HANDLE gpu_handle) override
     {
         mvn_.create_binding_tables(cpu_handle, gpu_handle);
         mvn_.record_initialize(dml_cmd_recorder_, cmd_list);
     }
 
-    void execute(ID3D12GraphicsCommandList* cmd_list)
+    void execute(ID3D12GraphicsCommandList* cmd_list) override
     {
         mvn_.record_execute(dml_cmd_recorder_, cmd_list,
             output_buffer_.Get(), input_buffer_.Get(), scale_buffer_.Get(), bias_buffer_.Get());

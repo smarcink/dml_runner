@@ -183,7 +183,8 @@ enum class NodeType
     eGemmCm,
     eConvDml,
     eConvCm,
-    eSoftmax,
+    eSoftmaxDml,
+    eSoftmaxCm,
     eMvnDml,
     eMvnCm,
     eCount

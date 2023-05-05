@@ -59,7 +59,7 @@ struct CliOptions
     // generic type of layers params
     GemmBaseDispatcher::create_params_t gemm_opts{};
     ConvolutionBaseDispatcher::create_params_t conv_opts{};
-    SoftmaxDispatcher::create_params_t softmax_opts{};
+    SoftmaxBaseDispatcher::create_params_t softmax_opts{};
     MvnBaseDispatcher::create_params_t mvn_opts{};
 
     // specific for implementation
@@ -82,13 +82,14 @@ int main()
     CliOptions opts;
     CLI::App dml_runner_app{ "App to microbenchmark and developer dml kernels.", "DirectML runner." };
     dml_runner_app.add_option("--type", opts.node_type, "Name of the type of layer to run.")
-        ->required()->check(CLI::IsMember({ NodeType::eConvDml, NodeType::eConvCm, NodeType::eGemmDml, NodeType::eGemmCm, NodeType::eSoftmax, NodeType::eMvnDml, NodeType::eMvnCm }))->
+        ->required()->check(CLI::IsMember({ NodeType::eConvDml, NodeType::eConvCm, NodeType::eGemmDml, NodeType::eGemmCm, NodeType::eSoftmaxDml, NodeType::eSoftmaxCm, NodeType::eMvnDml, NodeType::eMvnCm }))->
         transform(CLI::Transformer(std::map<std::string, NodeType>{
             { "conv_dml", NodeType::eConvDml },
             { "conv_cm", NodeType::eConvCm },
             { "gemm_dml", NodeType::eGemmDml },
             { "gemm_cm", NodeType::eGemmCm },
-            { "softmax", NodeType::eSoftmax },
+            { "softmax_dml", NodeType::eSoftmaxDml },
+            { "softmax_cm", NodeType::eSoftmaxCm },
             { "mvn_dml", NodeType::eMvnDml },
             { "mvn_cm", NodeType::eMvnCm },
     }, CLI::ignore_case, CLI::ignore_underscore));
@@ -101,7 +102,7 @@ int main()
     auto conv_option_groups = dml_runner_app.add_subcommand("conv_opts", "Options for convolution layer.");
     ConvolutionBaseDispatcher::create_params_t::add_cli_options(conv_option_groups, opts.conv_opts);
     auto softmax_option_groups = dml_runner_app.add_subcommand("softmax_opts", "Options for softmax layer.");
-    SoftmaxDispatcher::create_params_t::add_cli_options(softmax_option_groups, opts.softmax_opts);
+    SoftmaxBaseDispatcher::create_params_t::add_cli_options(softmax_option_groups, opts.softmax_opts);
     auto mvn_option_groups = dml_runner_app.add_subcommand("mvn_opts", "Options for mvn layer.");
     MvnBaseDispatcher::create_params_t::add_cli_options(mvn_option_groups, opts.mvn_opts);
 
@@ -135,7 +136,7 @@ int main()
         std::cout << "Gemm options not set.\n";
         return -1;
     }
-    if (opts.node_type == NodeType::eSoftmax && !softmax_option_groups->parsed())
+    if ((opts.node_type == NodeType::eSoftmaxDml || opts.node_type == NodeType::eSoftmaxCm) && !softmax_option_groups->parsed())
     {
         std::cout << "Softmax options not set.\n";
         return -1;
@@ -178,9 +179,9 @@ int main()
             node = std::make_unique<ConvolutionCmDispatcher>(std::move(opts.conv_opts), std::move(opts.conv_cm_params),
                 intel_extension_d3d12, d3d12_device.Get(), command_list.Get());
         }
-        else if (opts.node_type == NodeType::eSoftmax)
+        else if (opts.node_type == NodeType::eSoftmaxDml)
         {
-            node = std::make_unique<SoftmaxDispatcher>(std::move(opts.softmax_opts),
+            node = std::make_unique<SoftmaxDmlDispatcher>(std::move(opts.softmax_opts),
                 d3d12_device.Get(), dml_device.Get(), dml_command_recorder.Get(), command_list.Get());
         }
         else if (opts.node_type == NodeType::eMvnDml)
