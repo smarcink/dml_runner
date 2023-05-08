@@ -162,7 +162,7 @@ public:
     ConformanceResult validate_conformance(ID3D12CommandQueue* command_queue,
         ID3D12CommandAllocator* command_allocator, ID3D12GraphicsCommandList* command_list)
     {
-        const auto tensor_out_bytes_width = output_buffer_->GetDesc().Width;
+        const auto tensor_out_bytes_width = input_data_.size();
 
         // readback data and validate
         auto readback_buffer = create_buffer(d3d12_device_, tensor_out_bytes_width, D3D12_HEAP_TYPE_READBACK, D3D12_RESOURCE_STATE_COPY_DEST);

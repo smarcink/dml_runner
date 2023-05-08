@@ -202,6 +202,12 @@ inline ComPtr<IDMLDevice> create_dml_device(ID3D12Device* d3d12_device)
     return dml_device;
 }
 
+inline int64_t align(const int64_t value, const int64_t alignment)
+{
+    assert(alignment >= 1);
+    return ((value + alignment - 1ll) / alignment) * alignment;
+}
+
 inline ComPtr<ID3D12DescriptorHeap> create_descriptor_heap(ID3D12Device* d3d12_device, uint32_t descriptors_count)
 {
     // Create descriptor heaps.
@@ -219,7 +225,7 @@ inline ComPtr<ID3D12Resource> create_buffer(ID3D12Device* d3d12_device, std::siz
 {
     ComPtr<ID3D12Resource> ret;
     const auto heap_props = CD3DX12_HEAP_PROPERTIES(heap_type);
-    const auto buffer_desc = CD3DX12_RESOURCE_DESC::Buffer(bytes_width, resource_flag);
+    const auto buffer_desc = CD3DX12_RESOURCE_DESC::Buffer(align(bytes_width, 256), resource_flag);
     throw_if_failed(d3d12_device->CreateCommittedResource(
         &heap_props,
         D3D12_HEAP_FLAG_NONE,
