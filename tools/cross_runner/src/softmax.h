@@ -302,6 +302,7 @@ public:
         add_define("INOUT_WIDTH", params_.shape.w);
         add_define("INOUT_HEIGHT", params_.shape.h);
         add_define("ITEMNUM_PER_HW", items_per_hw_th);
+        add_define("LWS_SIZE_X_ALIGNED", align(cm_params_.lws[0], 8));
 
         // kernel compilation
         const auto dump_asm_str = cm_params_.dump_asm ? " -mdump_asm" : "";
@@ -388,7 +389,7 @@ public:
 private:
     std::uint32_t get_items_per_hw()
     {
-        std::uint32_t items_per_hw_th = 0;
+        std::uint32_t items_per_hw_th = params_.shape.w;
         if (params_.shape.w % 128 == 0)
         {
             items_per_hw_th = 128;
@@ -397,9 +398,13 @@ private:
         {
             items_per_hw_th = 64;
         }
-        else if (params_.shape.w == 77)
+        else if (params_.shape.w % 32 == 0)
         {
-            items_per_hw_th = 77;
+            items_per_hw_th = 32;
+        }
+        else if (params_.shape.w % 16 == 0)
+        {
+            items_per_hw_th = 16;
         }
         return items_per_hw_th;
     }

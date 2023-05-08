@@ -74,8 +74,8 @@ extern "C" _GENX_MAIN_ void softmax_nchw(
     cm_barrier();
 	
 	// read from slm and further reduce
-	vector<DT_ACCU, LWS_SIZE_X> all_threads_sums = cm_load_slm<DT_ACCU, LWS_SIZE_X>(0);
-	my_sum = cm_sum<DT_ACCU>(all_threads_sums);
+	vector<DT_ACCU, LWS_SIZE_X_ALIGNED> all_threads_sums = cm_load_slm<DT_ACCU, LWS_SIZE_X_ALIGNED>(0);
+	my_sum = cm_sum<DT_ACCU>(all_threads_sums.select<LWS_SIZE_X, 1>());
 #endif
 	
 	// do the division in full preicison
