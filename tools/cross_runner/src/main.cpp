@@ -55,6 +55,7 @@ struct CliOptions
     NodeType node_type = NodeType::eCount;
     std::uint32_t dispatch_iterations = 1;
     bool no_conformance_check = false;
+    bool print_opts = false;
 
     // generic type of layers params
     GemmBaseDispatcher::create_params_t gemm_opts{};
@@ -96,6 +97,7 @@ int main()
     }, CLI::ignore_case, CLI::ignore_underscore));
     dml_runner_app.add_option("--iters", opts.dispatch_iterations, "How many iterations to run.")->check(CLI::Range(1u, MAX_ITERATIONS));
     dml_runner_app.add_flag("--no_conform", opts.no_conformance_check);
+    dml_runner_app.add_flag("--print_opts", opts.print_opts);
 
     // generic type of layers options
     auto gemm_option_groups = dml_runner_app.add_subcommand("gemm_opts", "Options for genn layer.");
@@ -124,8 +126,11 @@ int main()
         return dml_runner_app.exit(e);
     }
 
-    const auto dumped_config = dml_runner_app.config_to_str(true);
-    std::cout << std::format("Running app with config:\n {}", dumped_config);
+    if (opts.print_opts)
+    {
+        const auto dumped_config = dml_runner_app.config_to_str(true);
+        std::cout << std::format("Running app with config:\n {}", dumped_config);
+    }
 
     assert(opts.node_type != NodeType::eCount);
     if ((opts.node_type == NodeType::eConvCm || opts.node_type == NodeType::eConvDml)

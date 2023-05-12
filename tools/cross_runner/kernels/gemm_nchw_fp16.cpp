@@ -2,7 +2,6 @@
 #include <cm/cmtl.h>
 
 #define K_PER_THREAD (SIZE_K / SLICE_K)
-
 #if ACCU_IS_FP32
 #define DT_ACCU float
 #else
@@ -20,11 +19,16 @@ extern "C" _GENX_MAIN_ void gemm_nchw_fp16(
     const uint32_t thread_id_0 = cm_group_id(0) * cm_local_size(0) + cm_local_id(0);
     const uint32_t thread_id_1 = cm_group_id(1) * cm_local_size(1) + cm_local_id(1);
     const uint32_t thread_id_2 = cm_group_id(2) * cm_local_size(2) + cm_local_id(2);
-
+	const uint32_t batch_channels_thread_offset = cm_group_id(2);
+	const uint32_t k_slice_thread_offset = cm_local_id(2);
+	
     const uint32_t input_a_load_size = (TILE_K * sizeof(DT)) / sizeof(uint32_t);
     const uint32_t input_b_load_size = (TILE_N * sizeof(DT)) / sizeof(uint32_t);
         
-    const uint32_t input_a_base_offset = thread_id_0 * TILE_M * SIZE_K * sizeof(DT) + (thread_id_2 * K_PER_THREAD * sizeof(DT));
+    const uint32_t input_a_base_offset = 
+						batch_channels_thread_offset * SIZE_M * SIZE_K * sizeof(DT)
+						+ thread_id_0 * TILE_M * SIZE_K * sizeof(DT)
+						+ (k_slice_thread_offset * K_PER_THREAD * sizeof(DT));
     
     matrix<DT, TILE_M, TILE_K> input;   
     matrix_ref<uint32_t, TILE_M, TILE_K/2> input_packed = input.format<uint32_t, TILE_M, TILE_K/2>();
@@ -33,7 +37,15 @@ extern "C" _GENX_MAIN_ void gemm_nchw_fp16(
     for(int i = 0; i < TILE_M; i++)
     {
         const uint32_t input_a_offset = input_a_base_offset + (i * SIZE_K * sizeof(DT));
+#if TILE_K == 40
+        input_packed.row(i).select<16, 1>() = cm_load<uint32_t, 16, DataSize::Default, CacheHint::Cached, CacheHint::Cached>(surface_input_a, input_a_offset);
+        input_packed.row(i).select<4, 1>(16) = cm_load<uint32_t, 4, DataSize::Default, CacheHint::Cached, CacheHint::Cached>(surface_input_a, input_a_offset + 16 * sizeof(uint32_t));
+#elif TILE_K == 80		
+        input_packed.row(i).select<32, 1>() = cm_load<uint32_t, 32, DataSize::Default, CacheHint::Cached, CacheHint::Cached>(surface_input_a, input_a_offset);
+        input_packed.row(i).select<8, 1>(32) = cm_load<uint32_t, 8, DataSize::Default, CacheHint::Cached, CacheHint::Cached>(surface_input_a, input_a_offset + 32 * sizeof(uint32_t));
+#else
         input_packed.row(i) = cm_load<uint32_t, input_a_load_size, DataSize::Default, CacheHint::Cached, CacheHint::Cached>(surface_input_a, input_a_offset);
+#endif
     }
     
 #if 0
@@ -44,8 +56,12 @@ extern "C" _GENX_MAIN_ void gemm_nchw_fp16(
     printf("\n");
 #endif
 
+	
     matrix<DT_ACCU, TILE_M, TILE_N> accu(0.0f);
-    uint32_t input_b_offset = thread_id_1 * TILE_N * sizeof(DT) + (thread_id_2 * K_PER_THREAD * SIZE_N * sizeof(DT));
+    uint32_t input_b_offset = 
+					batch_channels_thread_offset * SIZE_K * SIZE_N * sizeof(DT)
+					+ thread_id_1 * TILE_N * sizeof(DT)
+					+ (k_slice_thread_offset * K_PER_THREAD * SIZE_N * sizeof(DT));
     //#pragma unroll
     for(uint32_t i = 0; i < K_PER_THREAD; i++)
     {
@@ -85,7 +101,7 @@ extern "C" _GENX_MAIN_ void gemm_nchw_fp16(
         {
             vector_ref<DT_ACCU, TILE_N> data_to_store_slm = accu.row(i);
             vector_ref<uint32_t, TILE_N_PACKED> data_to_store_slm_typed = data_to_store_slm.format<uint32_t>();
-            cm_store_slm<uint32_t, TILE_N_PACKED>(i * TILE_N * sizeof(DT_ACCU) + (cm_local_id(2) - 1) * TILE_M * TILE_N * sizeof(DT_ACCU), data_to_store_slm_typed);
+            cm_store_slm<uint32_t, TILE_N_PACKED>(i * TILE_N * sizeof(DT_ACCU) + (k_slice_thread_offset - 1) * TILE_M * TILE_N * sizeof(DT_ACCU), data_to_store_slm_typed);
             //cm_store_slm<uint32_t, TILE_N/2>(i * TILE_N * sizeof(DT), data_to_store_slm_typed);
             //cm_store_slm<uint32_t, TILE_N/2>(0, data_to_store_slm_typed);
         }
@@ -115,7 +131,13 @@ extern "C" _GENX_MAIN_ void gemm_nchw_fp16(
     //printf("%d, %d, %d\n", thread_id_0, thread_id_1, thread_id_2);
     
     const uint32_t output_store_size = (TILE_N * sizeof(DT)) / sizeof(uint32_t);
-    uint32_t output_offset = (thread_id_0 * TILE_M * SIZE_N * sizeof(DT)) + (thread_id_1 * TILE_N * sizeof(DT));
+    uint32_t output_offset = 
+				batch_channels_thread_offset * SIZE_M * SIZE_N * sizeof(DT)
+				+ thread_id_0 * TILE_M * SIZE_N * sizeof(DT)
+				+ (thread_id_1 * TILE_N * sizeof(DT));
+				
+	//printf("[%d, %d]: %d\n", batch_channels_thread_offset, output_offset, batch_channels_thread_offset * SIZE_M * SIZE_N * sizeof(DT));
+				
 	matrix<DT, TILE_M, TILE_N> accu_out = accu;  // if DT_ACCU == DT then compiler removes this line
     for(uint32_t i = 0; i < TILE_M; i++)
     {
