@@ -406,6 +406,12 @@ private:
         {
             items_per_hw_th = 16;
         }
+        // tehnically bigger W would work, but not tested
+        else if (params_.shape.w < 128)
+        {
+            items_per_hw_th = params_.shape.w;
+        }
+        // error
         return items_per_hw_th;
     }
 

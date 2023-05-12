@@ -3,6 +3,11 @@
 
 #define K_PER_THREAD (SIZE_K / SLICE_K)
 
+#if ACCU_IS_FP32
+#define DT_ACCU float
+#else
+#define DT_ACCU DT
+#endif
 extern "C" _GENX_MAIN_ void gemm_nchw_fp16(
 	SurfaceIndex surface_input_a [[type("buffer_t")]],
 	SurfaceIndex surface_input_b [[type("buffer_t")]],
@@ -31,8 +36,15 @@ extern "C" _GENX_MAIN_ void gemm_nchw_fp16(
         input_packed.row(i) = cm_load<uint32_t, input_a_load_size, DataSize::Default, CacheHint::Cached, CacheHint::Cached>(surface_input_a, input_a_offset);
     }
     
-    
-    matrix<DT, TILE_M, TILE_N> accu(0);
+#if 0
+	for(int i = 0; i < TILE_K; i++)
+	{
+		printf("%f, ", (float)input[0][i]);
+	}
+    printf("\n");
+#endif
+
+    matrix<DT_ACCU, TILE_M, TILE_N> accu(0.0f);
     uint32_t input_b_offset = thread_id_1 * TILE_N * sizeof(DT) + (thread_id_2 * K_PER_THREAD * SIZE_N * sizeof(DT));
     //#pragma unroll
     for(uint32_t i = 0; i < K_PER_THREAD; i++)
@@ -40,25 +52,40 @@ extern "C" _GENX_MAIN_ void gemm_nchw_fp16(
         vector<uint32_t, input_b_load_size> input_b_packed = cm_load<uint32_t, input_b_load_size, DataSize::Default, CacheHint::Cached, CacheHint::Cached>(surface_input_b, input_b_offset);  
         vector_ref<DT, TILE_N> input_b = input_b_packed.format<DT>();        
         input_b_offset += SIZE_N * sizeof(DT);
-        
+
+	
         #pragma unroll
         for(uint32_t j = 0; j < TILE_M; j++)
         {
             accu.select<1, 1, TILE_N, 1>(j, 0) += input_b * input.select<1, 1, 1, 1>(j, i).replicate<TILE_N>();
         }
+#if 0
+		printf("\n ACCU: \n");
+		for(int i = 0; i < TILE_N; i++)
+		{
+			printf("%f, ", (float)accu[0][i]);
+		}
+		printf("\n");
+		for(int i = 0; i < TILE_N; i++)
+		{
+			printf("%f, ", (float)input_b[i]);
+		}
+		printf("\n");
+#endif	
     }
     
 #if SLICE_K > 1
-    cm_slm_init(TILE_M * TILE_N * sizeof(DT) * (LWS_SIZE_Z - 1));
+	const uint32_t TILE_N_PACKED = TILE_N / (sizeof(uint32_t)/sizeof(DT_ACCU));
+    cm_slm_init(TILE_M * TILE_N * sizeof(DT_ACCU) * (LWS_SIZE_Z - 1));
 
     if(cm_local_id(2) > 0)
     {
         #pragma unroll
         for(uint32_t i = 0; i < TILE_M; i++)
         {
-            vector_ref<DT, TILE_N> data_to_store_slm = accu.row(i);
-            vector_ref<uint32_t, TILE_N/2> data_to_store_slm_typed = data_to_store_slm.format<uint32_t>();
-            cm_store_slm<uint32_t, TILE_N/2>(i * TILE_N * sizeof(DT) + (cm_local_id(2) - 1) * TILE_M * TILE_N * sizeof(DT), data_to_store_slm_typed);
+            vector_ref<DT_ACCU, TILE_N> data_to_store_slm = accu.row(i);
+            vector_ref<uint32_t, TILE_N_PACKED> data_to_store_slm_typed = data_to_store_slm.format<uint32_t>();
+            cm_store_slm<uint32_t, TILE_N_PACKED>(i * TILE_N * sizeof(DT_ACCU) + (cm_local_id(2) - 1) * TILE_M * TILE_N * sizeof(DT_ACCU), data_to_store_slm_typed);
             //cm_store_slm<uint32_t, TILE_N/2>(i * TILE_N * sizeof(DT), data_to_store_slm_typed);
             //cm_store_slm<uint32_t, TILE_N/2>(0, data_to_store_slm_typed);
         }
@@ -74,13 +101,12 @@ extern "C" _GENX_MAIN_ void gemm_nchw_fp16(
     #pragma unroll
     for(uint32_t i = 0; i < TILE_M; i++)
     {
-        vector<DT, TILE_N> data_to_load_slm;
-        vector_ref<uint32_t, TILE_N/2> data_to_load_slm_typed = data_to_load_slm.format<uint32_t>();
+        vector<DT_ACCU, TILE_N> data_to_load_slm;
+        vector_ref<uint32_t, TILE_N_PACKED> data_to_load_slm_typed = data_to_load_slm.format<uint32_t>();
         #pragma unroll
         for(int j = 0; j < (LWS_SIZE_Z - 1); j++)
         {
-            data_to_load_slm_typed = cm_load_slm<uint32_t, TILE_N/2>(i * TILE_N * sizeof(DT) + j * TILE_M * TILE_N * sizeof(DT));
-            data_to_load_slm_typed = cm_load_slm<uint32_t, TILE_N/2>(0);
+            data_to_load_slm_typed = cm_load_slm<uint32_t, TILE_N_PACKED>(i * TILE_N * sizeof(DT_ACCU) + j * TILE_M * TILE_N * sizeof(DT_ACCU));
             accu.row(i) += data_to_load_slm;
         }
     }
@@ -90,9 +116,10 @@ extern "C" _GENX_MAIN_ void gemm_nchw_fp16(
     
     const uint32_t output_store_size = (TILE_N * sizeof(DT)) / sizeof(uint32_t);
     uint32_t output_offset = (thread_id_0 * TILE_M * SIZE_N * sizeof(DT)) + (thread_id_1 * TILE_N * sizeof(DT));
+	matrix<DT, TILE_M, TILE_N> accu_out = accu;  // if DT_ACCU == DT then compiler removes this line
     for(uint32_t i = 0; i < TILE_M; i++)
     {
-        vector_ref<uint32_t, output_store_size> accu_0_packed = accu.select<1, 1, TILE_N, 1>(i, 0).format<uint32_t>();
+        vector_ref<uint32_t, output_store_size> accu_0_packed = accu_out.select<1, 1, TILE_N, 1>(i, 0).format<uint32_t>();
         cm_store<uint32_t, output_store_size, DataSize::Default, CacheHint::WriteBack, CacheHint::WriteBack>(surface_output, output_offset, accu_0_packed);
         output_offset += SIZE_N * sizeof(DT);
     }

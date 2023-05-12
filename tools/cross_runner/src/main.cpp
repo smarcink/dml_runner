@@ -279,8 +279,8 @@ int main()
     }
     catch (std::exception e)
     {
-        std::cout << std::format("Exception caught: {} \n", e.what());
+        std::cerr << std::format("Exception caught: {} \n", e.what());
+        return -1; 
     }
-
     return 0;
 }

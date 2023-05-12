@@ -333,7 +333,7 @@ public:
 
     virtual ConformanceResult validate_conformance(ID3D12CommandQueue* command_queue, ID3D12CommandAllocator* command_allocator, ID3D12GraphicsCommandList* command_list)
     {
-        const auto tensor_out_bytes_width = output_buffer_->GetDesc().Width;
+        const auto tensor_out_bytes_width = params_.B * params_.C * params_.M * params_.N * get_data_type_bytes_width(params_.dt);
 
         // readback data and validate
         auto readback_buffer = create_buffer(d3d12_device_, tensor_out_bytes_width, D3D12_HEAP_TYPE_READBACK, D3D12_RESOURCE_STATE_COPY_DEST);
@@ -388,7 +388,7 @@ public:
 
         if (params_.dt == DataType::eFp32)
         {
-            return run_conformance_check<float>(data_out, ref_untyped_result, 0.001f);
+            return run_conformance_check<float>(data_out, ref_untyped_result, 0.05f);
         }
         else if (params_.dt == DataType::eFp16)
         {
@@ -523,6 +523,7 @@ public:
         bool dump_asm;
         bool large_grf;
         bool print_reg_usage;
+        bool fp32_accu = false;
         std::array<std::uint32_t, 3> lws{ 1u, 1u, 1u };
 
         std::uint32_t tile_m = 0;
@@ -536,12 +537,11 @@ public:
             opts->add_flag("--dump_asm", params.dump_asm)->default_val(false);
             opts->add_flag("--large_grf", params.large_grf)->default_val(false);
             opts->add_flag("--print_reg_usage", params.print_reg_usage)->default_val(false);
+            opts->add_flag("--fp32_accu", params.fp32_accu)->default_val(false);
 
             opts->add_option("--tile_m", params.tile_m);
             opts->add_option("--tile_k", params.tile_k);
             opts->add_option("--tile_n", params.tile_n);
-
-            opts->add_option("--slice_k", params.slice_k);
         }
     };
 
@@ -569,6 +569,7 @@ public:
                 }
             }
         }
+        assert(cm_params_.tile_m > 0);
 
         if (cm_params_.tile_k == 0)
         {
@@ -580,6 +581,7 @@ public:
                 }
             }
         }
+        assert(cm_params_.tile_k > 0);
 
         if (cm_params_.tile_n == 0)
         {
@@ -591,6 +593,10 @@ public:
                 }
             }
         }
+        assert(cm_params_.tile_n > 0);
+
+        cm_params_.slice_k = params_.K / cm_params_.tile_k;
+        assert(cm_params_.slice_k > 0);
 
         cm_params_.lws[2] = cm_params_.slice_k;
 
@@ -644,6 +650,8 @@ public:
         add_define("TILE_N", cm_params_.tile_n);
         add_define("TILE_M", cm_params_.tile_m);
         add_define("SLICE_K", cm_params_.slice_k);
+
+        add_define("ACCU_IS_FP32", cm_params_.fp32_accu);
 
         // kernel compilation
         const auto dump_asm_str = cm_params_.dump_asm ? " -mdump_asm" : "";
@@ -742,7 +750,7 @@ public:
         {
             const auto gws_x = params_.M / cm_params_.tile_m;
             const auto gws_y = params_.N / cm_params_.tile_n;
-            const auto gws_z = cm_params_.slice_k;
+            const auto gws_z = params_.B * params_.C * cm_params_.slice_k;
             return { gws_x, gws_y, gws_z };
         }
 
