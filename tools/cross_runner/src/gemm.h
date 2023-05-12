@@ -29,7 +29,6 @@ public:
         , graph_(dml_device)
     {
         outputs_.resize(1);
-
         if (type_ == GemmType::GemmType_AB)
         {
             dml::TensorDesc::Dimensions dimensions_0;
@@ -52,7 +51,35 @@ public:
         }
         else if (type_ == GemmType::GemmType_QK_QKV)
         {
+            dml::TensorDesc::Dimensions dimensions_0;
+            dimensions_0.push_back(shape_a.n);
+            dimensions_0.push_back(shape_a.c);
+            dimensions_0.push_back(shape_a.d);
+            dimensions_0.push_back(shape_a.h);
+            dimensions_0.push_back(shape_a.w);
+            dml::TensorDesc desc_input_0 = { data_type, dimensions_0 };
+            input_0_ = dml::InputTensor(graph_, 0, desc_input_0);
 
+            // split
+            std::vector<std::uint32_t> after_split_dims = { 1, 1, 1 };
+            auto split_outputs = dml::Split(input_0_, 3, after_split_dims);
+
+            // reshape, we care only about Q and K for this case
+            decltype(split_outputs) reshaped_splits(2);
+            for (auto i = 0; i < 2; i++)
+            {
+                auto& sout = split_outputs[i];
+                reshaped_splits[i] = dml::Reinterpret(sout, dml::TensorDimensions{ shape_a.n, shape_a.c, shape_a.d, shape_a.w }, dml::NullOpt);
+            }
+
+            // transpose logical
+            const auto channel_stride = shape_a.d * shape_a.w;
+            const auto batch_stride = shape_a.c * channel_stride;
+            dml::TensorStrides strides_0 = { batch_stride, shape_a.w, channel_stride, 1 };
+            dml::TensorStrides strides_1 = { batch_stride, shape_a.w, 1, channel_stride };
+            input_0_ = dml::Reinterpret(reshaped_splits[0], dml::TensorDimensions{shape_a.n, shape_a.d, shape_a.c, shape_a.w}, strides_0);
+            input_1_ = dml::Reinterpret(reshaped_splits[1], dml::TensorDimensions{shape_a.n, shape_a.d, shape_a.w, shape_a.c}, strides_1);
+            outputs_[0] = dml::Gemm(input_0_, input_1_, dml::NullOpt, DML_MATRIX_TRANSFORM_NONE, DML_MATRIX_TRANSFORM_NONE, alpha, beta);
         }
 
         DML_EXECUTION_FLAGS execution_flags = DML_EXECUTION_FLAG_DESCRIPTORS_VOLATILE;
@@ -64,6 +91,7 @@ public:
         {
             execution_flags |= DML_EXECUTION_FLAG_DISABLE_META_COMMANDS;
         }
+        assert(!outputs_.empty());
         dml_op_executor_ = graph_.Compile(execution_flags, outputs_);
         create_operator_impl();
     }
@@ -72,16 +100,19 @@ public:
         ID3D12Resource* resource_out, ID3D12Resource* resource_a, ID3D12Resource* resource_b)
     {
         assert(resource_a);
-        assert(resource_b);
         assert(resource_out);
         DML_BUFFER_BINDING input_a_buffer_binding{ resource_a, 0, resource_a->GetDesc().Width };
-        DML_BUFFER_BINDING input_b_buffer_binding{ resource_b, 0, resource_b->GetDesc().Width };
-        DML_BUFFER_BINDING input_c_buffer_binding{ nullptr, 0, 0};
+        DML_BUFFER_BINDING input_b_buffer_binding{ nullptr, 0, 0 }; 
+
   
         std::vector<DML_BINDING_DESC> input_bindings;
         input_bindings.reserve(3);
         input_bindings.push_back({ DML_BINDING_TYPE_BUFFER, &input_a_buffer_binding });
-        input_bindings.push_back({ DML_BINDING_TYPE_BUFFER, &input_b_buffer_binding });
+        if (resource_b)
+        {
+            input_b_buffer_binding = { resource_b, 0, resource_b->GetDesc().Width };
+            input_bindings.push_back({ DML_BINDING_TYPE_BUFFER, &input_b_buffer_binding });
+        }
 
 
         DML_BUFFER_BINDING output_buffer_binding{ resource_out, 0, resource_out->GetDesc().Width };
