@@ -370,6 +370,7 @@ inline std::vector<CD3DX12_GPU_DESCRIPTOR_HANDLE> create_resource_views_and_hand
 
         auto& resource_view_type = resources_list[i].first;
         auto& resource = resources_list[i].second;
+        assert(resource != nullptr);
         const auto res_desc = resource->GetDesc();
         assert(res_desc.Dimension == D3D12_RESOURCE_DIMENSION::D3D12_RESOURCE_DIMENSION_BUFFER);
 

@@ -652,7 +652,10 @@ public:
         std::vector<std::pair<DescType, ID3D12Resource*>> resources_list;
         resources_list.reserve(get_total_descriptor_count());
         resources_list.push_back({ DescType::eSrv, input_buffer_a_.Get() });
-        resources_list.push_back({ DescType::eSrv, input_buffer_b_.Get() });
+        if (input_buffer_b_)
+        {
+            resources_list.push_back({ DescType::eSrv, input_buffer_b_.Get() });
+        }
         resources_list.push_back({ DescType::eUav, output_buffer_.Get() });
 
         gpu_handles_ = create_resource_views_and_handles(d3d12_device_, resources_list, cpu_handle, gpu_handle);
