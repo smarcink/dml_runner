@@ -207,6 +207,8 @@ public:
         bool transform_a = false;
         bool transform_b = false;
 
+
+
         float alpha = 1.0f;
         float beta = 0.0f;
 
@@ -642,7 +644,7 @@ public:
         add_define("SIZE_K", params_.K);
         add_define("SIZE_N", params_.N);
 
-        add_define("USE_C", use_c_tensor());
+        add_define("SCALE", params_.alpha);
 
         add_define("DT", "half");
 

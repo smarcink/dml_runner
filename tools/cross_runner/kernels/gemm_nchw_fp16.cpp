@@ -7,13 +7,41 @@
 #else
 #define DT_ACCU DT
 #endif
-extern "C" _GENX_MAIN_ void gemm_nchw_fp16(
+
+// only one case doe have single input
+#if GEMM_TYPE_QK_INPUT_QKV
+#define HAS_TWO_INPUTS 0
+#else
+#define HAS_TWO_INPUTS 1
+#endif
+
+/*
+#if GEMM_TYPE_AB_INPUT_AB  // ordinary gemm
 	SurfaceIndex surface_input_a [[type("buffer_t")]],
 	SurfaceIndex surface_input_b [[type("buffer_t")]],
-	SurfaceIndex surface_output [[type("buffer_t")]]
-#if USE_C
-	, SurfaceIndex surface_input_c [[type("buffer_t")]]
+#elif GEMM_TYPE_QK_INPUT_QKV
+	SurfaceIndex surface_input_qkv [[type("buffer_t")]],
+#elif GEMM_TYPE_SV_INPUT_S_QKV
+	SurfaceIndex surface_input_s [[type("buffer_t")]],
+	SurfaceIndex surface_input_qkv [[type("buffer_t")]],
+#elif GEMM_TYPE_QK_INPUT_Q_KV
+	SurfaceIndex surface_input_q [[type("buffer_t")]],
+	SurfaceIndex surface_input_kv [[type("buffer_t")]],
+#elif GEMM_TYPE_SV_INPUT_S_KV
+	SurfaceIndex surface_input_s [[type("buffer_t")]],
+	SurfaceIndex surface_input_kv [[type("buffer_t")]],
+#else
+#error Not supported gemm type.
 #endif
+*/
+
+
+extern "C" _GENX_MAIN_ void gemm_nchw_fp16(
+	SurfaceIndex surface_input_a [[type("buffer_t")]],
+#if HAS_TWO_INPUTS
+	SurfaceIndex surface_input_b [[type("buffer_t")]],
+#endif
+	SurfaceIndex surface_output [[type("buffer_t")]]
 )
 {
     const uint32_t thread_id_0 = cm_group_id(0) * cm_local_size(0) + cm_local_id(0);
@@ -139,6 +167,7 @@ extern "C" _GENX_MAIN_ void gemm_nchw_fp16(
 	//printf("[%d, %d]: %d\n", batch_channels_thread_offset, output_offset, batch_channels_thread_offset * SIZE_M * SIZE_N * sizeof(DT));
 				
 	matrix<DT, TILE_M, TILE_N> accu_out = accu;  // if DT_ACCU == DT then compiler removes this line
+	accu_out *= DT(SCALE);
     for(uint32_t i = 0; i < TILE_M; i++)
     {
         vector_ref<uint32_t, output_store_size> accu_0_packed = accu_out.select<1, 1, TILE_N, 1>(i, 0).format<uint32_t>();
