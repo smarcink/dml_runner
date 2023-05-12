@@ -8,103 +8,64 @@
 
 #include "dml_base_node.h"
 
+enum class GemmType
+{
+    GemmType_AB = 0,
+    GemmType_QK_QKV = 1,
+    GemmType_SV_S_QKV = 2
+};
+
 namespace gpu_op
 {
+
 class Gemm : public DirectMlBaseNode
 {
 public:
-    Gemm(const DML_TENSOR_DATA_TYPE data_type, const dml::TensorPolicy& tensor_policy, const TensorShape& shape_a,
+    Gemm(GemmType gemm_type, const DML_TENSOR_DATA_TYPE data_type, const dml::TensorPolicy& tensor_policy, const TensorShape& shape_a,
         const TensorShape& shape_b, const TensorShape& shape_out, float alpha, float beta,
         IDMLDevice* dml_device, ID3D12Device* d3d12_device, bool disable_mc = false)
         : DirectMlBaseNode(dml_device, d3d12_device)
+        , type_(gemm_type)
+        , graph_(dml_device)
     {
-        const dml::TensorDimensions input_a_dims{ shape_a.n, shape_a.c, shape_a.h, shape_a.w };
-        const dml::TensorDimensions input_b_dims{ shape_b.n, shape_b.c, shape_b.h, shape_b.w };
-        const dml::TensorDimensions output_dims{ shape_out.n, shape_out.c, shape_out.h, shape_out.w };
+        outputs_.resize(1);
 
-        tensor_input_a_desc_.DataType = data_type;
-        tensor_input_a_desc_.Flags = DML_TENSOR_FLAG_NONE;
-        tensor_input_a_desc_.DimensionCount = static_cast<std::uint32_t>(input_a_dims.size());
-        tensor_input_a_desc_.Sizes = input_a_dims.data();
-        const auto tensor_a_properites = tensor_policy.Get(tensor_input_a_desc_.DataType, tensor_input_a_desc_.Flags, input_a_dims);
-        tensor_input_a_desc_.Strides = tensor_a_properites.strides.has_value() ? tensor_a_properites.strides->data() : nullptr;
-        tensor_input_a_desc_.TotalTensorSizeInBytes = tensor_a_properites.totalTensorSizeInBytes;
+        if (type_ == GemmType::GemmType_AB)
+        {
+            dml::TensorDesc::Dimensions dimensions_0;
+            dimensions_0.push_back(shape_a.n);
+            dimensions_0.push_back(shape_a.c);
+            dimensions_0.push_back(shape_a.h);
+            dimensions_0.push_back(shape_a.w);
+            dml::TensorDesc desc_input_0 = { data_type, dimensions_0 };
+            input_0_ = dml::InputTensor(graph_, 0, desc_input_0);
 
-        tensor_input_b_desc_.DataType = data_type;
-        tensor_input_b_desc_.Flags = DML_TENSOR_FLAG_NONE;
-        tensor_input_b_desc_.DimensionCount = static_cast<std::uint32_t>(input_b_dims.size());
-        tensor_input_b_desc_.Sizes = input_b_dims.data();
-        const auto tensor_b_properites = tensor_policy.Get(tensor_input_b_desc_.DataType, tensor_input_b_desc_.Flags, input_b_dims);
-        tensor_input_b_desc_.Strides = tensor_b_properites.strides.has_value() ? tensor_b_properites.strides->data() : nullptr;
-        tensor_input_b_desc_.TotalTensorSizeInBytes = tensor_b_properites.totalTensorSizeInBytes;
+            dml::TensorDesc::Dimensions dimensions_1;
+            dimensions_1.push_back(shape_b.n);
+            dimensions_1.push_back(shape_b.c);
+            dimensions_1.push_back(shape_b.h);
+            dimensions_1.push_back(shape_b.w);
+            dml::TensorDesc desc_input_1 = { data_type, dimensions_1 };
+            input_1_ = dml::InputTensor(graph_, 1, desc_input_1);
 
-        tensor_output_desc_.DataType = data_type;
-        tensor_output_desc_.Flags = DML_TENSOR_FLAG_NONE;
-        tensor_output_desc_.DimensionCount = static_cast<std::uint32_t>(output_dims.size());
-        tensor_output_desc_.Sizes = output_dims.data();
-        const auto tensor_out_properites = tensor_policy.Get(tensor_output_desc_.DataType, tensor_output_desc_.Flags, output_dims);
-        tensor_output_desc_.Strides = tensor_out_properites.strides.has_value() ? tensor_out_properites.strides->data() : nullptr;
-        tensor_output_desc_.TotalTensorSizeInBytes = tensor_out_properites.totalTensorSizeInBytes;
+            outputs_[0] = dml::Gemm(input_0_, input_1_, dml::NullOpt, DML_MATRIX_TRANSFORM_NONE, DML_MATRIX_TRANSFORM_NONE, alpha, beta);
+        }
+        else if (type_ == GemmType::GemmType_QK_QKV)
+        {
 
-        DML_TENSOR_DESC input_a_desc{};
-        input_a_desc.Desc = &tensor_input_a_desc_;
-        input_a_desc.Type = DML_TENSOR_TYPE_BUFFER;
+        }
 
-        DML_TENSOR_DESC input_b_desc{};
-        input_b_desc.Desc = &tensor_input_b_desc_;
-        input_b_desc.Type = DML_TENSOR_TYPE_BUFFER;
-
-
-        DML_TENSOR_DESC input_out_desc{};
-        input_out_desc.Desc = &tensor_output_desc_;
-        input_out_desc.Type = DML_TENSOR_TYPE_BUFFER;
-
-        DML_GEMM_OPERATOR_DESC gemm_op_desc{};
-        gemm_op_desc.Alpha = alpha;
-        gemm_op_desc.Beta = beta;
-        gemm_op_desc.ATensor = &input_a_desc;
-        gemm_op_desc.TransA = DML_MATRIX_TRANSFORM_NONE;
-        gemm_op_desc.BTensor = &input_b_desc;
-        gemm_op_desc.TransB = DML_MATRIX_TRANSFORM_NONE;
-        gemm_op_desc.OutputTensor = &input_out_desc;
-
-        DML_OPERATOR_DESC dml_operator_desc{};
-        dml_operator_desc.Type = DML_OPERATOR_GEMM;
-        dml_operator_desc.Desc = &gemm_op_desc;
-
-        throw_if_failed(dml_device->CreateOperator(
-            &dml_operator_desc, IID_PPV_ARGS(dml_operator_.ReleaseAndGetAddressOf())), "create softmax operator");
-
-        auto exec_flags = DML_EXECUTION_FLAG_DESCRIPTORS_VOLATILE;
+        DML_EXECUTION_FLAGS execution_flags = DML_EXECUTION_FLAG_DESCRIPTORS_VOLATILE;
         if (data_type == DML_TENSOR_DATA_TYPE_FLOAT16)
         {
-            exec_flags |= DML_EXECUTION_FLAG_ALLOW_HALF_PRECISION_COMPUTATION;
+            execution_flags |= DML_EXECUTION_FLAG_ALLOW_HALF_PRECISION_COMPUTATION;
         }
         if (disable_mc)
         {
-            exec_flags |= DML_EXECUTION_FLAG_DISABLE_META_COMMANDS;
+            execution_flags |= DML_EXECUTION_FLAG_DISABLE_META_COMMANDS;
         }
-
-        throw_if_failed(dml_device->CompileOperator(
-            dml_operator_.Get(),
-            exec_flags,
-            IID_PPV_ARGS(dml_op_executor_.ReleaseAndGetAddressOf())), "create softmax compiled operator");
+        dml_op_executor_ = graph_.Compile(execution_flags, outputs_);
         create_operator_impl();
-    }
-
-    dml::TensorDesc get_tensor_a_desc() const
-    {
-        return tensor_input_a_desc_;
-    }
-
-    dml::TensorDesc get_tensor_b_desc() const
-    {
-        return tensor_input_b_desc_;
-    }
-
-    dml::TensorDesc get_tensor_out_desc() const
-    {
-        return tensor_output_desc_;
     }
 
     void record_execute(IDMLCommandRecorder* dml_cmd_recorder, ID3D12GraphicsCommandList* cmd_list,
@@ -121,7 +82,6 @@ public:
         input_bindings.reserve(3);
         input_bindings.push_back({ DML_BINDING_TYPE_BUFFER, &input_a_buffer_binding });
         input_bindings.push_back({ DML_BINDING_TYPE_BUFFER, &input_b_buffer_binding });
-        input_bindings.push_back({ DML_BINDING_TYPE_BUFFER, &input_c_buffer_binding });
 
 
         DML_BUFFER_BINDING output_buffer_binding{ resource_out, 0, resource_out->GetDesc().Width };
@@ -132,10 +92,12 @@ public:
 
 
 private:
-    DML_BUFFER_TENSOR_DESC tensor_input_a_desc_{};
-    DML_BUFFER_TENSOR_DESC tensor_input_b_desc_{};
-    DML_BUFFER_TENSOR_DESC tensor_output_desc_{};
-    ComPtr<IDMLOperator> dml_operator_;
+    dml::Graph graph_;
+    dml::Expression input_0_;
+    dml::Expression input_1_;
+    std::vector<dml::Expression> outputs_;
+
+    GemmType type_{};
 };
 }
 
@@ -143,14 +105,6 @@ private:
 class GemmBaseDispatcher : public NodeDispatcher
 {
 public:
-    enum class GemmType
-    {
-        GemmType_AB = 0,
-        GemmType_QK_QKV = 1,
-        GemmType_SV_S_QKV = 2
-    };
-
-
     struct create_params_t
     {
         GemmType type;
@@ -195,6 +149,7 @@ public:
         , d3d12_device_(d3d12_device)
 
     {
+
         if (params_.type == GemmType::GemmType_AB)
         {
             input_data_a_.resize(params_.shape_a.get_elements_count() * get_data_type_bytes_width(params_.dt));
@@ -246,8 +201,11 @@ public:
             D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ);
         input_buffer_a_ = create_buffer(d3d12_device, tensor_input_a_bytes_width,
             D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
-        input_buffer_b_ = create_buffer(d3d12_device, tensor_input_b_bytes_width,
-            D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+        if (tensor_input_b_bytes_width > 0)
+        {
+            input_buffer_b_ = create_buffer(d3d12_device, tensor_input_b_bytes_width,
+                D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+        }
 
         output_buffer_ = create_buffer(d3d12_device, tensor_out_bytes_width,
             D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
@@ -258,24 +216,30 @@ public:
         std::size_t memcopy_offset = 0;
         std::memcpy(upload_mapped_ptr, input_data_a_.data(), tensor_input_a_bytes_width);
         memcopy_offset += tensor_input_a_bytes_width;
-        std::memcpy(upload_mapped_ptr + memcopy_offset, input_data_b_.data(), tensor_input_b_bytes_width);
-        memcopy_offset += tensor_input_b_bytes_width;
-
+        if (tensor_input_b_bytes_width > 0)
+        {
+            std::memcpy(upload_mapped_ptr + memcopy_offset, input_data_b_.data(), tensor_input_b_bytes_width);
+            memcopy_offset += tensor_input_b_bytes_width;
+        }
         // unmap memory
         upload_buffer_->Unmap(0, nullptr);
 
         memcopy_offset = 0;
         cmd_list->CopyBufferRegion(input_buffer_a_.Get(), 0, upload_buffer_.Get(), 0, tensor_input_a_bytes_width);
         memcopy_offset += tensor_input_a_bytes_width;
-        cmd_list->CopyBufferRegion(input_buffer_b_.Get(), 0, upload_buffer_.Get(), memcopy_offset, tensor_input_b_bytes_width);
-        memcopy_offset += tensor_input_b_bytes_width;
-
+        if (tensor_input_b_bytes_width > 0)
+        {
+            cmd_list->CopyBufferRegion(input_buffer_b_.Get(), 0, upload_buffer_.Get(), memcopy_offset, tensor_input_b_bytes_width);
+            memcopy_offset += tensor_input_b_bytes_width;
+        }
         std::vector<CD3DX12_RESOURCE_BARRIER> barriers;
         barriers.push_back(CD3DX12_RESOURCE_BARRIER::Transition(input_buffer_a_.Get(),
             D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_UNORDERED_ACCESS));
-        barriers.push_back(CD3DX12_RESOURCE_BARRIER::Transition(input_buffer_b_.Get(),
-            D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_UNORDERED_ACCESS));
-
+        if (input_buffer_b_)
+        {
+            barriers.push_back(CD3DX12_RESOURCE_BARRIER::Transition(input_buffer_b_.Get(),
+                D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_UNORDERED_ACCESS));
+        }
         cmd_list->ResourceBarrier(static_cast<std::uint32_t>(barriers.size()), barriers.data());
     }
 
@@ -305,7 +269,7 @@ public:
             D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
         command_list->ResourceBarrier(1, &readback_output_barrirer);
 
-        gpu_op::Gemm gemm_ref(to_dml_data_type(params_.dt), to_dml_tensor_policy(params_.layout), params_.shape_a, params_.shape_b, get_shape_output(),
+        gpu_op::Gemm gemm_ref(params_.type, to_dml_data_type(params_.dt), to_dml_tensor_policy(params_.layout), params_.shape_a, params_.shape_b, get_shape_output(),
              params_.alpha, params_.beta, dml_device_, d3d12_device_, true);
 
         // bind descriptor heap
@@ -439,7 +403,7 @@ class GemmDmlDispatcher : public GemmBaseDispatcher
 public:
     GemmDmlDispatcher(create_params_t&& params, ID3D12Device* d3d12_device, IDMLDevice* dml_device, IDMLCommandRecorder* dml_cmd_recorder, ID3D12GraphicsCommandList* cmd_list)
         : GemmBaseDispatcher(std::move(params), d3d12_device, dml_device, dml_cmd_recorder, cmd_list)
-        , gemm_(to_dml_data_type(params_.dt), to_dml_tensor_policy(params_.layout),  params_.shape_a, params_.shape_b, get_shape_output(), params_.alpha, params_.beta,
+        , gemm_(params_.type, to_dml_data_type(params_.dt), to_dml_tensor_policy(params_.layout),  params_.shape_a, params_.shape_b, get_shape_output(), params_.alpha, params_.beta,
             dml_device, d3d12_device, false)
     {
 
