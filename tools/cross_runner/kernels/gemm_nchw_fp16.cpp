@@ -201,11 +201,11 @@ extern "C" _GENX_MAIN_ void gemm_nchw_fp16(
 			vector<DT, TILE_N> input_b;// = input_b_line.select<TILE_N, ks>(kk);
 			for(int i = 0; i < 2; i++)
 			{
-				input_b.select<16, 1>() = input_b_line.select<16, 1>().select<TILE_N, ks>(kk);
+				input_b.select<16, 1>() = input_b_line.select<16, 1>(i);
 				#pragma unroll
 				for(uint32_t j = 0; j < TILE_M; j++)
 				{
-					accu.select<1, 1, TILE_N, 1>(j, 0) += input_b * input.select<1, 1, 1, 1>(j, i * 2 + kk).replicate<TILE_N>();
+					accu.select<1, 1, TILE_N, 1>(j, 0) += input_b * input.select<1, 1, 1, 1>(j, i + kk * 2).replicate<TILE_N>();
 				}
 			}
 			
