@@ -65,21 +65,29 @@ public:
             auto split_outputs = dml::Split(input_0_, 3, after_split_dims);
 
             // reshape, we care only about Q and K for this case
+            dml::TensorDimensions reshaped_dimss{ shape_a.n, shape_a.c, shape_a.d, shape_a.w };
             decltype(split_outputs) reshaped_splits(2);
             for (auto i = 0; i < 2; i++)
             {
                 auto& sout = split_outputs[i];
-                reshaped_splits[i] = dml::Reinterpret(sout, dml::TensorDimensions{ shape_a.n, shape_a.c, shape_a.d, shape_a.w }, dml::NullOpt);
+                reshaped_splits[i] = dml::Reinterpret(sout, reshaped_dimss, dml::NullOpt);
             }
 
+            const auto batch = reshaped_dimss[0];
+            const auto seq = reshaped_dimss[1];
+            const auto head_count = reshaped_dimss[2];
+            const auto head_size = reshaped_dimss[3];
+
             // transpose logical
-            const auto channel_stride = shape_a.d * shape_a.w;
-            const auto batch_stride = shape_a.c * channel_stride;
-            dml::TensorStrides strides_0 = { batch_stride, shape_a.w, channel_stride, 1 };
-            dml::TensorStrides strides_1 = { batch_stride, shape_a.w, 1, channel_stride };
-            input_0_ = dml::Reinterpret(reshaped_splits[0], dml::TensorDimensions{shape_a.n, shape_a.d, shape_a.c, shape_a.w}, strides_0);
-            input_1_ = dml::Reinterpret(reshaped_splits[1], dml::TensorDimensions{shape_a.n, shape_a.d, shape_a.w, shape_a.c}, strides_1);
-            outputs_[0] = dml::Gemm(input_0_, input_1_, dml::NullOpt, DML_MATRIX_TRANSFORM_NONE, DML_MATRIX_TRANSFORM_NONE, alpha, beta);
+            const auto head_size_stride = 1;
+            const auto head_count_stride = head_size * head_size_stride;
+            const auto seq_stride = head_count * head_count_stride;
+            const auto batch_stride = seq * seq_stride;
+            dml::TensorStrides strides_0 = { batch_stride, head_count_stride, seq_stride, head_size_stride };
+            dml::TensorStrides strides_1 = { batch_stride, head_count_stride, head_size_stride, seq_stride };
+            auto gemm_inp_a = dml::Reinterpret(reshaped_splits[0], dml::TensorDimensions{batch, head_count, seq, head_size }, strides_0);
+            auto gemm_inp_b = dml::Reinterpret(reshaped_splits[1], dml::TensorDimensions{batch, head_count, head_size, seq }, strides_1);
+            outputs_[0] = dml::Gemm(gemm_inp_a, gemm_inp_b, dml::NullOpt, DML_MATRIX_TRANSFORM_NONE, DML_MATRIX_TRANSFORM_NONE, alpha, beta);
         }
 
         DML_EXECUTION_FLAGS execution_flags = DML_EXECUTION_FLAG_DESCRIPTORS_VOLATILE;
@@ -215,6 +223,24 @@ public:
         else if (params_.dt == DataType::eFp16)
         {
             randomize_linear_container_half(random_generator, uniform_distribution, input_data_a_);
+#if 0
+            fill_with_constant_linear_container_half(input_data_a_, DirectX::PackedVector::XMConvertFloatToHalf(15.0f));
+            Half* dt = reinterpret_cast<Half*>(input_data_a_.data());
+            for (auto i = 0; i < M; i++)
+            {
+                for (auto j = 0; j < K; j++)
+                {
+                    dt[i * params_.shape_a.w * params_.shape_a.h * params_.shape_a.d + j] = DirectX::PackedVector::XMConvertFloatToHalf(j + i);
+                }
+            }
+            for (auto i = 0; i < N; i++)
+            {
+                for (auto j = 0; j < K; j++)
+                {
+                    dt[params_.shape_a.w + i * params_.shape_a.w * params_.shape_a.h * params_.shape_a.d + j] = DirectX::PackedVector::XMConvertFloatToHalf(i);
+                }
+            }
+#endif
             randomize_linear_container_half(random_generator, uniform_distribution, input_data_b_);
         }
         else
@@ -591,6 +617,16 @@ public:
         add_define("SIZE_K", K);
         add_define("SIZE_N", N);
 
+        if (params_.type == GemmType::GemmType_QK_QKV)
+        {
+            add_define("SIZE_BATCH", params_.shape_a.n);
+            add_define("SIZE_SEQ_LEN", params_.shape_a.c);
+            add_define("SIZE_NUM_HEADS", params_.shape_a.d);
+            add_define("SIZE_STACKED_TENSORS", params_.shape_a.h);
+            add_define("SIZE_HEAD_SIZE", params_.shape_a.w);
+        }
+
+
         add_define("SCALE", params_.alpha);
 
         add_define("DT", "half");
@@ -601,6 +637,21 @@ public:
         add_define("SLICE_K", cm_params_.slice_k);
 
         add_define("ACCU_IS_FP32", cm_params_.fp32_accu);
+
+
+        add_define([](GemmType type)
+            {
+                switch (type)
+                {
+                case GemmType::GemmType_AB: return "GEMM_TYPE_AB_INPUT_AB";
+                case GemmType::GemmType_QK_QKV: return "GEMM_TYPE_QK_INPUT_QKV";
+                case GemmType::GemmType_SV_S_QKV: return "GEMM_TYPE_SV_INPUT_S_QKV";
+                default:
+                    assert(false && "Unsupported gemm type. Cant deduce JIT!.");
+                }
+                return "";
+            }(params_.type), 1);
+
 
         // kernel compilation
         const auto dump_asm_str = cm_params_.dump_asm ? " -mdump_asm" : "";

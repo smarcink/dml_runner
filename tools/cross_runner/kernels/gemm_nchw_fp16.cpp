@@ -9,10 +9,14 @@
 #endif
 
 // only one case doe have single input
+#define SURFACE_0 surface_input_a
+
 #if GEMM_TYPE_QK_INPUT_QKV
 #define HAS_TWO_INPUTS 0
+#define SURFACE_1 surface_input_a
 #else
 #define HAS_TWO_INPUTS 1
+#define SURFACE_1 surface_input_b
 #endif
 
 /*
@@ -35,11 +39,78 @@
 #endif
 */
 
+#define INPUT_B_OFFSET ((SIZE_NUM_HEADS * SIZE_STACKED_TENSORS * SIZE_HEAD_SIZE + SIZE_HEAD_SIZE)* sizeof(DT))
+static const int32_t init_linear_offsets[] = {  0  * INPUT_B_OFFSET,
+											    1  * INPUT_B_OFFSET, 
+											    2  * INPUT_B_OFFSET,
+											    3  * INPUT_B_OFFSET,
+											    4  * INPUT_B_OFFSET,
+											    5  * INPUT_B_OFFSET,
+											    6  * INPUT_B_OFFSET,
+											    7  * INPUT_B_OFFSET,
+												8  * INPUT_B_OFFSET, 
+											    9  * INPUT_B_OFFSET,
+											    10 * INPUT_B_OFFSET,
+											    11 * INPUT_B_OFFSET,
+											    12 * INPUT_B_OFFSET,
+											    13 * INPUT_B_OFFSET,
+											    14 * INPUT_B_OFFSET,
+											    15 * INPUT_B_OFFSET,
+											  };
+
+_GENX_ inline uint32_t get_input_a_base_offset(uint32_t thread_id_0, uint32_t thread_id_1, uint32_t thread_id_2, uint32_t batch_thread_offset, uint32_t head_thread_offset, uint32_t k_slice_thread_offset)
+{    
+#if GEMM_TYPE_AB_INPUT_AB
+	//return (batch_channels_thread_offset * SIZE_M * SIZE_K  // offset batch + channels
+	//		+ thread_id_0 * TILE_M * SIZE_K                 // offset m
+	//		+ k_slice_thread_offset * K_PER_THREAD) * sizeof(DT));  // offset k 
+#elif GEMM_TYPE_QK_INPUT_QKV
+	return (batch_thread_offset * SIZE_SEQ_LEN * SIZE_NUM_HEADS * SIZE_STACKED_TENSORS * SIZE_HEAD_SIZE
+			+ head_thread_offset * SIZE_STACKED_TENSORS * SIZE_HEAD_SIZE  // offset batch + channels
+			+ thread_id_0 * TILE_M * SIZE_NUM_HEADS * SIZE_STACKED_TENSORS * SIZE_HEAD_SIZE // offset m
+			+ k_slice_thread_offset * K_PER_THREAD) * sizeof(DT); // offset k 
+#else
+#error Non supported gemm type!
+#endif
+	return 0;
+}
+
+_GENX_ inline uint32_t get_input_b_base_offset(uint32_t thread_id_0, uint32_t thread_id_1, uint32_t thread_id_2, uint32_t batch_thread_offset, uint32_t head_thread_offset, uint32_t k_slice_thread_offset)
+{    
+#if GEMM_TYPE_AB_INPUT_AB
+	//return batch_channels_thread_offset * SIZE_K * SIZE_N * sizeof(DT) // offset batch + channels
+	//		+ thread_id_1 * TILE_N * sizeof(DT) // offset n
+	//		+ (k_slice_thread_offset * K_PER_THREAD * SIZE_N * sizeof(DT));  // offset k 
+
+#elif GEMM_TYPE_QK_INPUT_QKV
+	return ( batch_thread_offset * SIZE_SEQ_LEN * SIZE_NUM_HEADS * SIZE_STACKED_TENSORS * SIZE_HEAD_SIZE
+			+ head_thread_offset * SIZE_STACKED_TENSORS * SIZE_HEAD_SIZE  // offset batch + channels
+			+ thread_id_1 * TILE_N * SIZE_NUM_HEADS * SIZE_STACKED_TENSORS * SIZE_HEAD_SIZE // offset n
+			+ k_slice_thread_offset * K_PER_THREAD
+			+ SIZE_HEAD_SIZE) * sizeof(DT); // offset k 
+#else
+#error Non supported gemm type!
+#endif
+	return 0;
+}
+
+
+_GENX_ inline uint32_t get_input_a_my_thread_tile_m_offset(int32_t tile_m_idx)
+{ 
+#if GEMM_TYPE_AB_INPUT_AB
+	return tile_m_idx * SIZE_K * sizeof(DT));
+#elif GEMM_TYPE_QK_INPUT_QKV
+	return 0;
+#else
+#error Non supported gemm type!
+#endif
+	return 0;
+}
 
 extern "C" _GENX_MAIN_ void gemm_nchw_fp16(
-	SurfaceIndex surface_input_a [[type("buffer_t")]],
+	SurfaceIndex SURFACE_0 [[type("buffer_t")]],
 #if HAS_TWO_INPUTS
-	SurfaceIndex surface_input_b [[type("buffer_t")]],
+	SurfaceIndex SURFACE_1 [[type("buffer_t")]],
 #endif
 	SurfaceIndex surface_output [[type("buffer_t")]]
 )
@@ -47,77 +118,83 @@ extern "C" _GENX_MAIN_ void gemm_nchw_fp16(
     const uint32_t thread_id_0 = cm_group_id(0) * cm_local_size(0) + cm_local_id(0);
     const uint32_t thread_id_1 = cm_group_id(1) * cm_local_size(1) + cm_local_id(1);
     const uint32_t thread_id_2 = cm_group_id(2) * cm_local_size(2) + cm_local_id(2);
-	const uint32_t batch_channels_thread_offset = cm_group_id(2);
+
+	const uint32_t batch_thread_offset = cm_group_id(2) / SIZE_NUM_HEADS;
+	const uint32_t head_thread_offset = cm_group_id(2) % SIZE_NUM_HEADS;
+	
 	const uint32_t k_slice_thread_offset = cm_local_id(2);
 	
     const uint32_t input_a_load_size = (TILE_K * sizeof(DT)) / sizeof(uint32_t);
-    const uint32_t input_b_load_size = (TILE_N * sizeof(DT)) / sizeof(uint32_t);
         
-    const uint32_t input_a_base_offset = 
-						batch_channels_thread_offset * SIZE_M * SIZE_K * sizeof(DT)
-						+ thread_id_0 * TILE_M * SIZE_K * sizeof(DT)
-						+ (k_slice_thread_offset * K_PER_THREAD * sizeof(DT));
-    
+    const uint32_t input_a_base_offset = get_input_a_base_offset(thread_id_0, thread_id_1, thread_id_2, batch_thread_offset, head_thread_offset, k_slice_thread_offset);
+ 
+ #if 0   
     matrix<DT, TILE_M, TILE_K> input;   
     matrix_ref<uint32_t, TILE_M, TILE_K/2> input_packed = input.format<uint32_t, TILE_M, TILE_K/2>();
-    
+ 
     #pragma unroll
     for(int i = 0; i < TILE_M; i++)
     {
-        const uint32_t input_a_offset = input_a_base_offset + (i * SIZE_K * sizeof(DT));
+        const uint32_t input_a_offset = input_a_base_offset + i * SIZE_NUM_HEADS * SIZE_STACKED_TENSORS * SIZE_HEAD_SIZE * sizeof(DT);
+
 #if TILE_K == 40
-        input_packed.row(i).select<16, 1>() = cm_load<uint32_t, 16, DataSize::Default, CacheHint::Cached, CacheHint::Cached>(surface_input_a, input_a_offset);
-        input_packed.row(i).select<4, 1>(16) = cm_load<uint32_t, 4, DataSize::Default, CacheHint::Cached, CacheHint::Cached>(surface_input_a, input_a_offset + 16 * sizeof(uint32_t));
+        input_packed.row(i).select<16, 1>() = cm_load<uint32_t, 16, DataSize::Default, CacheHint::Cached, CacheHint::Cached>(SURFACE_0, input_a_offset);
+        input_packed.row(i).select<4, 1>(16) = cm_load<uint32_t, 4, DataSize::Default, CacheHint::Cached, CacheHint::Cached>(SURFACE_0, input_a_offset + 16 * sizeof(uint32_t));
 #elif TILE_K == 80		
-        input_packed.row(i).select<32, 1>() = cm_load<uint32_t, 32, DataSize::Default, CacheHint::Cached, CacheHint::Cached>(surface_input_a, input_a_offset);
-        input_packed.row(i).select<8, 1>(32) = cm_load<uint32_t, 8, DataSize::Default, CacheHint::Cached, CacheHint::Cached>(surface_input_a, input_a_offset + 32 * sizeof(uint32_t));
+        input_packed.row(i).select<32, 1>() = cm_load<uint32_t, 32, DataSize::Default, CacheHint::Cached, CacheHint::Cached>(SURFACE_0, input_a_offset);
+        input_packed.row(i).select<8, 1>(32) = cm_load<uint32_t, 8, DataSize::Default, CacheHint::Cached, CacheHint::Cached>(SURFACE_0, input_a_offset + 32 * sizeof(uint32_t));
 #else
-        input_packed.row(i) = cm_load<uint32_t, input_a_load_size, DataSize::Default, CacheHint::Cached, CacheHint::Cached>(surface_input_a, input_a_offset);
+        input_packed.row(i) = cm_load<uint32_t, input_a_load_size, DataSize::Default, CacheHint::Cached, CacheHint::Cached>(SURFACE_0, input_a_offset);
 #endif
     }
-    
-#if 0
+#endif
+	
+	const uint32_t input_b_base_offset = get_input_b_base_offset(thread_id_0, thread_id_1, thread_id_2, batch_thread_offset, head_thread_offset, k_slice_thread_offset);
+	matrix<DT, TILE_N, TILE_K> input_b;   
+    matrix_ref<uint32_t, TILE_N, TILE_K/2> input_b_packed = input_b.format<uint32_t, TILE_N, TILE_K/2>();
+    #pragma unroll
+    for(int i = 0; i < TILE_N; i++)
+    {
+        const uint32_t input_b_offset = input_b_base_offset + i * SIZE_NUM_HEADS * SIZE_STACKED_TENSORS * SIZE_HEAD_SIZE * sizeof(DT);
+
+#if TILE_K == 40
+        input_b_packed.row(i).select<16, 1>() = cm_load<uint32_t, 16, DataSize::Default, CacheHint::Cached, CacheHint::Cached>(SURFACE_1, input_b_offset);
+        input_b_packed.row(i).select<4, 1>(16) = cm_load<uint32_t, 4, DataSize::Default, CacheHint::Cached, CacheHint::Cached>(SURFACE_1, input_b_offset + 16 * sizeof(uint32_t));
+#elif TILE_K == 80		
+        input_b_packed.row(i).select<32, 1>() = cm_load<uint32_t, 32, DataSize::Default, CacheHint::Cached, CacheHint::Cached>(SURFACE_1, input_b_offset);
+        input_b_packed.row(i).select<8, 1>(32) = cm_load<uint32_t, 8, DataSize::Default, CacheHint::Cached, CacheHint::Cached>(SURFACE_1, input_b_offset + 32 * sizeof(uint32_t));
+#else
+        input_b_packed.row(i) = cm_load<uint32_t, input_a_load_size, DataSize::Default, CacheHint::Cached, CacheHint::Cached>(SURFACE_1, input_b_offset);
+#endif
+    }
+
+	
+	matrix<DT, TILE_K, TILE_N> input_b_transposed;   
+	//#pragma unroll
 	for(int i = 0; i < TILE_K; i++)
 	{
-		printf("%f, ", (float)input[0][i]);
+		input_b_transposed.column(i) = input_b.row(i);
 	}
-    printf("\n");
-#endif
 
 	
-    matrix<DT_ACCU, TILE_M, TILE_N> accu(0.0f);
-    uint32_t input_b_offset = 
-					batch_channels_thread_offset * SIZE_K * SIZE_N * sizeof(DT)
-					+ thread_id_1 * TILE_N * sizeof(DT)
-					+ (k_slice_thread_offset * K_PER_THREAD * SIZE_N * sizeof(DT));
-    //#pragma unroll
-    for(uint32_t i = 0; i < K_PER_THREAD; i++)
-    {
-        vector<uint32_t, input_b_load_size> input_b_packed = cm_load<uint32_t, input_b_load_size, DataSize::Default, CacheHint::Cached, CacheHint::Cached>(surface_input_b, input_b_offset);  
-        vector_ref<DT, TILE_N> input_b = input_b_packed.format<DT>();        
-        input_b_offset += SIZE_N * sizeof(DT);
+	matrix<DT_ACCU, TILE_M, TILE_N> accu(0.0f);
 
-	
-        #pragma unroll
-        for(uint32_t j = 0; j < TILE_M; j++)
-        {
-            accu.select<1, 1, TILE_N, 1>(j, 0) += input_b * input.select<1, 1, 1, 1>(j, i).replicate<TILE_N>();
-        }
-#if 0
-		printf("\n ACCU: \n");
-		for(int i = 0; i < TILE_N; i++)
+	for(int m = 0; m < TILE_M; m++)
+	{
+		const uint32_t input_a_offset = input_a_base_offset + m * SIZE_NUM_HEADS * SIZE_STACKED_TENSORS * SIZE_HEAD_SIZE * sizeof(DT);
+		vector<uint32_t, TILE_K/2> input_packed;
+		vector_ref<DT, TILE_K> input = input_packed.format<DT>();
+		input_packed.select<32, 1>() = cm_load<uint32_t, 32, DataSize::Default, CacheHint::Cached, CacheHint::Cached>(SURFACE_0, input_a_offset);
+        input_packed.select<8, 1>(32) = cm_load<uint32_t, 8, DataSize::Default, CacheHint::Cached, CacheHint::Cached>(SURFACE_0, input_a_offset + 32 * sizeof(uint32_t));
+		#pragma unroll
+		for(uint32_t k = 0; k < TILE_K; k++)
 		{
-			printf("%f, ", (float)accu[0][i]);
+			vector_ref<DT, TILE_N> input_b_chunk = input_b_transposed.row(k);
+			//accu.row(m) += input_b.column(k) * input[m][k];	
+			accu.row(m) += input_b.column(k) * input[k];	
 		}
-		printf("\n");
-		for(int i = 0; i < TILE_N; i++)
-		{
-			printf("%f, ", (float)input_b[i]);
-		}
-		printf("\n");
-#endif	
-    }
-    
+	}
+
 #if SLICE_K > 1
 	const uint32_t TILE_N_PACKED = TILE_N / (sizeof(uint32_t)/sizeof(DT_ACCU));
     cm_slm_init(TILE_M * TILE_N * sizeof(DT_ACCU) * (LWS_SIZE_Z - 1));
@@ -160,7 +237,7 @@ extern "C" _GENX_MAIN_ void gemm_nchw_fp16(
     
     const uint32_t output_store_size = (TILE_N * sizeof(DT)) / sizeof(uint32_t);
     uint32_t output_offset = 
-				batch_channels_thread_offset * SIZE_M * SIZE_N * sizeof(DT)
+				cm_group_id(2) * SIZE_M * SIZE_N * sizeof(DT)
 				+ thread_id_0 * TILE_M * SIZE_N * sizeof(DT)
 				+ (thread_id_1 * TILE_N * sizeof(DT));
 				
