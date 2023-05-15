@@ -39,7 +39,7 @@
 #endif
 */
 
-#define INPUT_B_OFFSET ((SIZE_NUM_HEADS * SIZE_STACKED_TENSORS * SIZE_HEAD_SIZE + SIZE_HEAD_SIZE)* sizeof(DT))
+#define INPUT_B_OFFSET ((SIZE_NUM_HEADS * SIZE_STACKED_TENSORS * SIZE_HEAD_SIZE)* sizeof(DT))
 static const int32_t init_linear_offsets[] = {  0  * INPUT_B_OFFSET,
 											    1  * INPUT_B_OFFSET, 
 											    2  * INPUT_B_OFFSET,
@@ -128,7 +128,7 @@ extern "C" _GENX_MAIN_ void gemm_nchw_fp16(
         
     const uint32_t input_a_base_offset = get_input_a_base_offset(thread_id_0, thread_id_1, thread_id_2, batch_thread_offset, head_thread_offset, k_slice_thread_offset);
  
- #if 0   
+#if 1 
     matrix<DT, TILE_M, TILE_K> input;   
     matrix_ref<uint32_t, TILE_M, TILE_K/2> input_packed = input.format<uint32_t, TILE_M, TILE_K/2>();
  
@@ -149,6 +149,7 @@ extern "C" _GENX_MAIN_ void gemm_nchw_fp16(
     }
 #endif
 	
+#if 0
 	const uint32_t input_b_base_offset = get_input_b_base_offset(thread_id_0, thread_id_1, thread_id_2, batch_thread_offset, head_thread_offset, k_slice_thread_offset);
 	matrix<DT, TILE_N, TILE_K> input_b;   
     matrix_ref<uint32_t, TILE_N, TILE_K/2> input_b_packed = input_b.format<uint32_t, TILE_N, TILE_K/2>();
@@ -167,33 +168,42 @@ extern "C" _GENX_MAIN_ void gemm_nchw_fp16(
         input_b_packed.row(i) = cm_load<uint32_t, input_a_load_size, DataSize::Default, CacheHint::Cached, CacheHint::Cached>(SURFACE_1, input_b_offset);
 #endif
     }
+#endif
 
+    matrix<DT_ACCU, TILE_M, TILE_N> accu(0.0f);
 	
-	matrix<DT, TILE_K, TILE_N> input_b_transposed;   
-	//#pragma unroll
-	for(int i = 0; i < TILE_K; i++)
-	{
-		input_b_transposed.column(i) = input_b.row(i);
-	}
-
+	const uint32_t input_b_load_size = (TILE_N * sizeof(DT)) / sizeof(uint32_t);
+	const uint32_t input_b_base_offset = get_input_b_base_offset(thread_id_0, thread_id_1, thread_id_2, batch_thread_offset, head_thread_offset, k_slice_thread_offset);
+	uint32_t input_b_offset = input_b_base_offset;
 	
-	matrix<DT_ACCU, TILE_M, TILE_N> accu(0.0f);
+	vector<uint32_t, 16> base_b_offsets(init_linear_offsets);
+    base_b_offsets += input_b_base_offset;
+	
+    //#pragma unroll
+    for(uint32_t i = 0; i < K_PER_THREAD/2; i++)
+    {
 
-	for(int m = 0; m < TILE_M; m++)
-	{
-		const uint32_t input_a_offset = input_a_base_offset + m * SIZE_NUM_HEADS * SIZE_STACKED_TENSORS * SIZE_HEAD_SIZE * sizeof(DT);
-		vector<uint32_t, TILE_K/2> input_packed;
-		vector_ref<DT, TILE_K> input = input_packed.format<DT>();
-		input_packed.select<32, 1>() = cm_load<uint32_t, 32, DataSize::Default, CacheHint::Cached, CacheHint::Cached>(SURFACE_0, input_a_offset);
-        input_packed.select<8, 1>(32) = cm_load<uint32_t, 8, DataSize::Default, CacheHint::Cached, CacheHint::Cached>(SURFACE_0, input_a_offset + 32 * sizeof(uint32_t));
-		#pragma unroll
-		for(uint32_t k = 0; k < TILE_K; k++)
+		vector<uint32_t, 16> offsets(base_b_offsets);
+		vector<uint32_t, input_b_load_size * 2> input_b_packed;
+		vector_ref<DT, TILE_N * 2> input_b_line = input_b_packed.format<DT>();
+		for(int j = 0; j < TILE_N / 16; j++)
 		{
-			vector_ref<DT, TILE_N> input_b_chunk = input_b_transposed.row(k);
-			//accu.row(m) += input_b.column(k) * input[m][k];	
-			accu.row(m) += input_b.column(k) * input[k];	
+			input_b_packed.select<16, 1>(j * 16) = cm_load<uint32_t, VectorSize::N1, DataSize::Default, CacheHint::Cached, CacheHint::Cached>(SURFACE_1, offsets);  
+			offsets += 16 * INPUT_B_OFFSET;
 		}
-	}
+
+		#pragma unroll
+		for(int kk = 0; kk < 2; kk++)
+		{
+			vector_ref<DT, TILE_N> input_b = input_b_line.select<TILE_N, 2>(kk);
+			#pragma unroll
+			for(uint32_t j = 0; j < TILE_M; j++)
+			{
+				accu.select<1, 1, TILE_N, 1>(j, 0) += input_b * input.select<1, 1, 1, 1>(j, i * 2 + kk).replicate<TILE_N>();
+			}
+		}
+		base_b_offsets += sizeof(uint32_t);
+    }
 
 #if SLICE_K > 1
 	const uint32_t TILE_N_PACKED = TILE_N / (sizeof(uint32_t)/sizeof(DT_ACCU));
