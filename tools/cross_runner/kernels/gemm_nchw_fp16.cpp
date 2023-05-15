@@ -179,7 +179,7 @@ extern "C" _GENX_MAIN_ void gemm_nchw_fp16(
 	vector<uint32_t, 16> base_b_offsets(init_linear_offsets);
     base_b_offsets += input_b_base_offset;
 	
-	const uint32_t ks = 2;
+	const uint32_t ks = 4;
 	const uint32_t ksp = ks/2;
     //#pragma unroll
     for(uint32_t i = 0; i < K_PER_THREAD/ks; i++)
@@ -188,21 +188,27 @@ extern "C" _GENX_MAIN_ void gemm_nchw_fp16(
 		vector<uint32_t, 16> offsets(base_b_offsets);
 		vector<uint32_t, TILE_N * ksp> input_b_packed;
 		vector_ref<DT, TILE_N * ks> input_b_line = input_b_packed.format<DT>();
+		#pragma unroll
 		for(int j = 0; j < TILE_N / 16; j++)
 		{
-			input_b_packed.select<16 * ksp, 1>(j * 16 * ksp) = cm_load<uint32_t, VectorSize::N1, DataSize::Default, CacheHint::Cached, CacheHint::Cached>(SURFACE_1, offsets);  
+			input_b_packed.select<16 * ksp, 1>(j * 16 * ksp) = cm_load<uint32_t, details::lsc_vector_size<ksp>(), DataSize::Default, CacheHint::Cached, CacheHint::Cached>(SURFACE_1, offsets);  
 			offsets += 16 * INPUT_B_OFFSET;
 		}
 
 		#pragma unroll
-		for(int kk = 0; kk < ks; kk++)
+		for(int kk = 0; kk < ksp; kk++)
 		{
-			vector_ref<DT, TILE_N> input_b = input_b_line.select<TILE_N, ks>(kk);
-			#pragma unroll
-			for(uint32_t j = 0; j < TILE_M; j++)
+			vector<DT, TILE_N> input_b;// = input_b_line.select<TILE_N, ks>(kk);
+			for(int i = 0; i < 2; i++)
 			{
-				accu.select<1, 1, TILE_N, 1>(j, 0) += input_b * input.select<1, 1, 1, 1>(j, i * 2 + kk).replicate<TILE_N>();
+				input_b.select<16, 1>() = input_b_line.select<16, 1>().select<TILE_N, ks>(kk);
+				#pragma unroll
+				for(uint32_t j = 0; j < TILE_M; j++)
+				{
+					accu.select<1, 1, TILE_N, 1>(j, 0) += input_b * input.select<1, 1, 1, 1>(j, i * 2 + kk).replicate<TILE_N>();
+				}
 			}
+			
 		}
 		base_b_offsets += ksp * sizeof(uint32_t);
     }
