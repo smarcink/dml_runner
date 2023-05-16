@@ -54,6 +54,18 @@ struct TensorShape
         acc *= w ? w : 1;
         return acc;
     }
+
+    inline std::uint8_t get_dims_count() const
+    {
+        std::uint8_t ret = 0;
+        if (n) ret++;
+        if (c) ret++;
+        if (d) ret++;
+        if (h) ret++;
+        if (w) ret++;
+
+        return ret;
+    }
 };
 
 

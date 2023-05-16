@@ -60,14 +60,14 @@ public:
             dml::TensorDesc desc_input_0 = { data_type, dimensions_0 };
             input_0_ = dml::InputTensor(graph_, 0, desc_input_0);
 
-            // split
+            // split the single input
             std::vector<std::uint32_t> after_split_dims = { 1, 1, 1 };
             auto split_outputs = dml::Split(input_0_, 3, after_split_dims);
 
             // reshape, we care only about Q and K for this case
             dml::TensorDimensions reshaped_dimss{ shape_a.n, shape_a.c, shape_a.d, shape_a.w };
             decltype(split_outputs) reshaped_splits(2);
-            for (auto i = 0; i < 2; i++)
+            for (auto i = 0; i < reshaped_splits.size(); i++)
             {
                 auto& sout = split_outputs[i];
                 reshaped_splits[i] = dml::Reinterpret(sout, reshaped_dimss, dml::NullOpt);
@@ -88,6 +88,48 @@ public:
             auto gemm_inp_a = dml::Reinterpret(reshaped_splits[0], dml::TensorDimensions{batch, head_count, seq, head_size }, strides_0);
             auto gemm_inp_b = dml::Reinterpret(reshaped_splits[1], dml::TensorDimensions{batch, head_count, head_size, seq }, strides_1);
             outputs_[0] = dml::Gemm(gemm_inp_a, gemm_inp_b, dml::NullOpt, DML_MATRIX_TRANSFORM_NONE, DML_MATRIX_TRANSFORM_NONE, alpha, beta);
+        }
+        else if (type_ == GemmType::GemmType_SV_S_QKV)
+        {
+            dml::TensorDesc::Dimensions dimensions_0;
+            dimensions_0.push_back(shape_a.n);
+            dimensions_0.push_back(shape_a.c);
+            dimensions_0.push_back(shape_a.h);
+            dimensions_0.push_back(shape_a.w);
+            dml::TensorDesc desc_input_0 = { data_type, dimensions_0 };
+            input_0_ = dml::InputTensor(graph_, 0, desc_input_0);
+
+            dml::TensorDesc::Dimensions dimensions_1;
+            dimensions_1.push_back(shape_b.n);
+            dimensions_1.push_back(shape_b.c);
+            dimensions_1.push_back(shape_b.d);
+            dimensions_1.push_back(shape_b.h);
+            dimensions_1.push_back(shape_b.w);
+            dml::TensorDesc desc_input_1 = { data_type, dimensions_1 };
+            input_1_ = dml::InputTensor(graph_, 1, desc_input_1);
+
+            // split the 2nd input
+            std::vector<std::uint32_t> after_split_dims = { 1, 1, 1 };
+            auto split_outputs = dml::Split(input_1_, 3, after_split_dims);
+
+            // reshape, we care only about V for this case
+            dml::TensorDimensions reshaped_dims{ shape_b.n, shape_b.c, shape_b.d, shape_b.w };
+            auto reshaped_split = dml::Reinterpret(split_outputs[2], reshaped_dims, dml::NullOpt);
+
+            const auto batch = reshaped_dims[0];
+            const auto seq = reshaped_dims[1];
+            const auto head_count = reshaped_dims[2];
+            const auto head_size = reshaped_dims[3];
+
+            // transpose logical
+            const auto head_size_stride = 1;
+            const auto head_count_stride = head_size * head_size_stride;
+            const auto seq_stride = head_count * head_count_stride;
+            const auto batch_stride = seq * seq_stride;
+            dml::TensorStrides strides_1 = { batch_stride, head_count_stride, seq_stride, head_size_stride };
+            auto gemm_inp_b = dml::Reinterpret(reshaped_split,  dml::TensorDimensions{batch, head_count, seq, head_size }, strides_1);
+            outputs_[0] = dml::Gemm(input_0_, gemm_inp_b, dml::NullOpt, DML_MATRIX_TRANSFORM_NONE, DML_MATRIX_TRANSFORM_NONE, alpha, beta);
+            std::cout << "WARNING!!! Missing final transpose!" << std::endl;
         }
 
         DML_EXECUTION_FLAGS execution_flags = DML_EXECUTION_FLAG_DESCRIPTORS_VOLATILE;
@@ -188,16 +230,32 @@ public:
         , d3d12_device_(d3d12_device)
 
     {
+        input_data_a_.resize(params_.shape_a.get_elements_count() * get_data_type_bytes_width(params_.dt));
+        input_data_b_.resize(params_.shape_b.get_elements_count() * get_data_type_bytes_width(params_.dt));
 
         if (params_.type == GemmType::GemmType_AB)
         {
-            input_data_a_.resize(params_.shape_a.get_elements_count() * get_data_type_bytes_width(params_.dt));
-            input_data_b_.resize(params_.shape_b.get_elements_count() * get_data_type_bytes_width(params_.dt));
+            assert(params_.shape_a.get_dims_count() == 4);
+            assert(params_.shape_b.get_dims_count() == 4);
+  
+            assert(!input_data_a_.empty());
+            assert(!input_data_b_.empty());
         }
         else if (params_.type == GemmType::GemmType_QK_QKV)
         {
-            input_data_a_.resize(params_.shape_a.get_elements_count() * get_data_type_bytes_width(params_.dt));
-            input_data_b_.resize(0); // single input, so make sure its size is 0
+            assert(params_.shape_a.get_dims_count() == 5);
+            assert(params_.shape_b.get_dims_count() == 0);
+
+            assert(!input_data_a_.empty());
+            assert(input_data_b_.empty());
+        }
+        else if (params_.type == GemmType::GemmType_SV_S_QKV)
+        {
+            assert(params_.shape_a.get_dims_count() == 4);  // softmax input
+            assert(params_.shape_b.get_dims_count() == 5);  // qkv input 
+
+            assert(!input_data_a_.empty());
+            assert(!input_data_b_.empty());
         }
         else
         {
@@ -223,24 +281,6 @@ public:
         else if (params_.dt == DataType::eFp16)
         {
             randomize_linear_container_half(random_generator, uniform_distribution, input_data_a_);
-#if 0
-            fill_with_constant_linear_container_half(input_data_a_, DirectX::PackedVector::XMConvertFloatToHalf(15.0f));
-            Half* dt = reinterpret_cast<Half*>(input_data_a_.data());
-            for (auto i = 0; i < M; i++)
-            {
-                for (auto j = 0; j < K; j++)
-                {
-                    dt[i * params_.shape_a.w * params_.shape_a.h * params_.shape_a.d + j] = DirectX::PackedVector::XMConvertFloatToHalf(j + i);
-                }
-            }
-            for (auto i = 0; i < N; i++)
-            {
-                for (auto j = 0; j < K; j++)
-                {
-                    dt[params_.shape_a.w + i * params_.shape_a.w * params_.shape_a.h * params_.shape_a.d + j] = DirectX::PackedVector::XMConvertFloatToHalf(i);
-                }
-            }
-#endif
             randomize_linear_container_half(random_generator, uniform_distribution, input_data_b_);
         }
         else
@@ -386,7 +426,7 @@ protected:
 
     std::uint32_t get_channels() const
     {
-        if (params_.type == GemmType::GemmType_AB)
+        if (params_.type == GemmType::GemmType_AB || params_.type == GemmType::GemmType_SV_S_QKV)
         {
             return params_.shape_a.c;
         }
@@ -399,7 +439,7 @@ protected:
 
     std::uint32_t get_M() const
     {
-        if (params_.type == GemmType::GemmType_AB)
+        if (params_.type == GemmType::GemmType_AB || params_.type == GemmType::GemmType_SV_S_QKV)
         {
             return params_.shape_a.h;
         }
@@ -413,7 +453,7 @@ protected:
 
     std::uint32_t get_K() const
     {
-        if (params_.type == GemmType::GemmType_AB)
+        if (params_.type == GemmType::GemmType_AB || params_.type == GemmType::GemmType_SV_S_QKV)
         {
             return params_.shape_a.w;
         }
@@ -434,6 +474,10 @@ protected:
         else if (params_.type == GemmType::GemmType_QK_QKV)
         {
             return params_.shape_a.c;
+        }
+        else if (params_.type == GemmType::GemmType_SV_S_QKV)
+        {
+            return params_.shape_b.c;
         }
         assert(false && "Not supported");
         return 0;
@@ -617,6 +661,7 @@ public:
         add_define("SIZE_K", K);
         add_define("SIZE_N", N);
 
+
         if (params_.type == GemmType::GemmType_QK_QKV)
         {
             add_define("SIZE_BATCH", params_.shape_a.n);
@@ -624,8 +669,15 @@ public:
             add_define("SIZE_NUM_HEADS", params_.shape_a.d);
             add_define("SIZE_STACKED_TENSORS", params_.shape_a.h);
             add_define("SIZE_HEAD_SIZE", params_.shape_a.w);
+        } 
+        else if (params_.type == GemmType::GemmType_SV_S_QKV)
+        {
+            add_define("SIZE_BATCH", params_.shape_b.n);
+            add_define("SIZE_SEQ_LEN", params_.shape_b.c);
+            add_define("SIZE_NUM_HEADS", params_.shape_b.d);
+            add_define("SIZE_STACKED_TENSORS", params_.shape_b.h);
+            add_define("SIZE_HEAD_SIZE", params_.shape_b.w);
         }
-
 
         add_define("SCALE", params_.alpha);
 
@@ -637,21 +689,6 @@ public:
         add_define("SLICE_K", cm_params_.slice_k);
 
         add_define("ACCU_IS_FP32", cm_params_.fp32_accu);
-
-
-        add_define([](GemmType type)
-            {
-                switch (type)
-                {
-                case GemmType::GemmType_AB: return "GEMM_TYPE_AB_INPUT_AB";
-                case GemmType::GemmType_QK_QKV: return "GEMM_TYPE_QK_INPUT_QKV";
-                case GemmType::GemmType_SV_S_QKV: return "GEMM_TYPE_SV_INPUT_S_QKV";
-                default:
-                    assert(false && "Unsupported gemm type. Cant deduce JIT!.");
-                }
-                return "";
-            }(params_.type), 1);
-
 
         // kernel compilation
         const auto dump_asm_str = cm_params_.dump_asm ? " -mdump_asm" : "";
@@ -674,7 +711,7 @@ public:
             {
             case GemmType::GemmType_AB: path = "gemm_nchw_fp16.cpp"; break;
             case GemmType::GemmType_QK_QKV: path = "mha_qk_qkv_gemm_fp16.cpp"; break;
-            case GemmType::GemmType_SV_S_QKV: path = "";  break;
+            case GemmType::GemmType_SV_S_QKV: path = "mha_sv_s_qkv_gemm_fp16.cpp";  break;
             default:
                 assert(false && "Unsupported gemm type. Cant deduce JIT!.");
             }
