@@ -179,10 +179,40 @@ extern "C" _GENX_MAIN_ void gemm_nchw_fp16(
 	vector<uint32_t, 16> base_b_offsets(init_linear_offsets);
     base_b_offsets += input_b_base_offset;
 	
-	const uint32_t ks = 4;
+#if 0
+	const uint32_t ks = 2;
 	const uint32_t ksp = ks/2;
     //#pragma unroll
     for(uint32_t i = 0; i < K_PER_THREAD/ks; i++)
+    {
+
+		vector<uint32_t, 16> offsets(base_b_offsets);
+		vector<uint32_t, TILE_N * ksp> input_b_packed;
+		vector_ref<DT, TILE_N * ks> input_b_line = input_b_packed.format<DT>();
+		for(int j = 0; j < TILE_N / 16; j++)
+		{
+			input_b_packed.select<16 * ksp, 1>(j * 16 * ksp) = cm_load<uint32_t, VectorSize::N1, DataSize::Default, CacheHint::Cached, CacheHint::Cached>(SURFACE_1, offsets);  
+			offsets += 16 * INPUT_B_OFFSET;
+		}
+
+		#pragma unroll
+		for(int kk = 0; kk < ks; kk++)
+		{
+			vector_ref<DT, TILE_N> input_b = input_b_line.select<TILE_N, ks>(kk);
+			#pragma unroll
+			for(uint32_t j = 0; j < TILE_M; j++)
+			{
+				accu.select<1, 1, TILE_N, 1>(j, 0) += input_b * input.select<1, 1, 1, 1>(j, i * 2 + kk).replicate<TILE_N>();
+			}
+		}
+		base_b_offsets += ksp * sizeof(uint32_t);
+    }
+#else
+	const uint32_t packed_eles = sizeof(uint32_t) / sizeof(DT);
+	const uint32_t ks = 2;
+	const uint32_t ksp = ks/packed_eles;
+    //#pragma unroll
+    for(uint32_t k_chunk = 0; k_chunk < K_PER_THREAD/ks; k_chunk++)
     {
 
 		vector<uint32_t, 16> offsets(base_b_offsets);
@@ -196,23 +226,23 @@ extern "C" _GENX_MAIN_ void gemm_nchw_fp16(
 		}
 
 		#pragma unroll
-		for(int kk = 0; kk < ksp; kk++)
+		for(int k = 0; k < ksp; k++)
 		{
 			vector<DT, TILE_N> input_b;// = input_b_line.select<TILE_N, ks>(kk);
-			for(int i = 0; i < 2; i++)
+			for(int i = 0; i < packed_eles; i++)
 			{
-				input_b.select<16, 1>() = input_b_line.select<16, 1>(i);
+				input_b.select<16, 1>() = input_b_line.select<16, packed_eles>(i);
 				#pragma unroll
 				for(uint32_t j = 0; j < TILE_M; j++)
 				{
-					accu.select<1, 1, TILE_N, 1>(j, 0) += input_b * input.select<1, 1, 1, 1>(j, i + kk * 2).replicate<TILE_N>();
+					accu.select<1, 1, TILE_N, 1>(j, 0) += input_b * input.select<1, 1, 1, 1>(j, k_chunk * ks + k * packed_eles + i).replicate<TILE_N>();
 				}
 			}
 			
 		}
 		base_b_offsets += ksp * sizeof(uint32_t);
     }
-
+#endif
 #if SLICE_K > 1
 	const uint32_t TILE_N_PACKED = TILE_N / (sizeof(uint32_t)/sizeof(DT_ACCU));
     cm_slm_init(TILE_M * TILE_N * sizeof(DT_ACCU) * (LWS_SIZE_Z - 1));
