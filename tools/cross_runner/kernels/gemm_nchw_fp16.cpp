@@ -209,7 +209,7 @@ extern "C" _GENX_MAIN_ void gemm_nchw_fp16(
     }
 #else
 	const uint32_t packed_eles = sizeof(uint32_t) / sizeof(DT);
-	const uint32_t ks = 2;
+	const uint32_t ks = 8;   //ToDo:  this can be a reason of spills, it can be decreased to: {2 or 4}, but it can affect performance
 	const uint32_t ksp = ks/packed_eles;
     //#pragma unroll
     for(uint32_t k_chunk = 0; k_chunk < K_PER_THREAD/ks; k_chunk++)
@@ -228,7 +228,12 @@ extern "C" _GENX_MAIN_ void gemm_nchw_fp16(
 		#pragma unroll
 		for(int k = 0; k < ksp; k++)
 		{
-			vector_ref<DT, TILE_N * packed_eles> input_b_ksp_chunk = input_b_line.select<TILE_N * packed_eles, 1>(k * TILE_N * packed_eles);
+			vector<DT, TILE_N * packed_eles> input_b_ksp_chunk;
+			#pragma unroll
+			for(int j = 0; j < TILE_N / 16; j++)
+			{
+				input_b_ksp_chunk.select<32, 1>(j * 32) = input_b_line.select<32, 1>(k * 32 + j * ksp * 32);
+			}
 			for(int i = 0; i < packed_eles; i++)
 			{
 				vector<DT, TILE_N> input_b = input_b_ksp_chunk.select<TILE_N, packed_eles>(i);
