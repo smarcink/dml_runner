@@ -477,7 +477,7 @@ protected:
         }
         else if (params_.type == GemmType::GemmType_SV_S_QKV)
         {
-            return params_.shape_b.c;
+            return params_.shape_b.w;
         }
         assert(false && "Not supported");
         return 0;

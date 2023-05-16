@@ -95,7 +95,7 @@ extern "C" _GENX_MAIN_ void mha_qk_qkv_gemm(
 	
 	const uint32_t load_simd_size = 16;
 	const uint32_t packed_eles = sizeof(uint32_t) / sizeof(DT);
-	const uint32_t load_eles = load_simd_size * packed_eles;
+	const uint32_t load_eles = load_simd_size * packed_eles;  // load elements when VectorSize == 1
 	const uint32_t ks = 8;   //ToDo:  this can be a reason of spills, it can be decreased to: {2 or 4}, but it can affect performance
 	const uint32_t ksp = ks/packed_eles;
     //#pragma unroll
