@@ -667,9 +667,18 @@ public:
             std::cout << build_options_final << std::endl;
         }
 
-        auto kernel_source_content = []()
+        auto kernel_source_content = [](GemmType type)
         {
-            const auto path = "gemm_nchw_fp16.cpp";
+            std::string path = "";
+            switch (type)
+            {
+            case GemmType::GemmType_AB: path = "gemm_nchw_fp16.cpp"; break;
+            case GemmType::GemmType_QK_QKV: path = "mha_qk_qkv_gemm_fp16.cpp"; break;
+            case GemmType::GemmType_SV_S_QKV: path = "";  break;
+            default:
+                assert(false && "Unsupported gemm type. Cant deduce JIT!.");
+            }
+
             std::fstream file(path);
             if (!file.is_open())
             {
@@ -677,7 +686,7 @@ public:
                 throw std::runtime_error(msg);
             }
             return std::string((std::istreambuf_iterator<char>(file)), (std::istreambuf_iterator<char>()));
-        }();
+        }(params_.type);
 
         CD3DX12_SHADER_BYTECODE byte_code;
         byte_code.pShaderBytecode = kernel_source_content.data();
