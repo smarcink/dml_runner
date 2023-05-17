@@ -618,10 +618,19 @@ public:
         }
         assert(cm_params_.tile_n > 0);
 
-        cm_params_.slice_k = K / cm_params_.tile_k;
-        assert(cm_params_.slice_k > 0);
 
-        cm_params_.lws[2] = 1;// cm_params_.slice_k;
+        if (params_.type == GemmType::GemmType_AB || params_.type == GemmType::GemmType_QK_QKV)
+        {
+            cm_params_.slice_k = K / cm_params_.tile_k;
+            cm_params_.lws[2] = 1;
+        }
+        else if(params_.type == GemmType::GemmType_SV_S_QKV)
+        {
+            cm_params_.slice_k = 1;
+            cm_params_.lws[2] = 1;
+        }
+
+        assert(cm_params_.slice_k > 0);
 
         {
             std::vector< DescType> desc_list =
@@ -789,9 +798,21 @@ public:
     private:
         std::vector<std::uint32_t> get_gws() const
         {
-            const auto gws_x = get_M() / cm_params_.tile_m;
-            const auto gws_y = get_N() / cm_params_.tile_n;
-            const auto gws_z = get_batch() * get_channels();// *cm_params_.slice_k;
+            std::uint32_t gws_x = 0;
+            std::uint32_t gws_y = 0;
+            std::uint32_t gws_z = 0;
+            if (params_.type == GemmType::GemmType_AB || params_.type == GemmType::GemmType_QK_QKV)
+            {
+                gws_x = get_M() / cm_params_.tile_m;
+                gws_y = get_N() / cm_params_.tile_n;
+                gws_z = get_batch() * get_channels() *cm_params_.slice_k;
+            }
+            else if (params_.type == GemmType::GemmType_SV_S_QKV)
+            {
+                gws_x = get_M() / cm_params_.tile_m;
+                gws_y = get_N() / cm_params_.tile_n;
+                gws_z = get_batch() * get_channels();
+            }
             return { gws_x, gws_y, gws_z };
         }
 
