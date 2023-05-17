@@ -621,7 +621,7 @@ public:
         cm_params_.slice_k = K / cm_params_.tile_k;
         assert(cm_params_.slice_k > 0);
 
-        cm_params_.lws[2] = cm_params_.slice_k;
+        cm_params_.lws[2] = 1;// cm_params_.slice_k;
 
         {
             std::vector< DescType> desc_list =
@@ -791,7 +791,7 @@ public:
         {
             const auto gws_x = get_M() / cm_params_.tile_m;
             const auto gws_y = get_N() / cm_params_.tile_n;
-            const auto gws_z = get_batch() * get_channels() * cm_params_.slice_k;
+            const auto gws_z = get_batch() * get_channels();// *cm_params_.slice_k;
             return { gws_x, gws_y, gws_z };
         }
 
