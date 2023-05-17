@@ -8,7 +8,6 @@
 #define DT_ACCU DT
 #endif
 
-#define K_PER_THREAD (SIZE_K / SLICE_K)
 
 #define INPUT_B_OFFSET ((SIZE_NUM_HEADS * SIZE_STACKED_TENSORS * SIZE_HEAD_SIZE)* sizeof(DT))
 static const int32_t init_linear_offsets[] = {  0  * INPUT_B_OFFSET,
@@ -54,13 +53,7 @@ extern "C" _GENX_MAIN_ void mha_sv_s_qka_gemm(
 	
 	matrix<DT_ACCU, TILE_M, TILE_N> accu(0.0f);
 	
-
-
 	const uint32_t input_a_load_size = (TILE_K * sizeof(DT)) / sizeof(uint32_t);
-	
-	matrix<DT, TILE_M, TILE_K> input_a;   
-    matrix_ref<uint32_t, TILE_M, TILE_K/2> input_a_packed = input_a.format<uint32_t, TILE_M, TILE_K/2>();
-	
 
 	for(int k_chunk = 0; k_chunk < SIZE_K/ TILE_K; k_chunk++)
 	{
@@ -69,17 +62,13 @@ extern "C" _GENX_MAIN_ void mha_sv_s_qka_gemm(
 					+ head_thread_offset * SIZE_M * SIZE_K
 					+ k_chunk * TILE_K
 					+ thread_id_0 * TILE_M * SIZE_K) * sizeof(DT);
-		#pragma unroll
-		for(int m = 0; m < TILE_M; m++)
-		{
-			const uint32_t input_a_offset = input_a_base_offset + m * SIZE_K * sizeof(DT);
-			input_a_packed.row(m) = cm_load<uint32_t, input_a_load_size, DataSize::Default, CacheHint::Cached, CacheHint::Cached>(surface_input_s, input_a_offset);
-		}
 	
 		const uint32_t input_b_base_offset = get_input_b_base_offset(thread_id_0, thread_id_1, thread_id_2, batch_thread_offset, head_thread_offset, k_chunk);	
 	    #pragma unroll
 		for(int m = 0; m < TILE_M; m++)
 		{
+			const uint32_t input_a_offset = input_a_base_offset + m * SIZE_K * sizeof(DT);
+			vector<uint32_t, TILE_K/2> input_a_packed = cm_load<uint32_t, input_a_load_size, DataSize::Default, CacheHint::Cached, CacheHint::Cached>(surface_input_s, input_a_offset);
 			#pragma unroll
 			for(int k = 0; k < TILE_K; k++)
 			{	
@@ -95,8 +84,8 @@ extern "C" _GENX_MAIN_ void mha_sv_s_qka_gemm(
 				packed_row = cm_load<uint32_t, TILE_N/2, DataSize::Default, CacheHint::Cached, CacheHint::Cached>(surface_input_qkv, input_b_offset);
 #endif
 
-				accu.row(m) += packed_row.format<DT>() * input_a.select<1, 1, 1, 1>(m, k).replicate<TILE_N>();
-				}
+				accu.row(m) += packed_row.format<DT>() * input_a_packed.format<DT>().select<1, 1>(k).replicate<TILE_N>();
+			}
 		}	
 	}
 	
@@ -116,6 +105,9 @@ extern "C" _GENX_MAIN_ void mha_sv_s_qka_gemm(
 #if TILE_N == 40
 		cm_store<uint32_t, 16, DataSize::Default, CacheHint::WriteBack, CacheHint::WriteBack>(surface_output, output_offset, accu_0_packed.select<16, 1>());
 		cm_store<uint32_t, 4, DataSize::Default, CacheHint::WriteBack, CacheHint::WriteBack>(surface_output, output_offset + 16 * sizeof(uint32_t), accu_0_packed.select<4, 1>(16));
+#elif TILE_N == 80	
+		cm_store<uint32_t, 32, DataSize::Default, CacheHint::WriteBack, CacheHint::WriteBack>(surface_output, output_offset, accu_0_packed.select<32, 1>());
+		cm_store<uint32_t, 8, DataSize::Default, CacheHint::WriteBack, CacheHint::WriteBack>(surface_output, output_offset + 32 * sizeof(uint32_t), accu_0_packed.select<8, 1>(32));	
 #else
 		cm_store<uint32_t, output_store_size, DataSize::Default, CacheHint::WriteBack, CacheHint::WriteBack>(surface_output, output_offset, accu_0_packed);
 #endif
