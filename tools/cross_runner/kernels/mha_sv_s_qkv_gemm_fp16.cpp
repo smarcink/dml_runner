@@ -8,7 +8,7 @@
 #define DT_ACCU DT
 #endif
 
-#define K_PER_THREAD TILE_K
+#define K_PER_THREAD (SIZE_K / SLICE_K)
 
 #define INPUT_B_OFFSET ((SIZE_NUM_HEADS * SIZE_STACKED_TENSORS * SIZE_HEAD_SIZE)* sizeof(DT))
 static const int32_t init_linear_offsets[] = {  0  * INPUT_B_OFFSET,
@@ -33,8 +33,8 @@ _GENX_ inline uint32_t get_input_b_base_offset(uint32_t thread_id_0, uint32_t th
 {    
 	return ( batch_thread_offset * SIZE_SEQ_LEN * SIZE_NUM_HEADS * SIZE_STACKED_TENSORS * SIZE_HEAD_SIZE
 			+ head_thread_offset * SIZE_STACKED_TENSORS * SIZE_HEAD_SIZE  // offset batch + channels
-			+ thread_id_1 * TILE_N * SIZE_NUM_HEADS * SIZE_STACKED_TENSORS * SIZE_HEAD_SIZE // offset n
-			+ k_slice_thread_offset * K_PER_THREAD
+			+ thread_id_1 * TILE_N
+			+ k_slice_thread_offset * K_PER_THREAD * SIZE_NUM_HEADS * SIZE_STACKED_TENSORS * SIZE_HEAD_SIZE 
 			+ 2 * SIZE_HEAD_SIZE) * sizeof(DT); // offset k 
 }
 
@@ -74,15 +74,16 @@ extern "C" _GENX_MAIN_ void mha_sv_s_qka_gemm(
 	
 	
 	const uint32_t input_a_base_offset = 
-						(batch_thread_offset * SIZE_NUM_HEADS * SIZE_M * SIZE_K
+						(batch_thread_offset * SIZE_C * SIZE_M * SIZE_K
 						+ head_thread_offset * SIZE_M * SIZE_K
+						+ k_slice_thread_offset * K_PER_THREAD
 						+ thread_id_0 * TILE_M * SIZE_K) * sizeof(DT);
 	const uint32_t input_a_load_size = (TILE_K * sizeof(DT)) / sizeof(uint32_t);
     #pragma unroll
     for(int m = 0; m < TILE_M; m++)
     {
         const uint32_t input_a_offset = input_a_base_offset + m * SIZE_K * sizeof(DT);
-        vector<uint32_t, TILE_K/2> input_a_packed = cm_load<uint32_t, input_a_load_size, DataSize::Default, CacheHint::Cached, CacheHint::Cached>(surface_input_qkv, input_a_offset);
+        vector<uint32_t, TILE_K/2> input_a_packed = cm_load<uint32_t, input_a_load_size, DataSize::Default, CacheHint::Cached, CacheHint::Cached>(surface_input_s, input_a_offset);
 		vector_ref<DT, TILE_K> input_a = input_a_packed.format<DT>();
 		#pragma unroll
 		for(int n = 0; n < TILE_N; n++)
@@ -93,14 +94,63 @@ extern "C" _GENX_MAIN_ void mha_sv_s_qka_gemm(
 		
     }
 	
+#if SLICE_K > 1
+	const uint32_t TILE_N_PACKED = TILE_N / (sizeof(uint32_t)/sizeof(DT_ACCU));
+    cm_slm_init(TILE_M * TILE_N * sizeof(DT_ACCU) * (LWS_SIZE_Z - 1));
+
+    if(cm_local_id(2) > 0)
+    {
+        #pragma unroll
+        for(uint32_t i = 0; i < TILE_M; i++)
+        {
+            vector_ref<DT_ACCU, TILE_N> data_to_store_slm = accu.row(i);
+            vector_ref<uint32_t, TILE_N_PACKED> data_to_store_slm_typed = data_to_store_slm.format<uint32_t>();
+            cm_store_slm<uint32_t, TILE_N_PACKED>(i * TILE_N * sizeof(DT_ACCU) + (k_slice_thread_offset - 1) * TILE_M * TILE_N * sizeof(DT_ACCU), data_to_store_slm_typed);
+            //cm_store_slm<uint32_t, TILE_N/2>(i * TILE_N * sizeof(DT), data_to_store_slm_typed);
+            //cm_store_slm<uint32_t, TILE_N/2>(0, data_to_store_slm_typed);
+        }
+    }
+   
+    cm_slm_fence(CM_GLOBAL_COHERENT_FENCE);
+    cm_barrier();
+    if(cm_local_id(2) > 0)
+    {
+        return;
+    }
+    
+    #pragma unroll
+    for(uint32_t i = 0; i < TILE_M; i++)
+    {
+        vector<DT_ACCU, TILE_N> data_to_load_slm;
+        vector_ref<uint32_t, TILE_N_PACKED> data_to_load_slm_typed = data_to_load_slm.format<uint32_t>();
+        #pragma unroll
+        for(int j = 0; j < (LWS_SIZE_Z - 1); j++)
+        {
+            data_to_load_slm_typed = cm_load_slm<uint32_t, TILE_N_PACKED>(i * TILE_N * sizeof(DT_ACCU) + j * TILE_M * TILE_N * sizeof(DT_ACCU));
+            accu.row(i) += data_to_load_slm;
+        }
+    }
+#endif 
+	
+	const uint32_t output_store_size = (TILE_N * sizeof(DT)) / sizeof(uint32_t);
+    uint32_t output_offset = (batch_thread_offset * SIZE_NUM_HEADS * SIZE_M * SIZE_N
+				+ head_thread_offset * SIZE_M * SIZE_N
+				+ thread_id_0 * TILE_M * SIZE_N
+				+ thread_id_1 * TILE_N)* sizeof(DT);
+	
+	matrix<DT, TILE_M, TILE_N> accu_out = accu;  // if DT_ACCU == DT then compiler removes this line
+	accu_out *= DT(SCALE);
 	// store results
+	#pragma unroll
     for(int m = 0; m < TILE_M; m++)
     {
-		for(int n = 0; n < TILE_N; n++)
-		{
-			printf("%f, ", (float)accu[m][n]);
-		}
+		vector_ref<uint32_t, output_store_size> accu_0_packed = accu_out.select<1, 1, TILE_N, 1>(m, 0).format<uint32_t>();
+#if TILE_N == 40
+		cm_store<uint32_t, 16, DataSize::Default, CacheHint::WriteBack, CacheHint::WriteBack>(surface_output, output_offset, accu_0_packed.select<16, 1>());
+		cm_store<uint32_t, 4, DataSize::Default, CacheHint::WriteBack, CacheHint::WriteBack>(surface_output, output_offset + 16 * sizeof(uint32_t), accu_0_packed.select<4, 1>(16));
+#else
+		cm_store<uint32_t, output_store_size, DataSize::Default, CacheHint::WriteBack, CacheHint::WriteBack>(surface_output, output_offset, accu_0_packed);
+#endif
+		output_offset += SIZE_N * sizeof(DT);
 	}
-	
-	
 }
