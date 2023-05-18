@@ -30,6 +30,7 @@ static const int32_t init_linear_offsets[] = {  0  * INPUT_B_OFFSET,
 
 _GENX_ inline uint32_t get_input_b_base_offset(uint32_t thread_id_0, uint32_t thread_id_1, uint32_t thread_id_2, uint32_t batch_thread_offset, uint32_t head_thread_offset, uint32_t k_slice_thread_offset)
 {    
+	// input is 5d qkv  input so use SEQ_LEN/HEADSIZE  etc. variables for offset calculations
 	return ( batch_thread_offset * SIZE_SEQ_LEN * SIZE_NUM_HEADS * SIZE_STACKED_TENSORS * SIZE_HEAD_SIZE
 			+ head_thread_offset * SIZE_STACKED_TENSORS * SIZE_HEAD_SIZE  // offset batch + channels
 			+ thread_id_1 * TILE_N
@@ -57,6 +58,7 @@ extern "C" _GENX_MAIN_ void mha_sv_s_qka_gemm(
 
 	for(int k_chunk = 0; k_chunk < SIZE_K/ TILE_K; k_chunk++)
 	{
+		// input is 4d regular gemm input so use SIZE_M/N?/ etc. for offset calculations
 		const uint32_t input_a_base_offset = 
 					(batch_thread_offset * SIZE_C * SIZE_M * SIZE_K
 					+ head_thread_offset * SIZE_M * SIZE_K
@@ -90,9 +92,9 @@ extern "C" _GENX_MAIN_ void mha_sv_s_qka_gemm(
 	}
 	
 	const uint32_t output_store_size = (TILE_N * sizeof(DT)) / sizeof(uint32_t);
-    uint32_t output_offset = (batch_thread_offset * SIZE_NUM_HEADS * SIZE_M * SIZE_N
-				+ head_thread_offset * SIZE_M * SIZE_N
-				+ thread_id_0 * TILE_M * SIZE_N
+    uint32_t output_offset = (batch_thread_offset * SIZE_NUM_HEADS * SIZE_SEQ_LEN * SIZE_HEAD_SIZE
+				+ head_thread_offset * SIZE_HEAD_SIZE
+				+ thread_id_0 * TILE_M * SIZE_NUM_HEADS * SIZE_HEAD_SIZE
 				+ thread_id_1 * TILE_N)* sizeof(DT);
 	
 	matrix<DT, TILE_M, TILE_N> accu_out = accu;  // if DT_ACCU == DT then compiler removes this line
@@ -111,6 +113,6 @@ extern "C" _GENX_MAIN_ void mha_sv_s_qka_gemm(
 #else
 		cm_store<uint32_t, output_store_size, DataSize::Default, CacheHint::WriteBack, CacheHint::WriteBack>(surface_output, output_offset, accu_0_packed);
 #endif
-		output_offset += SIZE_N * sizeof(DT);
+		output_offset += SIZE_HEAD_SIZE * SIZE_NUM_HEADS * sizeof(DT);
 	}
 }

@@ -15,6 +15,58 @@ enum class GemmType
     GemmType_SV_S_QKV = 2
 };
 
+namespace
+{
+// a bit of hack :)>
+dml::Expression dml_transpose(dml::Expression input_in, dml::TensorDimensions out_dims, dml::TensorPolicy out_tensor_policy)
+{
+    auto input = dml::Reinterpret(input_in, out_dims, out_tensor_policy.Get(input_in.GetOutputDesc().dataType, input_in.GetOutputDesc().flags, input_in.GetOutputDesc().sizes).strides);
+
+    dml::detail::GraphBuilder* builder = input.Impl()->GetGraphBuilder();
+    dml::TensorDesc input_tensor = input.GetOutputDesc();
+
+    dml::TensorDesc output_tensor(input_tensor.dataType, out_dims);
+
+    DML_ELEMENT_WISE_IDENTITY_OPERATOR_DESC desc = {};
+    desc.InputTensor = input_tensor.AsPtr<DML_TENSOR_DESC>();
+    desc.OutputTensor = output_tensor.AsPtr<DML_TENSOR_DESC>();
+
+    dml::detail::NodeOutput* const inputs[] = { input.Impl() };
+    dml::detail::NodeID node = builder->CreateOperatorNode(DML_OPERATOR_ELEMENT_WISE_IDENTITY, &desc, inputs);
+    dml::detail::NodeOutput* output = builder->CreateNodeOutput(node, 0, std::move(output_tensor));
+
+    return output;
+}
+
+inline dml::TensorProperties compute_transpose_nchw_to_nhcw(
+    DML_TENSOR_DATA_TYPE dataType,
+    DML_TENSOR_FLAGS /*flags*/,
+    std::span<const uint32_t> sizes)
+{
+    uint32_t dimension_count = static_cast<uint32_t>(sizes.size());
+    assert(dimension_count == 4);
+    dml::TensorStrides strides(dimension_count);
+
+    strides[3] = 1;
+    strides[2] = sizes[2] * sizes[3];
+    strides[1] = sizes[3];
+    strides[0] = sizes[1] * sizes[2] * sizes[3];
+
+    std::vector<uint32_t> new_sizes(dimension_count);
+    new_sizes[3] = sizes[3];
+    new_sizes[2] = sizes[1];
+    new_sizes[1] = sizes[2];
+    new_sizes[0] = sizes[0];
+
+    dml::TensorProperties props;
+    props.strides = std::move(strides);
+    props.totalTensorSizeInBytes = DMLCalcBufferTensorSize(dataType, dimension_count, new_sizes.data(), props.strides->data());
+    props.guaranteedBaseOffsetAlignment = 0;
+    return props;
+}
+
+}
+
 namespace gpu_op
 {
 
@@ -128,8 +180,9 @@ public:
             const auto batch_stride = seq * seq_stride;
             dml::TensorStrides strides_1 = { batch_stride, head_count_stride, seq_stride, head_size_stride };
             auto gemm_inp_b = dml::Reinterpret(reshaped_split,  dml::TensorDimensions{batch, head_count, seq, head_size }, strides_1);
-            outputs_[0] = dml::Gemm(input_0_, gemm_inp_b, dml::NullOpt, DML_MATRIX_TRANSFORM_NONE, DML_MATRIX_TRANSFORM_NONE, alpha, beta);
-            std::cout << "WARNING!!! Missing final transpose!" << std::endl;
+            auto gemm_out = dml::Gemm(input_0_, gemm_inp_b, dml::NullOpt, DML_MATRIX_TRANSFORM_NONE, DML_MATRIX_TRANSFORM_NONE, alpha, beta);
+            outputs_[0] = dml_transpose(gemm_out, dml::TensorDimensions{ batch, seq, head_count, head_size },
+                dml::TensorPolicy(&compute_transpose_nchw_to_nhcw));
         }
 
         DML_EXECUTION_FLAGS execution_flags = DML_EXECUTION_FLAG_DESCRIPTORS_VOLATILE;
