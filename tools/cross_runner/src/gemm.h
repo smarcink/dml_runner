@@ -932,12 +932,17 @@ public:
                 gws_y = get_N() / cm_params_.tile_n;
                 gws_z = get_batch() * get_channels() *cm_params_.slice_k;
             }
-            else if (params_.type == GemmType::GemmType_SV_S_QKV)
+            else if (params_.type == GemmType::GemmType_SV_S_QKV || params_.type == GemmType::GemmType_QK_Q_KV)
             {
                 gws_x = get_M() / cm_params_.tile_m;
                 gws_y = get_N() / cm_params_.tile_n;
                 gws_z = get_batch() * get_channels();
             }
+
+
+            assert(gws_x != 0);
+            assert(gws_y != 0);
+            assert(gws_z != 0);
             return { gws_x, gws_y, gws_z };
         }
 
