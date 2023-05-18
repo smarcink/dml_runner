@@ -28,9 +28,12 @@ struct TensorShape
 
     TensorShape(std::span<std::uint32_t> in_v)
     {
-        assert((in_v.size() == 2 || in_v.size() == 4 || in_v.size() == 5) && "Not supported shape!");
+        assert(!(in_v.size() <3 || in_v.size() > 5) && "Not supported shape!");
         std::int32_t current_idx = static_cast<std::int32_t>(in_v.size()) - 1;
-        w = in_v[current_idx--];
+        if (in_v.size() > 3)
+        {
+            w = in_v[current_idx--];
+        }
         h = in_v[current_idx--];
         if (in_v.size() == 5)
         {
