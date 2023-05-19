@@ -797,14 +797,19 @@ public:
         if (params_.type == GemmType::GemmType_AB || params_.type == GemmType::GemmType_QK_QKV)
         {
             cm_params_.slice_k = K / cm_params_.tile_k;
-            cm_params_.lws[2] = 1;
+            cm_params_.lws[2] = cm_params_.slice_k;
         }
-        else if(params_.type == GemmType::GemmType_SV_S_QKV || params_.type == GemmType::GemmType_QK_Q_KV || params_.type == GemmType::GemmType_SV_S_KV)
+        else if(params_.type == GemmType::GemmType_SV_S_QKV || params_.type == GemmType::GemmType_QK_Q_KV)
         {
             cm_params_.slice_k = 1;
             cm_params_.lws[2] = 1;
         }
-
+        else if (params_.type == GemmType::GemmType_SV_S_KV)
+        {
+            cm_params_.slice_k = 1;
+            cm_params_.lws[2] = 1;
+            cm_params_.lws[0] = 1;
+        }
         assert(cm_params_.slice_k > 0);
 
         {

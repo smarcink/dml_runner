@@ -13,11 +13,11 @@ _GENX_ inline uint32_t get_input_b_base_offset(uint32_t thread_id_0, uint32_t th
 {    
 	return ( batch_thread_offset * SIZE_SEQ_LEN * SIZE_NUM_HEADS * SIZE_STACKED_TENSORS * SIZE_HEAD_SIZE
 			+ head_thread_offset * SIZE_STACKED_TENSORS * SIZE_HEAD_SIZE  // offset batch + channels
-			+ thread_id_1 * TILE_N * SIZE_NUM_HEADS * SIZE_STACKED_TENSORS * SIZE_HEAD_SIZE
+			+ thread_id_1 * TILE_N
 			+ SIZE_HEAD_SIZE) * sizeof(DT); // offset k 
 }
 
-extern "C" _GENX_MAIN_ void mha_qk_q_kv_gemm_fp16(
+extern "C" _GENX_MAIN_ void mha_sv_s_kv_gemm_fp16(
 	SurfaceIndex surface_input_s [[type("buffer_t")]],
 	SurfaceIndex surface_input_kv [[type("buffer_t")]],
 	SurfaceIndex surface_output [[type("buffer_t")]]
@@ -53,7 +53,7 @@ extern "C" _GENX_MAIN_ void mha_qk_q_kv_gemm_fp16(
 	const uint32_t input_b_load_size = (TILE_N * sizeof(DT)) / sizeof(uint32_t);
 	const uint32_t input_b_base_offset = get_input_b_base_offset(thread_id_0, thread_id_1, thread_id_2, batch_thread_offset, head_thread_offset);;
 	
-    //#pragma unroll
+    #pragma unroll
     for(uint32_t k = 0; k < K_PER_THREAD; k++)
     {
 		const uint32_t input_b_offset = input_b_base_offset + k * SIZE_NUM_HEADS * SIZE_STACKED_TENSORS * SIZE_HEAD_SIZE * sizeof(DT);
@@ -74,7 +74,7 @@ extern "C" _GENX_MAIN_ void mha_qk_q_kv_gemm_fp16(
 			accu.row(m) += packed_row.format<DT>() * input_a.row(m).select<1, 1>(k).replicate<TILE_N>();
 		}
     }
-	
+
 	const uint32_t output_store_size = (TILE_N * sizeof(DT)) / sizeof(uint32_t);
     uint32_t output_offset = 
 				cm_group_id(2) * SIZE_M * SIZE_N * sizeof(DT)
@@ -89,7 +89,15 @@ extern "C" _GENX_MAIN_ void mha_qk_q_kv_gemm_fp16(
     for(uint32_t i = 0; i < TILE_M; i++)
     {
         vector_ref<uint32_t, output_store_size> accu_0_packed = accu_out.select<1, 1, TILE_N, 1>(i, 0).format<uint32_t>();
-        cm_store<uint32_t, output_store_size, DataSize::Default, CacheHint::WriteBack, CacheHint::WriteBack>(surface_output, output_offset, accu_0_packed);
+#if TILE_N == 40
+		cm_store<uint32_t, 16, DataSize::Default, CacheHint::WriteBack, CacheHint::WriteBack>(surface_output, output_offset, accu_0_packed.select<16, 1>());
+		cm_store<uint32_t, 4, DataSize::Default, CacheHint::WriteBack, CacheHint::WriteBack>(surface_output, output_offset + 16 * sizeof(uint32_t), accu_0_packed.select<4, 1>(16));
+#elif TILE_N == 80	
+		cm_store<uint32_t, 32, DataSize::Default, CacheHint::WriteBack, CacheHint::WriteBack>(surface_output, output_offset, accu_0_packed.select<32, 1>());
+		cm_store<uint32_t, 8, DataSize::Default, CacheHint::WriteBack, CacheHint::WriteBack>(surface_output, output_offset + 32 * sizeof(uint32_t), accu_0_packed.select<8, 1>(32));	
+#else
+		cm_store<uint32_t, output_store_size, DataSize::Default, CacheHint::WriteBack, CacheHint::WriteBack>(surface_output, output_offset, accu_0_packed);
+#endif
         output_offset += SIZE_N * sizeof(DT);
     }
 }
