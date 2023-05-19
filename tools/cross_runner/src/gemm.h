@@ -265,7 +265,7 @@ public:
 
             // reshape, we care only about V for this case
             dml::TensorDimensions reshaped_dims{ batch, seq, head_count, head_size };
-            auto reshaped_split = dml::Reinterpret(split_outputs[0], reshaped_dims, dml::NullOpt);
+            auto reshaped_split = dml::Reinterpret(split_outputs[1], reshaped_dims, dml::NullOpt);
 
             // transpose logical
             dml::TensorStrides input_1_strides = { seq * head_count * head_size, head_size, head_count * head_size , 1};
