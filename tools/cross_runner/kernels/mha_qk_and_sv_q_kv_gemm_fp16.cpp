@@ -69,6 +69,9 @@ extern "C" _GENX_MAIN_ void mha_qk_and_sv_q_kv_gemm(
 #elif TILE_K == 80		
         input_packed.row(m).select<32, 1>() = cm_load<uint32_t, 32, DataSize::Default, CacheHint::Cached, CacheHint::Cached>(surface_input_a, input_a_offset);
         input_packed.row(m).select<8, 1>(32) = cm_load<uint32_t, 8, DataSize::Default, CacheHint::Cached, CacheHint::Cached>(surface_input_a, input_a_offset + 32 * sizeof(uint32_t));
+#elif TILE_K == 160		
+        input_packed.row(m).select<64, 1>() = cm_load<uint32_t, 64, DataSize::Default, CacheHint::Cached, CacheHint::Cached>(surface_input_a, input_a_offset);
+        input_packed.row(m).select<16, 1>(64) = cm_load<uint32_t, 16, DataSize::Default, CacheHint::Cached, CacheHint::Cached>(surface_input_a, input_a_offset + 64 * sizeof(uint32_t));
 #else
         input_packed.row(m) = cm_load<uint32_t, input_a_load_size, DataSize::Default, CacheHint::Cached, CacheHint::Cached>(surface_input_a, input_a_offset);
 #endif
