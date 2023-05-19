@@ -212,6 +212,7 @@ public:
             const auto seq = shape_a.c;
             const auto head_count = shape_b.d;
             const auto head_size = shape_a.h / head_count;
+            const auto N = shape_b.c;
 
             // reshape and transpose first input
             const auto head_size_stride = 1;
@@ -226,12 +227,12 @@ public:
             auto split_outputs = dml::Split(input_1_, 3, after_split_dims);
 
             // reshape, we care only about V for this case
-            dml::TensorDimensions reshaped_dims{ shape_b.n, shape_b.c, shape_b.d, shape_b.w };
+            dml::TensorDimensions reshaped_dims{ batch, N, head_count, head_size };
             auto reshaped_split = dml::Reinterpret(split_outputs[0], reshaped_dims, dml::NullOpt);
 
             // transpose logical
-            dml::TensorStrides input_1_strides = { batch_stride, head_count_stride, head_size_stride, seq_stride };
-            auto gemm_inp_b = dml::Reinterpret(reshaped_split, dml::TensorDimensions{ batch, head_count, head_size, seq }, input_1_strides);
+            dml::TensorStrides input_1_strides = { N * head_count * head_size, head_size, 1, head_count * head_size };
+            auto gemm_inp_b = dml::Reinterpret(reshaped_split, dml::TensorDimensions{ batch, head_count, head_size, N }, input_1_strides);
             outputs_[0] = dml::Gemm(gemm_inp_a, gemm_inp_b, dml::NullOpt, DML_MATRIX_TRANSFORM_NONE, DML_MATRIX_TRANSFORM_NONE, alpha, beta);
         }
 
@@ -368,6 +369,8 @@ public:
 
             assert(!input_data_a_.empty());
             assert(!input_data_b_.empty());
+
+            assert(params_.shape_a.h == params_.shape_b.d * params_.shape_b.w); // K SIZE
         }
         else
         {

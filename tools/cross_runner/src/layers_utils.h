@@ -268,7 +268,7 @@ inline ConformanceResult run_conformance_check(const std::vector<std::byte>& gpu
 
         const auto abs_diff = std::abs(ret.node_value - ret.reference_value);
 
-        if (abs_diff > ret.epsilon)
+        if (abs_diff > ret.epsilon || std::isnan(ret.node_value) || std::isnan(ret.reference_value))
         {
             ret.passed = false;
 
