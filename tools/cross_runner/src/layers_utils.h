@@ -49,6 +49,10 @@ struct TensorShape
 
     inline std::size_t get_elements_count() const
     {
+        if (get_dims_count() == 0)
+        {
+            return 0;
+        }
         std::size_t acc = 1;
         acc *= n ? n : 1;
         acc *= c ? c : 1;

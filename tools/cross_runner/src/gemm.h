@@ -365,7 +365,7 @@ public:
                     { "sv_qkv", GemmType::GemmType_SV_S_QKV },
                     { "qk_q_kv", GemmType::GemmType_QK_Q_KV },
                     { "sv_s_kv", GemmType::GemmType_SV_S_KV },
-            }, CLI::ignore_case, CLI::ignore_underscore))->required();
+            }, CLI::ignore_case))->required();
 
         }
     };
