@@ -38,8 +38,6 @@ _GENX_ inline uint32_t get_input_b_base_offset(uint32_t thread_id_0, uint32_t th
 			+ 2 * SIZE_HEAD_SIZE) * sizeof(DT); // offset k 
 }
 
-#define EXPERIMENT_SLM_0 1
-
 extern "C" _GENX_MAIN_ void mha_sv_s_qka_gemm(
 	SurfaceIndex surface_input_s [[type("buffer_t")]],
 	SurfaceIndex surface_input_qkv [[type("buffer_t")]],
@@ -57,20 +55,8 @@ extern "C" _GENX_MAIN_ void mha_sv_s_qka_gemm(
 	
 	const uint32_t input_a_load_size = (TILE_K * sizeof(DT)) / sizeof(uint32_t);
 
-#if EXPERIMENT_SLM_0
+#if SLM_KN_SHARING
 	cm_slm_init(TILE_K * TILE_N * sizeof(DT));
-	//if(cm_local_id(1) == 0)
-	//{
-	//	#pragma unroll
-	//	for(int m = 0; m < TILE_M; m++)
-	//	{
-	//		const uint32_t input_a_offset = input_a_base_offset + m * SIZE_K * sizeof(DT);
-	//		vector<uint32_t, TILE_K/2> input_a_packed = cm_load<uint32_t, input_a_load_size, DataSize::Default, CacheHint::Cached, CacheHint::Cached>(surface_input_s, input_a_offset);
-	//		cm_store_slm<uint32_t, TILE_K/2>(m * (TILE_K/2) * sizeof(uint32_t), input_a_packed);
-	//	}		
-	//}
-	//cm_slm_fence(CM_GLOBAL_COHERENT_FENCE);
-    //cm_barrier();
 #endif
 
 	for(int k_chunk = 0; k_chunk < SIZE_K/ TILE_K; k_chunk++)
@@ -86,21 +72,17 @@ extern "C" _GENX_MAIN_ void mha_sv_s_qka_gemm(
 	
 		const uint32_t input_b_base_offset = get_input_b_base_offset(thread_id_0, thread_id_1, thread_id_2, batch_thread_offset, head_thread_offset, k_chunk);	
 		
-#if EXPERIMENT_SLM_0
-			#pragma unroll
-			for(int k = 0; k < 1; k++)
-			{	
-				const uint32_t input_b_offset = input_b_base_offset + cm_local_id(0) * SIZE_NUM_HEADS * SIZE_STACKED_TENSORS * SIZE_HEAD_SIZE * sizeof(DT);
-				vector<uint32_t, TILE_N/2> packed_row;
-				packed_row.select<16, 1>() = cm_load<uint32_t, 16, DataSize::Default, CacheHint::Cached, CacheHint::Cached>(surface_input_qkv, input_b_offset);
-				packed_row.select<4, 1>(16) = cm_load<uint32_t, 4, DataSize::Default, CacheHint::Cached, CacheHint::Cached>(surface_input_qkv, input_b_offset + 16 * sizeof(uint32_t));
-				
-				const uint32_t slm_base_offset = cm_local_id(0) * TILE_N * sizeof(DT);
-				cm_store_slm<uint32_t, 16>(slm_base_offset, packed_row.select<16, 1>());
-				cm_store_slm<uint32_t, 4>(slm_base_offset + 16 * sizeof(uint32_t), packed_row.select<4, 1>(16));
-			}
-			cm_slm_fence(CM_GLOBAL_COHERENT_FENCE);
-			cm_barrier();
+#if SLM_KN_SHARING
+		const uint32_t input_b_offset = input_b_base_offset + cm_local_id(0) * SIZE_NUM_HEADS * SIZE_STACKED_TENSORS * SIZE_HEAD_SIZE * sizeof(DT);
+		vector<uint32_t, TILE_N/2> packed_row;
+		packed_row.select<16, 1>() = cm_load<uint32_t, 16, DataSize::Default, CacheHint::Cached, CacheHint::Cached>(surface_input_qkv, input_b_offset);
+		packed_row.select<4, 1>(16) = cm_load<uint32_t, 4, DataSize::Default, CacheHint::Cached, CacheHint::Cached>(surface_input_qkv, input_b_offset + 16 * sizeof(uint32_t));
+		
+		const uint32_t slm_base_offset = cm_local_id(0) * TILE_N * sizeof(DT);
+		cm_store_slm<uint32_t, 16>(slm_base_offset, packed_row.select<16, 1>());
+		cm_store_slm<uint32_t, 4>(slm_base_offset + 16 * sizeof(uint32_t), packed_row.select<4, 1>(16));
+		cm_slm_fence(CM_GLOBAL_COHERENT_FENCE);
+		cm_barrier();
 #endif	
 			
 	    #pragma unroll
@@ -112,7 +94,7 @@ extern "C" _GENX_MAIN_ void mha_sv_s_qka_gemm(
 			#pragma unroll
 			for(int k = 0; k < TILE_K; k++)
 			{	
-#if EXPERIMENT_SLM_0
+#if SLM_KN_SHARING
 				const uint32_t slm_base_offset = k * TILE_N * sizeof(DT);
 				vector<uint32_t, TILE_N/2> packed_row;
 				packed_row.select<16, 1>() = cm_load_slm<uint32_t, 16>(slm_base_offset);
