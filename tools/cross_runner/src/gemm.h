@@ -812,6 +812,8 @@ public:
         }
         assert(cm_params_.slice_k > 0);
 
+        cm_params_.lws[0] = cm_params_.tile_k;
+
         {
             std::vector< DescType> desc_list =
             {
