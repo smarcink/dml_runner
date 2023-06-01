@@ -48,8 +48,10 @@ extern "C" _GENX_MAIN_ void mha_sv_s_qka_gemm(
     const uint32_t thread_id_1 = cm_group_id(1) * cm_local_size(1) + cm_local_id(1);
     const uint32_t thread_id_2 = cm_group_id(2) * cm_local_size(2) + cm_local_id(2);
 	
-	const uint32_t batch_thread_offset = cm_group_id(2) / SIZE_NUM_HEADS;
-	const uint32_t head_thread_offset = cm_group_id(2) % SIZE_NUM_HEADS;
+	for(int batch_thread_offset = 0; batch_thread_offset < SIZE_BATCH; batch_thread_offset++)
+	{
+	for(int head_thread_offset = 0; head_thread_offset < SIZE_NUM_HEADS; head_thread_offset++)
+	{
 	
 	matrix<DT_ACCU, TILE_M, TILE_N> accu(0.0f);
 	
@@ -144,4 +146,6 @@ extern "C" _GENX_MAIN_ void mha_sv_s_qka_gemm(
 #endif
 		output_offset += SIZE_HEAD_SIZE * SIZE_NUM_HEADS * sizeof(DT);
 	}
+	}//batch
+	}//head
 }

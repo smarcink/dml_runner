@@ -438,7 +438,7 @@ public:
 
         // randomize data
         std::mt19937 random_generator(42); // static, create it once!
-        std::uniform_real_distribution<float> uniform_distribution(-0.5f, 0.5f);
+        std::uniform_real_distribution<float> uniform_distribution(-0.1f, 0.1f);
 
         if (params_.dt == DataType::eFp32)
         {
@@ -992,7 +992,7 @@ public:
         {
             const std::uint32_t gws_x = get_M() / cm_params_.tile_m;
             const std::uint32_t gws_y = get_N() / cm_params_.tile_n;
-            const std::uint32_t gws_z = get_batch() * get_channels() * cm_params_.slice_k;
+            const std::uint32_t gws_z = 1;// get_batch()* get_channels()* cm_params_.slice_k;
 
             assert(gws_x != 0);
             assert(gws_y != 0);
