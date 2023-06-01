@@ -8,25 +8,13 @@
 #define DT_ACCU DT
 #endif
 
-
-#define INPUT_B_OFFSET ((SIZE_NUM_HEADS * SIZE_STACKED_TENSORS * SIZE_HEAD_SIZE)* sizeof(DT))
-static const int32_t init_linear_offsets[] = {  0  * INPUT_B_OFFSET,
-											    1  * INPUT_B_OFFSET, 
-											    2  * INPUT_B_OFFSET,
-											    3  * INPUT_B_OFFSET,
-											    4  * INPUT_B_OFFSET,
-											    5  * INPUT_B_OFFSET,
-											    6  * INPUT_B_OFFSET,
-											    7  * INPUT_B_OFFSET,
-												8  * INPUT_B_OFFSET, 
-											    9  * INPUT_B_OFFSET,
-											    10 * INPUT_B_OFFSET,
-											    11 * INPUT_B_OFFSET,
-											    12 * INPUT_B_OFFSET,
-											    13 * INPUT_B_OFFSET,
-											    14 * INPUT_B_OFFSET,
-											    15 * INPUT_B_OFFSET,
-							 				  };
+// optimization, which gives up to ~20% perf gain, can be forced to off during debug (or change to lower size like 2)
+#define CAN_PRECACHE_TILE_M_CHUNK (TILE_M > 4 && TILE_M % 4 == 0)
+#if CAN_PRECACHE_TILE_M_CHUNK
+#define PRECACHE_TILE_M_SIZE 4
+#else
+#define PRECACHE_TILE_M_SIZE 1
+#endif
 
 _GENX_ inline uint32_t get_input_b_base_offset(uint32_t thread_id_0, uint32_t thread_id_1, uint32_t thread_id_2, uint32_t batch_thread_offset, uint32_t head_thread_offset, uint32_t k_slice_thread_offset)
 {    
@@ -80,27 +68,31 @@ extern "C" _GENX_MAIN_ void mha_sv_s_qka_gemm(
 		packed_row.select<16, 1>() = cm_load<uint32_t, 16, DataSize::Default, CacheHint::Cached, CacheHint::Cached>(surface_input_qkv, input_b_offset);
 		packed_row.select<4, 1>(16) = cm_load<uint32_t, 4, DataSize::Default, CacheHint::Cached, CacheHint::Cached>(surface_input_qkv, input_b_offset + 16 * sizeof(uint32_t));
 		
-		const uint32_t slm_base_offset = cm_local_id(0) * TILE_N * sizeof(DT);
-		cm_store_slm<uint32_t, 16>(slm_base_offset, packed_row.select<16, 1>());
-		cm_store_slm<uint32_t, 4>(slm_base_offset + 16 * sizeof(uint32_t), packed_row.select<4, 1>(16));
+		const uint32_t slm_write_base_offset = cm_local_id(0) * TILE_N * sizeof(DT);
+		cm_store_slm<uint32_t, 16>(slm_write_base_offset, packed_row.select<16, 1>());
+		cm_store_slm<uint32_t, 4>(slm_write_base_offset + 16 * sizeof(uint32_t), packed_row.select<4, 1>(16));
 		cm_slm_fence(CM_GLOBAL_COHERENT_FENCE);
 		cm_barrier();
 #endif	
 			
 	    #pragma unroll
-		for(int m = 0; m < TILE_M; m++)
+		for(int m = 0; m < TILE_M/PRECACHE_TILE_M_SIZE; m++)
 		{
-			const uint32_t input_a_offset = input_a_base_offset + m * SIZE_K * sizeof(DT);
-			vector<uint32_t, TILE_K/2> input_a_packed = cm_load<uint32_t, input_a_load_size, DataSize::Default, CacheHint::Cached, CacheHint::Cached>(surface_input_s, input_a_offset);
-
+			matrix<DT, PRECACHE_TILE_M_SIZE, TILE_K> input_a;
+			for(int m_chunk = 0; m_chunk < PRECACHE_TILE_M_SIZE; m_chunk++)
+			{
+				const uint32_t input_a_offset = input_a_base_offset + (m * PRECACHE_TILE_M_SIZE + m_chunk) * SIZE_K * sizeof(DT);
+				input_a.row(m_chunk).format<uint32_t>() = cm_load<uint32_t, input_a_load_size, DataSize::Default, CacheHint::Cached, CacheHint::Cached>(surface_input_s, input_a_offset);
+			}
+			
 			#pragma unroll
 			for(int k = 0; k < TILE_K; k++)
 			{	
 #if SLM_KN_SHARING
-				const uint32_t slm_base_offset = k * TILE_N * sizeof(DT);
+				const uint32_t slm_read_base_offset = k * TILE_N * sizeof(DT);
 				vector<uint32_t, TILE_N/2> packed_row;
-				packed_row.select<16, 1>() = cm_load_slm<uint32_t, 16>(slm_base_offset);
-				packed_row.select<4, 1>(16) = cm_load_slm<uint32_t, 4>(slm_base_offset + 16 * sizeof(uint32_t));
+				packed_row.select<16, 1>() = cm_load_slm<uint32_t, 16>(slm_read_base_offset);
+				packed_row.select<4, 1>(16) = cm_load_slm<uint32_t, 4>(slm_read_base_offset + 16 * sizeof(uint32_t));
 #else
 				const uint32_t input_b_offset = input_b_base_offset + k * SIZE_NUM_HEADS * SIZE_STACKED_TENSORS * SIZE_HEAD_SIZE * sizeof(DT);
 				vector<uint32_t, TILE_N/2> packed_row;
@@ -113,11 +105,13 @@ extern "C" _GENX_MAIN_ void mha_sv_s_qka_gemm(
 #else
 				packed_row = cm_load<uint32_t, TILE_N/2, DataSize::Default, CacheHint::Cached, CacheHint::Cached>(surface_input_qkv, input_b_offset);
 #endif
-
-
-#endif
-
-				accu.row(m) += packed_row.format<DT>() * input_a_packed.format<DT>().select<1, 1>(k).replicate<TILE_N>();
+#endif  // SLM_KN_SHARING
+				
+				#pragma unroll
+				for(int m_chunk = 0; m_chunk < PRECACHE_TILE_M_SIZE; m_chunk++)
+				{
+					accu.row(m * PRECACHE_TILE_M_SIZE + m_chunk) += packed_row.format<DT>() * input_a.row(m_chunk).format<DT>().select<1, 1>(k).replicate<TILE_N>();
+				}
 			}
 		}	
 	}
