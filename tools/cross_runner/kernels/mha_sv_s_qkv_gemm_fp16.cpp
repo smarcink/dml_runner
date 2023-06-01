@@ -48,9 +48,9 @@ extern "C" _GENX_MAIN_ void mha_sv_s_qka_gemm(
 #if SLM_KN_SHARING
 	cm_slm_init(TILE_K * TILE_N * sizeof(DT));
 #endif
-
+	
 	for(int k_chunk = 0; k_chunk < SIZE_K/ TILE_K; k_chunk++)
-	{
+	{	
 		// input is 4d regular gemm input so use SIZE_M/N?/ etc. for offset calculations
 		const uint32_t input_a_base_offset = 
 					(batch_thread_offset * SIZE_C * SIZE_M * SIZE_K
@@ -58,8 +58,6 @@ extern "C" _GENX_MAIN_ void mha_sv_s_qka_gemm(
 					+ k_chunk * TILE_K
 					+ thread_id_0 * TILE_M * SIZE_K) * sizeof(DT);
 
-
-	
 		const uint32_t input_b_base_offset = get_input_b_base_offset(thread_id_0, thread_id_1, thread_id_2, batch_thread_offset, head_thread_offset, k_chunk);	
 		
 #if SLM_KN_SHARING
@@ -74,7 +72,7 @@ extern "C" _GENX_MAIN_ void mha_sv_s_qka_gemm(
 		cm_slm_fence(CM_GLOBAL_COHERENT_FENCE);
 		cm_barrier();
 #endif	
-			
+				
 	    #pragma unroll
 		for(int m = 0; m < TILE_M/PRECACHE_TILE_M_SIZE; m++)
 		{
