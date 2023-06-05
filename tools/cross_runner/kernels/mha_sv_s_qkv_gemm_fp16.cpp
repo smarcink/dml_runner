@@ -60,15 +60,26 @@ extern "C" _GENX_MAIN_ void mha_sv_s_qka_gemm(
 
 		const uint32_t input_b_base_offset = get_input_b_base_offset(thread_id_0, thread_id_1, thread_id_2, batch_thread_offset, head_thread_offset, k_chunk);	
 		
+#if TILE_N == 40
+	const uint32_t S0 = 16;
+	const uint32_t S1 = 4;
+#elif TILE_N == 80	
+	const uint32_t S0 = 32;
+	const uint32_t S1 = 8;
+#endif
+		
 #if SLM_KN_SHARING
+
+
+
 		const uint32_t input_b_offset = input_b_base_offset + cm_local_id(0) * SIZE_NUM_HEADS * SIZE_STACKED_TENSORS * SIZE_HEAD_SIZE * sizeof(DT);
 		vector<uint32_t, TILE_N/2> packed_row;
-		packed_row.select<16, 1>() = cm_load<uint32_t, 16, DataSize::Default, CacheHint::Cached, CacheHint::Cached>(surface_input_qkv, input_b_offset);
-		packed_row.select<4, 1>(16) = cm_load<uint32_t, 4, DataSize::Default, CacheHint::Cached, CacheHint::Cached>(surface_input_qkv, input_b_offset + 16 * sizeof(uint32_t));
+		packed_row.select<S0, 1>() = cm_load<uint32_t, S0, DataSize::Default, CacheHint::Cached, CacheHint::Cached>(surface_input_qkv, input_b_offset);
+		packed_row.select<S1, 1>(S0) = cm_load<uint32_t, S1, DataSize::Default, CacheHint::Cached, CacheHint::Cached>(surface_input_qkv, input_b_offset + S0 * sizeof(uint32_t));
 		
 		const uint32_t slm_write_base_offset = cm_local_id(0) * TILE_N * sizeof(DT);
-		cm_store_slm<uint32_t, 16>(slm_write_base_offset, packed_row.select<16, 1>());
-		cm_store_slm<uint32_t, 4>(slm_write_base_offset + 16 * sizeof(uint32_t), packed_row.select<4, 1>(16));
+		cm_store_slm<uint32_t, S0>(slm_write_base_offset, packed_row.select<S0, 1>());
+		cm_store_slm<uint32_t, S1>(slm_write_base_offset + S0 * sizeof(uint32_t), packed_row.select<S1, 1>(S0));
 		cm_slm_fence(CM_GLOBAL_COHERENT_FENCE);
 		cm_barrier();
 #endif	
@@ -89,17 +100,14 @@ extern "C" _GENX_MAIN_ void mha_sv_s_qka_gemm(
 #if SLM_KN_SHARING
 				const uint32_t slm_read_base_offset = k * TILE_N * sizeof(DT);
 				vector<uint32_t, TILE_N/2> packed_row;
-				packed_row.select<16, 1>() = cm_load_slm<uint32_t, 16>(slm_read_base_offset);
-				packed_row.select<4, 1>(16) = cm_load_slm<uint32_t, 4>(slm_read_base_offset + 16 * sizeof(uint32_t));
+				packed_row.select<S0, 1>() = cm_load_slm<uint32_t, S0>(slm_read_base_offset);
+				packed_row.select<S1, 1>(S0) = cm_load_slm<uint32_t, S1>(slm_read_base_offset + S0 * sizeof(uint32_t));
 #else
 				const uint32_t input_b_offset = input_b_base_offset + k * SIZE_NUM_HEADS * SIZE_STACKED_TENSORS * SIZE_HEAD_SIZE * sizeof(DT);
 				vector<uint32_t, TILE_N/2> packed_row;
-#if TILE_N == 40
-				packed_row.select<16, 1>() = cm_load<uint32_t, 16, DataSize::Default, CacheHint::Cached, CacheHint::Cached>(surface_input_qkv, input_b_offset);
-				packed_row.select<4, 1>(16) = cm_load<uint32_t, 4, DataSize::Default, CacheHint::Cached, CacheHint::Cached>(surface_input_qkv, input_b_offset + 16 * sizeof(uint32_t));
-#elif TILE_N == 80		
-				packed_row.select<32, 1>() = cm_load<uint32_t, 32, DataSize::Default, CacheHint::Cached, CacheHint::Cached>(surface_input_qkv, input_b_offset);
-				packed_row.select<8, 1>(32) = cm_load<uint32_t, 8, DataSize::Default, CacheHint::Cached, CacheHint::Cached>(surface_input_qkv, input_b_offset + 32 * sizeof(uint32_t));
+#if TILE_N == 40 || TILE_N == 80
+				packed_row.select<S0, 1>() = cm_load<uint32_t, S0, DataSize::Default, CacheHint::Cached, CacheHint::Cached>(surface_input_qkv, input_b_offset);
+				packed_row.select<S1, 1>(S0) = cm_load<uint32_t, S1, DataSize::Default, CacheHint::Cached, CacheHint::Cached>(surface_input_qkv, input_b_offset + S0 * sizeof(uint32_t));
 #else
 				packed_row = cm_load<uint32_t, TILE_N/2, DataSize::Default, CacheHint::Cached, CacheHint::Cached>(surface_input_qkv, input_b_offset);
 #endif
