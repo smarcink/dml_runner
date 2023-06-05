@@ -716,7 +716,6 @@ public:
         bool large_grf;
         bool print_reg_usage;
         bool fp32_accu = false;
-        bool slm_kn_data_sharing = false;
         std::array<std::uint32_t, 3> lws{ 1u, 1u, 1u };
 
         std::uint32_t tile_m = 0;
@@ -731,7 +730,6 @@ public:
             opts->add_flag("--large_grf", params.large_grf)->default_val(false);
             opts->add_flag("--print_reg_usage", params.print_reg_usage)->default_val(false);
             opts->add_flag("--fp32_accu", params.fp32_accu)->default_val(false);
-            opts->add_flag("--slm_kn", params.slm_kn_data_sharing)->default_val(false);
 
             opts->add_option("--tile_m", params.tile_m);
             opts->add_option("--tile_k", params.tile_k);
@@ -796,10 +794,19 @@ public:
         assert(cm_params_.tile_n > 0);
 
 
-        if (params_.type == GemmType::GemmType_AB || params_.type == GemmType::GemmType_QK_QKV)
+        if (params_.type == GemmType::GemmType_SV_S_QKV)
+        {
+            cm_params_.lws[0] = cm_params_.tile_k;
+        }
+        else if (params_.type == GemmType::GemmType_QK_QKV)
         {
             cm_params_.slice_k = K / cm_params_.tile_k;
             cm_params_.lws[2] = cm_params_.slice_k;
+
+            if (cm_params_.slice_k == 1)
+            {
+                cm_params_.lws[0] = 16;
+            }
         }
         else if(params_.type == GemmType::GemmType_SV_S_QKV || params_.type == GemmType::GemmType_QK_Q_KV)
         {
@@ -813,13 +820,6 @@ public:
             cm_params_.lws[0] = 1;
         }
         assert(cm_params_.slice_k > 0);
-
-        if (cm_params_.slm_kn_data_sharing)
-        {
-            assert(cm_params_.lws[0] == 1);
-            cm_params_.lws[0] = cm_params_.tile_k;
-        }
-
 
         {
             std::vector< DescType> desc_list =
@@ -887,7 +887,6 @@ public:
         add_define("SLICE_K", cm_params_.slice_k);
 
         add_define("ACCU_IS_FP32", cm_params_.fp32_accu);
-        add_define("SLM_KN_SHARING", cm_params_.slm_kn_data_sharing);
 
         // kernel compilation
         const auto dump_asm_str = cm_params_.dump_asm ? " -mdump_asm" : "";
@@ -992,7 +991,21 @@ public:
         {
             const std::uint32_t gws_x = get_M() / cm_params_.tile_m;
             const std::uint32_t gws_y = get_N() / cm_params_.tile_n;
-            const std::uint32_t gws_z = 1;// get_batch()* get_channels()* cm_params_.slice_k;
+            const std::uint32_t gws_z = [this]()
+            {
+                if (params_.type == GemmType::GemmType_SV_S_QKV)
+                {
+                    return 1u;
+                }
+                if (params_.type == GemmType::GemmType_QK_QKV)
+                {
+                    return get_batch() * get_channels() * cm_params_.slice_k;
+                }
+                return get_batch() * get_channels() * cm_params_.slice_k;
+            }();
+            
+            
+            // ;
 
             assert(gws_x != 0);
             assert(gws_y != 0);

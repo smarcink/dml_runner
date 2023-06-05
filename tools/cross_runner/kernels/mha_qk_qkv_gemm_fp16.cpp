@@ -8,6 +8,10 @@
 #define DT_ACCU DT
 #endif
 
+#define LOAD_SIMD_SIZE 16
+
+// enable optimization to store reusable data in SLM to optimize memory access latencies  (disabled for now due to conforamnce issues)
+#define SLM_KN_SHARING 0 && (SLICE_K == 1)
 
 #define INPUT_B_OFFSET ((SIZE_NUM_HEADS * SIZE_STACKED_TENSORS * SIZE_HEAD_SIZE)* sizeof(DT))
 static const int32_t init_linear_offsets[] = {  0  * INPUT_B_OFFSET,
@@ -54,19 +58,30 @@ extern "C" _GENX_MAIN_ void mha_qk_qkv_gemm(
     const uint32_t thread_id_0 = cm_group_id(0) * cm_local_size(0) + cm_local_id(0);
     const uint32_t thread_id_1 = cm_group_id(1) * cm_local_size(1) + cm_local_id(1);
     const uint32_t thread_id_2 = cm_group_id(2) * cm_local_size(2) + cm_local_id(2);
+	const uint32_t k_slice_thread_offset = cm_local_id(2);
 
 	const uint32_t batch_thread_offset = cm_group_id(2) / SIZE_NUM_HEADS;
 	const uint32_t head_thread_offset = cm_group_id(2) % SIZE_NUM_HEADS;
 	
-	const uint32_t k_slice_thread_offset = cm_local_id(2);
-	
     const uint32_t input_a_load_size = (TILE_K * sizeof(DT)) / sizeof(uint32_t);
-        
+    
+
+	
+	//for(int batch_thread_offset = 0; batch_thread_offset < SIZE_BATCH; batch_thread_offset++)
+	{
+	//for(int head_thread_offset = 0; head_thread_offset < SIZE_NUM_HEADS; head_thread_offset++)
+	{
+    
     const uint32_t input_a_base_offset = get_input_a_base_offset(thread_id_0, thread_id_1, thread_id_2, batch_thread_offset, head_thread_offset, k_slice_thread_offset);
  
 
     matrix<DT, TILE_M, TILE_K> input;   
     matrix_ref<uint32_t, TILE_M, TILE_K/2> input_packed = input.format<uint32_t, TILE_M, TILE_K/2>();
+ 
+	
+#if SLM_KN_SHARING
+	cm_slm_init(TILE_K * TILE_N * sizeof(DT));
+#endif
  
     #pragma unroll
     for(int i = 0; i < TILE_M; i++)
@@ -90,16 +105,23 @@ extern "C" _GENX_MAIN_ void mha_qk_qkv_gemm(
 	const uint32_t input_b_base_offset = get_input_b_base_offset(thread_id_0, thread_id_1, thread_id_2, batch_thread_offset, head_thread_offset, k_slice_thread_offset);
 	uint32_t input_b_offset = input_b_base_offset;
 	
-	vector<uint32_t, 16> base_b_offsets(init_linear_offsets);
-    base_b_offsets += input_b_base_offset;
-	
-	const uint32_t load_simd_size = 16;
+	const uint32_t load_simd_size = LOAD_SIMD_SIZE;
 	const uint32_t packed_eles = sizeof(uint32_t) / sizeof(DT);
 	const uint32_t load_eles = load_simd_size * packed_eles;  // load elements when VectorSize == 1
 	const uint32_t ks = 8;   //ToDo:  this can be a reason of spills, it can be decreased to: {2 or 4}, but it can affect performance
 	const uint32_t ksp = ks/packed_eles;
+	
+	vector<uint32_t, 16> base_b_offsets(init_linear_offsets);
+    base_b_offsets += input_b_base_offset;
+
+#if SLM_KN_SHARING
+	base_b_offsets += cm_local_id(0) * (ksp * sizeof(uint32_t));
+	if(cm_local_id(0) < K_PER_THREAD/ks)
+	{
+#else
     //#pragma unroll
     for(uint32_t k_chunk = 0; k_chunk < K_PER_THREAD/ks; k_chunk++)
+#endif
     {
 
 		vector<uint32_t, load_simd_size> offsets(base_b_offsets);
@@ -124,17 +146,39 @@ extern "C" _GENX_MAIN_ void mha_qk_qkv_gemm(
 			for(int i = 0; i < packed_eles; i++)
 			{
 				vector<DT, TILE_N> input_b = input_b_ksp_chunk.select<TILE_N, packed_eles>(i);
+#if SLM_KN_SHARING
+				cm_store_slm<uint32_t, TILE_N/2>((i + k * 2 + cm_local_id(0) * ks) * (TILE_N/2) * sizeof(uint32_t), input_b.format<uint32_t>());
+#else
 				#pragma unroll
 				for(uint32_t j = 0; j < TILE_M; j++)
 				{
 					accu.select<1, 1, TILE_N, 1>(j, 0) += input_b * input.select<1, 1, 1, 1>(j, k_chunk * ks + k * packed_eles + i).replicate<TILE_N>();
 				}
+#endif
 			}
 			
 		}
 		base_b_offsets += ksp * sizeof(uint32_t);
     }
+	
+#if SLM_KN_SHARING
+	cm_slm_fence(CM_GLOBAL_COHERENT_FENCE);
+	cm_barrier();
+	#pragma unroll
+	for(uint32_t m = 0; m < TILE_M; m++)
+	{
+		#pragma unroll
+		for(uint32_t k = 0; k < SIZE_K; k++)
+		{
+			vector<uint32_t, TILE_N/2> input_b_packed = cm_load_slm<uint32_t, TILE_N/2>(k * (TILE_N/2) * sizeof(uint32_t));
+			vector_ref<DT, TILE_N> input_b = input_b_packed.format<DT>();
 
+				accu.select<1, 1, TILE_N, 1>(m, 0) += input_b * input.select<1, 1, 1, 1>(m, k).replicate<TILE_N>();
+		}
+
+	}
+#endif
+	
 #if SLICE_K > 1
 	const uint32_t TILE_N_PACKED = TILE_N / (sizeof(uint32_t)/sizeof(DT_ACCU));
     cm_slm_init(TILE_M * TILE_N * sizeof(DT_ACCU) * (LWS_SIZE_Z - 1));
@@ -177,7 +221,7 @@ extern "C" _GENX_MAIN_ void mha_qk_qkv_gemm(
     
     const uint32_t output_store_size = (TILE_N * sizeof(DT)) / sizeof(uint32_t);
     uint32_t output_offset = 
-				cm_group_id(2) * SIZE_M * SIZE_N * sizeof(DT)
+				(batch_thread_offset * SIZE_NUM_HEADS + head_thread_offset) * SIZE_M * SIZE_N * sizeof(DT)
 				+ thread_id_0 * TILE_M * SIZE_N * sizeof(DT)
 				+ (thread_id_1 * TILE_N * sizeof(DT));
 				
@@ -191,5 +235,7 @@ extern "C" _GENX_MAIN_ void mha_qk_qkv_gemm(
         cm_store<uint32_t, output_store_size, DataSize::Default, CacheHint::WriteBack, CacheHint::WriteBack>(surface_output, output_offset, accu_0_packed);
         output_offset += SIZE_N * sizeof(DT);
     }
-
+	 
+	}//batch
+	}//head
 }
