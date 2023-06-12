@@ -129,7 +129,7 @@ public:
 
         // randomize data
         std::mt19937 random_generator(42); // static, create it once!
-        std::uniform_real_distribution<float> uniform_distribution(0.0f, 1.0f);
+        std::uniform_real_distribution<float> uniform_distribution(50.0f, 505.0f);
 
         if (params_.dt == DataType::eFp32)
         {

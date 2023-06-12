@@ -4,7 +4,7 @@
 #define DT half
 #define DT_ACCU float 
 
-#define MATH_E 2.7182818f
+#define MATH_E 2.718281828459045235360287471352f
 
 #if INOUT_WIDTH == 77
 #define NON_ALIGNED_WIDTH 1
@@ -35,12 +35,18 @@ static const int32_t init_linear_offsets[] = {  0  * sizeof(DT),
 extern "C" _GENX_MAIN_ void softmax_nchw(
 	SurfaceIndex surface_input [[type("buffer_t")]],
 	SurfaceIndex surface_output [[type("buffer_t")]])
-{
-    const uint32_t global_x = cm_group_id(0) * cm_local_size(0) + cm_local_id(0);
-    const uint32_t global_y = cm_group_id(1) * cm_local_size(1) + cm_local_id(1);
-    const uint32_t global_z = cm_group_id(2) * cm_local_size(2) + cm_local_id(2);
+{	
+#if LWS_SIZE_X > 1
+	cm_slm_init(LWS_SIZE_X * sizeof(DT_ACCU));
+	const uint slm_buffer = cm_slm_alloc(LWS_SIZE_X * sizeof(DT_ACCU));
+#endif
+	
+    const uint32_t global_x = cm_group_id(0) * LWS_SIZE_X + cm_local_id(0);
+    const uint32_t global_y = cm_group_id(1) * LWS_SIZE_Y + cm_local_id(1);
+    const uint32_t global_z = cm_group_id(2) * LWS_SIZE_Z + cm_local_id(2);
 	
 	const uint32_t in_out_offset = (global_x * ITEMNUM_PER_HW + global_y * INOUT_WIDTH + global_z * (INOUT_WIDTH * INOUT_HEIGHT)) * sizeof(DT);
+	
 	
 #if NON_ALIGNED_WIDTH
 	vector<ushort, ALIGNED_WIDTH> predicate(1);
@@ -61,14 +67,43 @@ extern "C" _GENX_MAIN_ void softmax_nchw(
 	vector_ref<DT, ITEMNUM_PER_HW> my_data = in_data_packed.format<DT>();
 #endif
 
+	vector<DT_ACCU, ITEMNUM_PER_HW> my_data_f32 = vector<DT_ACCU, ITEMNUM_PER_HW>(my_data);
+	DT_ACCU my_local_max = -9999999.0f;// = cm_reduced_max<DT_ACCU>(my_data_f32);
+
+	for(int i = 0; i < ITEMNUM_PER_HW; i++)
+	{
+		if(my_data_f32[i] > my_local_max)
+		{
+			my_local_max = my_data_f32[i];
+		}
+	}
+
+#if LWS_SIZE_X > 1	
+	vector<DT_ACCU, 1> local_max_store_data(my_local_max);
+
+	cm_store_slm<DT_ACCU, 1>(global_x * sizeof(DT_ACCU), local_max_store_data);
+	cm_slm_fence(CM_GLOBAL_COHERENT_FENCE);
+    cm_barrier();
 	
+	// read from slm and further reduce
+	vector<DT_ACCU, LWS_SIZE_X_ALIGNED> all_threads_maxs = cm_load_slm<DT_ACCU, LWS_SIZE_X_ALIGNED>(0);
+	//my_local_max = cm_reduced_max<DT_ACCU>(all_threads_maxs);
+	for(int i = 0; i < LWS_SIZE_X_ALIGNED; i++)
+	{
+		if(all_threads_maxs[i] > my_local_max)
+		{
+			my_local_max = all_threads_maxs[i];
+		}
+	}
+#endif
+
 	// do the local (hw) reduce 
-	my_data = cm_pow(MATH_E, my_data);
-	vector<DT_ACCU, 1> my_sum = cm_sum<DT_ACCU>(my_data);
+	my_data_f32 = my_data_f32 - my_local_max;
+	my_data_f32 = cm_pow(MATH_E, my_data_f32);
+	vector<DT_ACCU, 1> my_sum = cm_sum<DT_ACCU>(my_data_f32);
 	
 #if LWS_SIZE_X > 1
 	// store to slm to share partially reduced sums
-	cm_slm_init(LWS_SIZE_X * sizeof(DT_ACCU));
 	cm_store_slm<DT_ACCU, 1>(global_x * sizeof(DT_ACCU), my_sum);
 	cm_slm_fence(CM_GLOBAL_COHERENT_FENCE);
     cm_barrier();
@@ -79,17 +114,10 @@ extern "C" _GENX_MAIN_ void softmax_nchw(
 #endif
 	
 	// do the division in full preicison
-	vector<DT_ACCU, ITEMNUM_PER_HW> my_data_accu = my_data;
-	my_data_accu = my_data_accu / my_sum[0];
+	my_data_f32 = my_data_f32 * cm_inv(my_sum[0]);
 	
 	// cast back to inout data type
-	my_data = my_data_accu;
-	
-	// for(int i = 0; i < ALIGNED_WIDTH; i++)
-	// {
-		// printf("[%d] %f\n", i, (float)my_data[i]);
-	// }
-	
+	my_data = my_data_f32;
 	
 	// store results
 #if NON_ALIGNED_WIDTH
