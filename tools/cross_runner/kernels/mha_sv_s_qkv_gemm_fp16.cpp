@@ -16,6 +16,8 @@
 #define PRECACHE_TILE_M_SIZE 1
 #endif
 
+#define SLM_KN_SHARING 1
+
 _GENX_ inline uint32_t get_input_b_base_offset(uint32_t thread_id_0, uint32_t thread_id_1, uint32_t thread_id_2, uint32_t batch_thread_offset, uint32_t head_thread_offset, uint32_t k_slice_thread_offset)
 {    
 	// input is 5d qkv  input so use SEQ_LEN/HEADSIZE  etc. variables for offset calculations
