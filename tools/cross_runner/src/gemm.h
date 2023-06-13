@@ -808,7 +808,7 @@ public:
                 cm_params_.lws[0] = 16;
             }
         }
-        else if(params_.type == GemmType::GemmType_SV_S_QKV || params_.type == GemmType::GemmType_QK_Q_KV)
+        else if(params_.type == GemmType::GemmType_QK_Q_KV)
         {
             cm_params_.slice_k = 1;
             cm_params_.lws[2] = 1;
