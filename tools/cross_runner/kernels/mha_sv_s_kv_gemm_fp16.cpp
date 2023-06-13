@@ -9,6 +9,37 @@
 #define DT_ACCU DT
 #endif
 
+#if SIZE_K != TILE_K
+#error Kernel currently supports only SIZE_K == TILE_K case.
+#endif
+
+#if TILE_K == 77
+#define NON_ALIGNED_WIDTH 1
+#define TILE_K_ALIGNED 80
+#define ALIGNED_WIDTH TILE_K_ALIGNED
+#define ALIGNED_WIDTH_LOAD_SIZE 16
+#else
+#define TILE_K_ALIGNED TILE_K	
+#endif
+
+static const int32_t init_linear_offsets[] = {  0  * sizeof(DT),
+											    1  * sizeof(DT), 
+											    2  * sizeof(DT),
+											    3  * sizeof(DT),
+											    4  * sizeof(DT),
+											    5  * sizeof(DT),
+											    6  * sizeof(DT),
+											    7  * sizeof(DT),
+												8  * sizeof(DT), 
+											    9  * sizeof(DT),
+											    10 * sizeof(DT),
+											    11 * sizeof(DT),
+											    12 * sizeof(DT),
+											    13 * sizeof(DT),
+											    14 * sizeof(DT),
+											    15 * sizeof(DT),
+											  };
+
 _GENX_ inline uint32_t get_input_b_base_offset(uint32_t thread_id_0, uint32_t thread_id_1, uint32_t thread_id_2, uint32_t batch_thread_offset, uint32_t head_thread_offset)
 {    
 	return ( batch_thread_offset * SIZE_SEQ_LEN * SIZE_NUM_HEADS * SIZE_STACKED_TENSORS * SIZE_HEAD_SIZE
@@ -38,15 +69,36 @@ extern "C" _GENX_MAIN_ void mha_sv_s_kv_gemm_fp16(
 	
 	
     matrix<DT, TILE_M, TILE_K> input_a;   
-    matrix_ref<uint32_t, TILE_M, TILE_K/2> input_a_packed = input_a.format<uint32_t, TILE_M, TILE_K/2>();
-	
+
+#if NON_ALIGNED_WIDTH
+	vector<ushort, ALIGNED_WIDTH> predicate(1);
+	predicate.select<ALIGNED_WIDTH-SIZE_K, 1>(SIZE_K) = 0;
+
+	#pragma unroll
+	for(int m = 0; m < TILE_M; m++)
+	{
+		vector<uint32_t, ALIGNED_WIDTH_LOAD_SIZE> load_offsets(init_linear_offsets);
+		load_offsets += input_a_base_offset + m * SIZE_K * sizeof(DT);
+		vector<DT, ALIGNED_WIDTH> my_data_load;
+		#pragma unroll
+		for(int i = 0; i < (ALIGNED_WIDTH / ALIGNED_WIDTH_LOAD_SIZE); i++)
+		{
+			my_data_load.select<ALIGNED_WIDTH_LOAD_SIZE, 1>(i * ALIGNED_WIDTH_LOAD_SIZE) = cm_load<DT, VectorSize::N1, DataSize::Default, CacheHint::Default, CacheHint::Default>(surface_input_s, load_offsets, predicate.select<ALIGNED_WIDTH_LOAD_SIZE, 1>(i * ALIGNED_WIDTH_LOAD_SIZE));
+			load_offsets += ALIGNED_WIDTH_LOAD_SIZE * sizeof(DT);
+		}
+		input_a.row(m) = my_data_load.select<TILE_K, 1>();
+	}
+
+
+#else	
+	matrix_ref<uint32_t, TILE_M, TILE_K/2> input_a_packed = input_a.format<uint32_t, TILE_M, TILE_K/2>();
 	#pragma unroll
 	for(int m = 0; m < TILE_M; m++)
 	{
 		const uint32_t input_a_offset = input_a_base_offset + m * SIZE_K * sizeof(DT);
         input_a_packed.row(m) = cm_load<uint32_t, input_a_load_size, DataSize::Default, CacheHint::Cached, CacheHint::Cached>(surface_input_s, input_a_offset);
 	}
-	
+#endif	
 	
     matrix<DT_ACCU, TILE_M, TILE_N> accu(0.0f);
 	
