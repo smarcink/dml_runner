@@ -805,7 +805,7 @@ public:
 
             if (cm_params_.slice_k == 1)
             {
-                cm_params_.lws[0] = 16;
+                //cm_params_.lws[0] = 16;
             }
         }
         else if(params_.type == GemmType::GemmType_QK_Q_KV)

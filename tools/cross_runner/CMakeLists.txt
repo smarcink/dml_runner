@@ -15,6 +15,7 @@ set(TARGET_SOURCES
     ${SOURCES_DIR}/softmax.cpp
     ${SOURCES_DIR}/mvn.h
     ${SOURCES_DIR}/mvn.cpp
+    ${SOURCES_DIR}/memory_bandwidth.h
 )
 
 add_executable(${TARGET_NAME} ${TARGET_SOURCES})

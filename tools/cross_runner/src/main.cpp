@@ -3,6 +3,7 @@
 #include "conv.h"
 #include "softmax.h"
 #include "mvn.h"
+#include "memory_bandwidth.h"
 #include "layers_utils.h"
 
 #include <dml_types.hpp>
@@ -68,6 +69,8 @@ struct CliOptions
     MvnCmDispatcher::mvn_cm_params_t mvn_cm_params{};
     SoftmaxCmDispatcher::softmax_cm_params_t softmax_cm_params{};
     GemmCmDispatcher::cm_params_t gemm_cm_params{};
+    
+    gpu_op::MemoryBandwidthDispatcher::create_params_t memory_bw_params{};
 };
 
 int main()
@@ -84,7 +87,7 @@ int main()
     CliOptions opts;
     CLI::App dml_runner_app{ "App to microbenchmark and developer dml kernels.", "DirectML runner." };
     dml_runner_app.add_option("--type", opts.node_type, "Name of the type of layer to run.")
-        ->required()->check(CLI::IsMember({ NodeType::eConvDml, NodeType::eConvCm, NodeType::eGemmDml, NodeType::eGemmCm, NodeType::eSoftmaxDml, NodeType::eSoftmaxCm, NodeType::eMvnDml, NodeType::eMvnCm }))->
+        ->required()->check(CLI::IsMember({ NodeType::eConvDml, NodeType::eConvCm, NodeType::eGemmDml, NodeType::eGemmCm, NodeType::eSoftmaxDml, NodeType::eSoftmaxCm, NodeType::eMvnDml, NodeType::eMvnCm, NodeType::eMemoryBandwidth }))->
         transform(CLI::Transformer(std::map<std::string, NodeType>{
             { "conv_dml", NodeType::eConvDml },
             { "conv_cm", NodeType::eConvCm },
@@ -94,6 +97,7 @@ int main()
             { "softmax_cm", NodeType::eSoftmaxCm },
             { "mvn_dml", NodeType::eMvnDml },
             { "mvn_cm", NodeType::eMvnCm },
+            { "mem_bw", NodeType::eMemoryBandwidth },
     }, CLI::ignore_case, CLI::ignore_underscore));
     dml_runner_app.add_option("--iters", opts.dispatch_iterations, "How many iterations to run.")->check(CLI::Range(1u, MAX_ITERATIONS));
     dml_runner_app.add_flag("--no_conform", opts.no_conformance_check);
@@ -118,6 +122,8 @@ int main()
     SoftmaxCmDispatcher::softmax_cm_params_t::add_cli_options(softmax_cm_option_groups, opts.softmax_cm_params);
     auto gemm_cm_option_groups = dml_runner_app.add_subcommand("gemm_cm_opts", "Options for gemm layer with CM implementation.");
     GemmCmDispatcher::cm_params_t::add_cli_options(gemm_cm_option_groups, opts.gemm_cm_params);
+    auto mem_bw_option_group = dml_runner_app.add_subcommand("mem_bw_opts", "Options for memory banddiwth measurments");
+    gpu_op::MemoryBandwidthDispatcher::MemoryBandwidthDispatcher::create_params_t::add_cli_options(mem_bw_option_group, opts.memory_bw_params);
 
     try {
         dml_runner_app.parse();
@@ -206,6 +212,10 @@ int main()
         {
             node = std::make_unique<MvnCmDispatcher>(std::move(opts.mvn_opts), std::move(opts.mvn_cm_params),
                 intel_extension_d3d12, d3d12_device.Get(), dml_device.Get(), dml_command_recorder.Get(), command_list.Get());
+        }
+        else if (opts.node_type == NodeType::eMemoryBandwidth)
+        {
+            node = std::make_unique<gpu_op::MemoryBandwidthDispatcher>(std::move(opts.memory_bw_params), d3d12_device.Get(), command_list.Get(), intel_extension_d3d12);
         }
         else
         {

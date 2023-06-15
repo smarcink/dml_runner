@@ -230,13 +230,13 @@ public:
             randomize_linear_container_half(random_generator, uniform_distribution, input_data_);
             if (use_bias())
             {
-                //randomize_linear_container_half(random_generator, uniform_distribution, bias_data_);
-                fill_with_constant_linear_container_half(bias_data_, DirectX::PackedVector::XMConvertFloatToHalf(0.0f));
+                randomize_linear_container_half(random_generator, uniform_distribution, bias_data_);
+                //fill_with_constant_linear_container_half(bias_data_, DirectX::PackedVector::XMConvertFloatToHalf(0.0f));
             }
             if (use_scale())
             {
-                //randomize_linear_container_half(random_generator, uniform_distribution, scale_data_);
-                fill_with_constant_linear_container_half(scale_data_, DirectX::PackedVector::XMConvertFloatToHalf(1.0f));
+                randomize_linear_container_half(random_generator, uniform_distribution, scale_data_);
+                //fill_with_constant_linear_container_half(scale_data_, DirectX::PackedVector::XMConvertFloatToHalf(1.0f));
             }
         }
         else
