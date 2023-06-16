@@ -438,7 +438,7 @@ public:
 
         // randomize data
         std::mt19937 random_generator(42); // static, create it once!
-        std::uniform_real_distribution<float> uniform_distribution(-0.1f, 0.1f);
+        std::uniform_real_distribution<float> uniform_distribution(-1.0f, 1.0f);
 
         if (params_.dt == DataType::eFp32)
         {
@@ -805,7 +805,7 @@ public:
 
             if (cm_params_.slice_k == 1)
             {
-                cm_params_.lws[1] = 8;
+                cm_params_.lws[1] = 16;
             }
         }
         else if(params_.type == GemmType::GemmType_QK_Q_KV)

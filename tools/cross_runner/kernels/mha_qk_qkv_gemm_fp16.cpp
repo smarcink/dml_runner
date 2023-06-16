@@ -9,9 +9,9 @@
 #endif
 
 #define LOAD_SIMD_SIZE 16
-
-// enable optimization to store reusable data in SLM to optimize memory access latencies  (disabled for now due to conforamnce issues)
-#define SLM_KN_SHARING 1 && (SLICE_K == 1)
+#define K_PER_LOAD 8
+// enable optimization to store reusable data in SLM to optimize memory access latencies
+#define SLM_KN_SHARING ((SIZE_K/K_PER_LOAD) < LWS_SIZE_Y) && (SLICE_K == 1)
 
 #define INPUT_B_OFFSET ((SIZE_NUM_HEADS * SIZE_STACKED_TENSORS * SIZE_HEAD_SIZE)* sizeof(DT))
 static const int32_t init_linear_offsets[] = {  0  * INPUT_B_OFFSET,
@@ -110,10 +110,10 @@ extern "C" _GENX_MAIN_ void mha_qk_qkv_gemm(
 	const uint32_t load_simd_size = LOAD_SIMD_SIZE;
 	const uint32_t packed_eles = sizeof(uint32_t) / sizeof(DT);
 	const uint32_t load_eles = load_simd_size * packed_eles;  // load elements when VectorSize == 1
-	const uint32_t ks = 8;   //ToDo:  this can be a reason of spills, it can be decreased to: {2 or 4}, but it can affect performance
+	const uint32_t ks = K_PER_LOAD;   //ToDo:  this can be a reason of spills, it can be decreased to: {2 or 4}, but it can affect performance
 	const uint32_t ksp = ks/packed_eles;
 	
-	vector<uint32_t, 16> base_b_offsets(init_linear_offsets);
+	vector<uint32_t, LOAD_SIMD_SIZE> base_b_offsets(init_linear_offsets);
     base_b_offsets += input_b_base_offset;
 
 #if SLM_KN_SHARING
@@ -144,11 +144,12 @@ extern "C" _GENX_MAIN_ void mha_qk_qkv_gemm(
 			{
 				input_b_ksp_chunk.select<load_eles, 1>(j * load_eles) = input_b_line.select<load_eles, 1>(k * load_eles + j * ksp * load_eles);
 			}
+			#pragma unroll
 			for(int i = 0; i < packed_eles; i++)
 			{
 				vector<DT, TILE_N> input_b = input_b_ksp_chunk.select<TILE_N, packed_eles>(i);
 #if SLM_KN_SHARING
-				cm_store_slm<uint32_t, TILE_N/2>((i + k * 2 + th_local_id * ks) * (TILE_N/2) * sizeof(uint32_t), input_b.format<uint32_t>());
+				cm_store_slm<uint32_t, TILE_N/2>((i + k * packed_eles + th_local_id * ks) * TILE_N * sizeof(DT), input_b.format<uint32_t>());
 #else
 				#pragma unroll
 				for(uint32_t j = 0; j < TILE_M; j++)
@@ -165,18 +166,17 @@ extern "C" _GENX_MAIN_ void mha_qk_qkv_gemm(
 #if SLM_KN_SHARING
 	cm_slm_fence(CM_GLOBAL_COHERENT_FENCE);
 	cm_barrier();
-	#pragma unroll
-	for(uint32_t m = 0; m < TILE_M; m++)
-	{
-		#pragma unroll
-		for(uint32_t k = 0; k < SIZE_K; k++)
-		{
-			vector<uint32_t, TILE_N/2> input_b_packed = cm_load_slm<uint32_t, TILE_N/2>(k * (TILE_N/2) * sizeof(uint32_t));
-			vector_ref<DT, TILE_N> input_b = input_b_packed.format<DT>();
 
+	#pragma unroll
+	for(uint32_t k = 0; k < SIZE_K; k++)
+	{
+		vector<uint32_t, TILE_N/2> input_b_packed = cm_load_slm<uint32_t, TILE_N/2>(k * TILE_N * sizeof(DT));
+		vector_ref<DT, TILE_N> input_b = input_b_packed.format<DT>();
+		#pragma unroll
+		for(uint32_t m = 0; m < TILE_M; m++)
+		{
 			accu.select<1, 1, TILE_N, 1>(m, 0) += input_b * input.select<1, 1, 1, 1>(m, k).replicate<TILE_N>();
 		}
-
 	}
 #endif
 	
