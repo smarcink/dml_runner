@@ -186,7 +186,8 @@ public:
             dml::TensorStrides strides_1 = { batch_stride, head_count_stride, seq_stride, head_size_stride };
             auto gemm_inp_b = dml::Reinterpret(reshaped_split,  dml::TensorDimensions{batch, head_count, seq, head_size }, strides_1);
             auto gemm_out = dml::Gemm(input_0_, gemm_inp_b, dml::NullOpt, DML_MATRIX_TRANSFORM_NONE, DML_MATRIX_TRANSFORM_NONE, alpha, beta);
-            outputs_[0] = dml_transpose(gemm_out, dml::TensorDimensions{ batch, seq, head_count, head_size },
+            const auto& gemm_out_sizes = gemm_out.GetOutputDesc().sizes;
+            outputs_[0] = dml_transpose(gemm_out, dml::TensorDimensions{ gemm_out_sizes[0], gemm_out_sizes[2], gemm_out_sizes[1], gemm_out_sizes[3]},
                 dml::TensorPolicy(&compute_transpose_nchw_to_nhcw));
         }
         else if (type_ == GemmType::GemmType_QK_Q_KV)
@@ -438,7 +439,7 @@ public:
 
         // randomize data
         std::mt19937 random_generator(42); // static, create it once!
-        std::uniform_real_distribution<float> uniform_distribution(-1.0f, 1.0f);
+        std::uniform_real_distribution<float> uniform_distribution(-0.1f, 0.1f);
 
         if (params_.dt == DataType::eFp32)
         {
@@ -796,7 +797,9 @@ public:
 
         if (params_.type == GemmType::GemmType_SV_S_QKV)
         {
+            cm_params_.slice_k = 1;// K == cm_params_.tile_k ? 1 : 2;
             cm_params_.lws[0] = cm_params_.tile_k;
+            cm_params_.lws[2] = cm_params_.slice_k;
         }
         else if (params_.type == GemmType::GemmType_QK_QKV)
         {
@@ -996,7 +999,7 @@ public:
             {
                 gws_x = get_M() / cm_params_.tile_m;
                 gws_y = get_N() / cm_params_.tile_n;
-                gws_z = 1;
+                gws_z = get_batch() * get_channels() * cm_params_.slice_k;
             }
             else if (params_.type == GemmType::GemmType_QK_QKV)
             {
