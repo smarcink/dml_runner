@@ -11,6 +11,11 @@
 #include "CLI/Config.hpp"
 
 
+inline bool is_power_of_2(std::size_t n)
+{
+    return (n & (n - 1)) == 0;
+}
+
 struct TensorShape
 {
     std::uint32_t n = 0;

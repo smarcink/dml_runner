@@ -747,53 +747,11 @@ public:
         //validate
         assert(params_.dt == DataType::eFp16);
 
-        // set dispatch params
-        const std::vector<std::uint32_t> accepted_tile_m_sizes = { 1, 2};
-        const std::vector<std::uint32_t> accepted_tile_k_sizes = { 16, 32, 64, 128 };
-        const std::vector<std::uint32_t> accepted_tile_n_sizes = { 16, 32, 64, 128 };
-
         const auto B = get_batch();
         const auto C = get_channels();
         const auto M = get_M();
         const auto K = get_K();
         const auto N = get_N();
-
-        if (cm_params_.tile_m == 0)
-        {
-            for (const auto tm : accepted_tile_m_sizes)
-            {
-                if (M % tm == 0)
-                {
-                    cm_params_.tile_m = tm;
-                }
-            }
-        }
-        assert(cm_params_.tile_m > 0);
-
-        if (cm_params_.tile_k == 0)
-        {
-            for (const auto tk : accepted_tile_k_sizes)
-            {
-                if (K % tk == 0)
-                {
-                    cm_params_.tile_k = tk;
-                }
-            }
-        }
-        assert(cm_params_.tile_k > 0);
-
-        if (cm_params_.tile_n == 0)
-        {
-            for (const auto tn : accepted_tile_n_sizes)
-            {
-                if (N % tn == 0)
-                {
-                    cm_params_.tile_n = tn;
-                }
-            }
-        }
-        assert(cm_params_.tile_n > 0);
-
 
         if (params_.type == GemmType::GemmType_SV_S_QKV)
         {
@@ -803,6 +761,15 @@ public:
         }
         else if (params_.type == GemmType::GemmType_QK_QKV)
         {
+            cm_params_.large_grf = true;
+            cm_params_.tile_k = K == 40 ? 40 : 80;
+            cm_params_.tile_n = 64;
+            cm_params_.tile_m = M <= 256 ? 16 : 8;
+
+            assert(K % cm_params_.tile_k == 0);
+            assert(N % cm_params_.tile_n == 0);
+            assert(M % cm_params_.tile_m == 0);
+
             cm_params_.slice_k = K / cm_params_.tile_k;
             cm_params_.lws[2] = cm_params_.slice_k;
 
@@ -813,6 +780,16 @@ public:
         }
         else if(params_.type == GemmType::GemmType_QK_Q_KV)
         {
+            cm_params_.large_grf = true;
+            cm_params_.tile_k = K;
+            cm_params_.tile_n = N;
+            cm_params_.tile_m = 8;
+            
+            assert(K % cm_params_.tile_k == 0);
+            assert(N % cm_params_.tile_n == 0);
+            assert(cm_params_.tile_n == 77 || (is_power_of_2(cm_params_.tile_n) && cm_params_.tile_n <= 128));
+            assert(M % cm_params_.tile_m == 0);
+
             cm_params_.slice_k = 1;
             cm_params_.lws[2] = 1;
         }
@@ -822,6 +799,10 @@ public:
             cm_params_.lws[2] = 1;
             cm_params_.lws[0] = 1;
         }
+
+        assert(cm_params_.tile_m > 0);
+        assert(cm_params_.tile_k > 0);
+        assert(cm_params_.tile_n > 0);
         assert(cm_params_.slice_k > 0);
 
         {
