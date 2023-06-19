@@ -782,7 +782,7 @@ public:
         {
             cm_params_.large_grf = true;
             cm_params_.tile_k = K;
-            cm_params_.tile_n = N;
+            cm_params_.tile_n = N; // SD1.5: 77
             cm_params_.tile_m = 8;
             
             assert(K % cm_params_.tile_k == 0);
@@ -795,6 +795,16 @@ public:
         }
         else if (params_.type == GemmType::GemmType_SV_S_KV)
         {
+            cm_params_.large_grf = true;
+            cm_params_.tile_k = K; // SD1.5: 77
+            cm_params_.tile_n = N == 40 ? 40 : 80;
+            cm_params_.tile_m = 8;
+
+            assert(K % cm_params_.tile_k == 0);
+            assert(cm_params_.tile_k == 77 || (is_power_of_2(cm_params_.tile_k) && cm_params_.tile_k <= 128));
+            assert(N % cm_params_.tile_n == 0);
+            assert(M % cm_params_.tile_m == 0);
+
             cm_params_.slice_k = 1;
             cm_params_.lws[2] = 1;
             cm_params_.lws[0] = 1;
