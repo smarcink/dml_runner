@@ -755,6 +755,24 @@ public:
 
         if (params_.type == GemmType::GemmType_SV_S_QKV)
         {
+#if 1
+            cm_params_.large_grf = true;
+            cm_params_.tile_m = 8;
+            cm_params_.tile_n = N == 40 ? 40 : 80;
+            cm_params_.tile_k = 8;
+            if (cm_params_.tile_n == 40 && M >= 4096 && K % 64 == 0)
+            {
+                cm_params_.tile_k = 64;  // set big tile_k for better perf
+            }
+            else if (cm_params_.tile_k % 16 == 0)
+            {
+                cm_params_.tile_k = 16;
+            }
+#endif
+            assert(K % cm_params_.tile_k == 0);
+            assert(N % cm_params_.tile_n == 0);
+            assert(M % cm_params_.tile_m == 0);
+
             cm_params_.slice_k = 1;// K == cm_params_.tile_k ? 1 : 2;
             cm_params_.lws[0] = cm_params_.tile_k;
             cm_params_.lws[2] = cm_params_.slice_k;

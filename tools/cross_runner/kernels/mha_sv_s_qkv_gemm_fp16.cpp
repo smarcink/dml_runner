@@ -9,14 +9,16 @@
 #endif
 
 // optimization, which gives up to ~20% perf gain, can be forced to off during debug (or change to lower size like 2)
-#define CAN_PRECACHE_TILE_M_CHUNK (TILE_M > 4 && TILE_M % 4 == 0)
+#define CAN_PRECACHE_TILE_M_CHUNK (ILE_M > 4 && TILE_M % 4 == 0)
 #if CAN_PRECACHE_TILE_M_CHUNK
 #define PRECACHE_TILE_M_SIZE 4
 #else
 #define PRECACHE_TILE_M_SIZE 1
 #endif
 
-#define SLM_KN_SHARING 1
+// SLM optimization to share NxK data for multiple M threads
+// ToDo: seems like compiler bug, but with bigger TILE_N conformance is bad
+#define SLM_KN_SHARING (TILE_N == 40)
 
 _GENX_ inline uint32_t get_input_b_base_offset(uint32_t thread_id_0, uint32_t thread_id_1, uint32_t thread_id_2, uint32_t batch_thread_offset, uint32_t head_thread_offset, uint32_t k_slice_thread_offset)
 {    
@@ -28,7 +30,7 @@ _GENX_ inline uint32_t get_input_b_base_offset(uint32_t thread_id_0, uint32_t th
 			+ 2 * SIZE_HEAD_SIZE) * sizeof(DT); // offset k 
 }
 
-extern "C" _GENX_MAIN_ void mha_sv_s_qka_gemm(
+extern "C" _GENX_MAIN_ void mha_sv_s_qkv_gemm(
 	SurfaceIndex surface_input_s [[type("buffer_t")]],
 	SurfaceIndex surface_input_qkv [[type("buffer_t")]],
 	SurfaceIndex surface_output [[type("buffer_t")]]
@@ -37,10 +39,12 @@ extern "C" _GENX_MAIN_ void mha_sv_s_qka_gemm(
     const uint32_t thread_id_0 = cm_group_id(0) * cm_local_size(0) + cm_local_id(0);
     const uint32_t thread_id_1 = cm_group_id(1) * cm_local_size(1) + cm_local_id(1);
     const uint32_t thread_id_2 = cm_group_id(2) * cm_local_size(2) + cm_local_id(2);
+	const uint32_t batch_thread_offset = cm_group_id(2) / SIZE_NUM_HEADS;
+	const uint32_t head_thread_offset = cm_group_id(2) % SIZE_NUM_HEADS;
 	
-	for(int batch_thread_offset = 0; batch_thread_offset < SIZE_BATCH; batch_thread_offset++)
+	//for(int batch_thread_offset = 0; batch_thread_offset < SIZE_BATCH; batch_thread_offset++)
 	{
-	for(int head_thread_offset = 0; head_thread_offset < SIZE_NUM_HEADS; head_thread_offset++)
+	//for(int head_thread_offset = 0; head_thread_offset < SIZE_NUM_HEADS; head_thread_offset++)
 	{
 	
 	matrix<DT_ACCU, TILE_M, TILE_N> accu(0.0f);
@@ -50,7 +54,7 @@ extern "C" _GENX_MAIN_ void mha_sv_s_qka_gemm(
 #if SLM_KN_SHARING
 	cm_slm_init(TILE_K * TILE_N * sizeof(DT));
 #endif
-	
+
 	for(int k_chunk = 0; k_chunk < SIZE_K/ TILE_K; k_chunk++)
 	{	
 		// input is 4d regular gemm input so use SIZE_M/N?/ etc. for offset calculations
@@ -71,9 +75,6 @@ extern "C" _GENX_MAIN_ void mha_sv_s_qka_gemm(
 #endif
 		
 #if SLM_KN_SHARING
-
-
-
 		const uint32_t input_b_offset = input_b_base_offset + cm_local_id(0) * SIZE_NUM_HEADS * SIZE_STACKED_TENSORS * SIZE_HEAD_SIZE * sizeof(DT);
 		vector<uint32_t, TILE_N/2> packed_row;
 		packed_row.select<S0, 1>() = cm_load<uint32_t, S0, DataSize::Default, CacheHint::Cached, CacheHint::Cached>(surface_input_qkv, input_b_offset);
