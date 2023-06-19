@@ -8,17 +8,18 @@
 #define DT_ACCU DT
 #endif
 
-// optimization, which gives up to ~20% perf gain, can be forced to off during debug (or change to lower size like 2)
-#define CAN_PRECACHE_TILE_M_CHUNK (ILE_M > 4 && TILE_M % 4 == 0)
-#if CAN_PRECACHE_TILE_M_CHUNK
-#define PRECACHE_TILE_M_SIZE 4
+// optimization, which gives up to ~10% perf gain, can be switched off for debug purposes 
+#if (TILE_M >= 8)
+#define PRECACHE_TILE_M_SIZE 2
 #else
 #define PRECACHE_TILE_M_SIZE 1
 #endif
 
-// SLM optimization to share NxK data for multiple M threads
+// SLM optimization, which gives up to ~50% perf gain. Its about sharing NxK data for multiple M threads
 // ToDo: seems like compiler bug, but with bigger TILE_N conformance is bad
-#define SLM_KN_SHARING (TILE_N == 40)
+// can be switched off for debug purposes 
+//#define SLM_KN_SHARING (TILE_N == 40)
+#define SLM_KN_SHARING 1
 
 _GENX_ inline uint32_t get_input_b_base_offset(uint32_t thread_id_0, uint32_t thread_id_1, uint32_t thread_id_2, uint32_t batch_thread_offset, uint32_t head_thread_offset, uint32_t k_slice_thread_offset)
 {    
@@ -41,6 +42,8 @@ extern "C" _GENX_MAIN_ void mha_sv_s_qkv_gemm(
     const uint32_t thread_id_2 = cm_group_id(2) * cm_local_size(2) + cm_local_id(2);
 	const uint32_t batch_thread_offset = cm_group_id(2) / SIZE_NUM_HEADS;
 	const uint32_t head_thread_offset = cm_group_id(2) % SIZE_NUM_HEADS;
+	
+
 	
 	//for(int batch_thread_offset = 0; batch_thread_offset < SIZE_BATCH; batch_thread_offset++)
 	{

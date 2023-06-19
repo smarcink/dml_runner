@@ -7,6 +7,7 @@
 #include <random>
 
 #include "dml_base_node.h"
+#include "softmax.h"
 
 enum class GemmType
 {
@@ -345,6 +346,7 @@ public:
         float alpha = 1.0f;
         float beta = 0.0f;
 
+        bool fuse_softmax = false;
 
 
         inline static void add_cli_options(CLI::App* opts, create_params_t& params)
@@ -357,6 +359,8 @@ public:
             opts->add_option("--shape_b", params.shape_b); 
 
             opts->add_option("--alpha", params.alpha);
+
+            opts->add_flag("--fuse_softmax", params.fuse_softmax)->default_val(false);
 
             opts->add_option("--gemm_type", params.type, "Name of the type of GEMM to run.")
                 ->check(CLI::IsMember({ GemmType::GemmType_AB, GemmType::GemmType_QK_QKV, GemmType::GemmType_SV_S_QKV, GemmType::GemmType_QK_Q_KV, GemmType::GemmType_SV_S_KV }))->
@@ -439,7 +443,7 @@ public:
 
         // randomize data
         std::mt19937 random_generator(42); // static, create it once!
-        std::uniform_real_distribution<float> uniform_distribution(-0.1f, 0.1f);
+        std::uniform_real_distribution<float> uniform_distribution(-1.0f, 1.0f);
 
         if (params_.dt == DataType::eFp32)
         {
@@ -561,6 +565,13 @@ public:
         readback_buffer->Map(0, nullptr, reinterpret_cast<void**>(&readback_mapped_ptr));
         std::memcpy(ref_untyped_result.data(), readback_mapped_ptr, ref_untyped_result.size());
         readback_buffer->Unmap(0, nullptr);
+
+        if (params_.fuse_softmax)
+        {
+            ref_untyped_result = cpu_op::softmax(3, ref_untyped_result.data(), get_shape_output(), params_.dt, params_.layout);
+        }
+
+
 
         if (params_.dt == DataType::eFp32)
         {
@@ -717,6 +728,7 @@ public:
         bool large_grf;
         bool print_reg_usage;
         bool fp32_accu = false;
+
         std::array<std::uint32_t, 3> lws{ 1u, 1u, 1u };
 
         std::uint32_t tile_m = 0;
@@ -735,6 +747,12 @@ public:
             opts->add_option("--tile_m", params.tile_m);
             opts->add_option("--tile_k", params.tile_k);
             opts->add_option("--tile_n", params.tile_n);
+
+            opts->add_option("--lws_x", params.lws[0]);
+            opts->add_option("--lws_y", params.lws[1]);
+            opts->add_option("--lws_z", params.lws[2]);
+
+            opts->add_option("--slice_k", params.slice_k);
         }
     };
 
@@ -755,30 +773,24 @@ public:
 
         if (params_.type == GemmType::GemmType_SV_S_QKV)
         {
-#if 1
-            cm_params_.large_grf = true;
-            cm_params_.tile_m = 8;
+#if 0
+            cm_params_.large_grf = false; // 128 "small" grf 
             cm_params_.tile_n = N == 40 ? 40 : 80;
-            cm_params_.tile_k = 8;
-            if (cm_params_.tile_n == 40 && M >= 4096 && K % 64 == 0)
-            {
-                cm_params_.tile_k = 64;  // set big tile_k for better perf
-            }
-            else if (cm_params_.tile_k % 16 == 0)
-            {
-                cm_params_.tile_k = 16;
-            }
-#endif
+            cm_params_.tile_m = cm_params_.tile_n == 40 ? 16 : 8;  // tile tile_n is big then we need to have tile_m smaller to not spill reigsters
+            cm_params_.tile_k = ((K > 64) && (K % 16 == 0)) ? 16 : 8;
+
             assert(K % cm_params_.tile_k == 0);
             assert(N % cm_params_.tile_n == 0);
             assert(M % cm_params_.tile_m == 0);
 
-            cm_params_.slice_k = 1;// K == cm_params_.tile_k ? 1 : 2;
+            cm_params_.slice_k = 1;
             cm_params_.lws[0] = cm_params_.tile_k;
             cm_params_.lws[2] = cm_params_.slice_k;
+#endif
         }
         else if (params_.type == GemmType::GemmType_QK_QKV)
         {
+#if 0
             cm_params_.large_grf = true;
             cm_params_.tile_k = K == 40 ? 40 : 80;
             cm_params_.tile_n = 64;
@@ -795,6 +807,9 @@ public:
             {
                 cm_params_.lws[1] = 16;
             }
+#endif
+            //cm_params_.lws[0] = 32;
+            cm_params_.lws[1] = 16;
         }
         else if(params_.type == GemmType::GemmType_QK_Q_KV)
         {
@@ -899,6 +914,7 @@ public:
         add_define("SLICE_K", cm_params_.slice_k);
 
         add_define("ACCU_IS_FP32", cm_params_.fp32_accu);
+        add_define("FUSE_SOFTMAX", params_.fuse_softmax);
 
         // kernel compilation
         const auto dump_asm_str = cm_params_.dump_asm ? " -mdump_asm" : "";
