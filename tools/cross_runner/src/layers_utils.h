@@ -120,7 +120,7 @@ enum class DataLayout
     eNCHW = 0,
     eNHWC = 1,
     eW,
-
+    eNHWC320,  // used in unpacked adobe case
 
     // ..
     // ..
@@ -255,9 +255,9 @@ inline auto add_data_type_cli_option(CLI::App* opts, std::string_view opt_name, 
 
 inline auto add_data_layout_cli_option(CLI::App* opts, std::string_view opt_name, DataLayout& layout)
 {
-    return opts->add_option(opt_name.data(), layout)->check(CLI::IsMember({DataLayout::eNCHW, DataLayout::eNHWC, DataLayout::eW }))
+    return opts->add_option(opt_name.data(), layout)->check(CLI::IsMember({DataLayout::eNCHW, DataLayout::eNHWC, DataLayout::eNHWC320, DataLayout::eW }))
         ->transform(CLI::Transformer(std::map<std::string, DataLayout>{
-            {"nchw", DataLayout::eNCHW}, { "nhwc", DataLayout::eNHWC }, { "w", DataLayout::eW },
+            {"nchw", DataLayout::eNCHW}, { "nhwc", DataLayout::eNHWC }, { "w", DataLayout::eW }, { "nhwc320", DataLayout::eNHWC320 },
     }, CLI::ignore_case, CLI::ignore_underscore));
 }
 

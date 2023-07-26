@@ -22,7 +22,8 @@ inline dnnl::memory::format_tag to_dnnl_format(const DataLayout l)
     switch (l)
     {
     case DataLayout::eNCHW: return dnnl::memory::format_tag::nchw;
-    case DataLayout::eNHWC: return dnnl::memory::format_tag::nhwc;
+    case DataLayout::eNHWC:
+    case DataLayout::eNHWC320: return dnnl::memory::format_tag::nhwc;
     default:
         return dnnl::memory::format_tag::undef;
     }

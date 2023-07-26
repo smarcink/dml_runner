@@ -6,6 +6,11 @@ inline dnnl::memory create_dnnl_memory(const cpu_op::binding_t binding, dnnl::en
     const auto dims = to_dnnl_dims(binding.shape);
     const auto dt = to_dnnl_data_type(binding.dt);
     const auto ft = to_dnnl_format(binding.layout);
+    if (binding.layout == DataLayout::eNHWC320)
+    {
+        dnnl::memory::dims strides{};
+        assert(false && "not implemented yet!!");
+    }
     return dnnl::memory({ dims, dt, ft }, engine);
 }
 
