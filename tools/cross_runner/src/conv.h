@@ -207,9 +207,17 @@ public:
         {
             input_binds.push_back({ resource_filter, 0, resource_filter->GetDesc().Width });
         }
+        else
+        {
+            input_binds.push_back({ nullptr, 0, 0 });
+        }
         if (tensor_bias_desc_.has_value() && tensor_bias_desc_->Flags == DML_TENSOR_FLAG_OWNED_BY_DML)
         {
             input_binds.push_back({ resource_bias, 0, resource_bias->GetDesc().Width });
+        }
+        else
+        {
+            input_binds.push_back({ nullptr, 0, 0 });
         }
         DML_BUFFER_ARRAY_BINDING input_bind{};
         input_bind.BindingCount = static_cast<UINT>(input_binds.size());
@@ -361,7 +369,7 @@ public:
         }
         // randomize data
         std::mt19937 random_generator(42); // static, create it once!
-        std::uniform_real_distribution<float> uniform_distribution(-0.5f, 0.5f);
+        std::uniform_real_distribution<float> uniform_distribution(-0.1f, 0.1f);
         if (params_.dt == DataType::eFp32)
         {
             randomize_linear_container_float(random_generator, uniform_distribution, input_data_);
@@ -482,6 +490,8 @@ public:
             readback_output_barrirer = CD3DX12_RESOURCE_BARRIER::Transition(output_buffer_.Get(),
                 D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
             command_list->ResourceBarrier(1, &readback_output_barrirer);
+            auto ref_output_buffer = create_buffer(d3d12_device_, tensor_out_bytes_width,
+                D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
 
             auto dml_conv_ref = gpu_op::Convolution(params_.input_shape, to_dml_tensor_policy(params_.input_layout),
                 get_output_shape(), to_dml_tensor_policy(params_.output_layout),
@@ -499,13 +509,15 @@ public:
             close_execute_reset_wait(d3d12_device_, command_queue, command_allocator, command_list);
 
             command_list->SetDescriptorHeaps(1, d3d12_descriptor_heaps);
-            dml_conv_ref.record_execute(dml_cmd_recorder_, command_list, output_buffer_.Get(), input_buffer_.Get(), filter_buffer_.Get(), bias_buffer_.Get());
+            dml_conv_ref.record_execute(dml_cmd_recorder_, command_list, ref_output_buffer.Get(), input_buffer_.Get(), filter_buffer_.Get(), bias_buffer_.Get());
             close_execute_reset_wait(d3d12_device_, command_queue, command_allocator, command_list);
 
-            readback_output_barrirer = CD3DX12_RESOURCE_BARRIER::Transition(output_buffer_.Get(),
+
+
+            readback_output_barrirer = CD3DX12_RESOURCE_BARRIER::Transition(ref_output_buffer.Get(),
                 D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
             command_list->ResourceBarrier(1, &readback_output_barrirer);
-            command_list->CopyResource(readback_buffer.Get(), output_buffer_.Get());
+            command_list->CopyResource(readback_buffer.Get(), ref_output_buffer.Get());
             close_execute_reset_wait(d3d12_device_, command_queue, command_allocator, command_list);
 
             ref_untyped_result.resize(tensor_out_bytes_width);
