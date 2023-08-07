@@ -60,11 +60,7 @@ namespace
         // N dimension strides
         if (dimensionCount >= 1)
         {
-            strides[N] = 1;
-            for (uint32_t i = 1; i < dimensionCount; ++i)
-            {
-                strides[N] *= sizes[i];
-            }
+            strides[N] = 0;
         }
 
         // C dimension strides
@@ -76,19 +72,11 @@ namespace
         // Spatial dimension strides
         if (dimensionCount >= 3)
         {
-            uint32_t stride = sizes[C];
+            uint32_t stride = static_cast<std::uint32_t>(align(sizes[C], 320));
             for (uint32_t i = dimensionCount - 1; i >= 2; --i)
             {
                 strides[i] = stride;
-                if (i == dimensionCount - 1)
-                {
-                    stride *= static_cast<std::uint32_t>(align(sizes[i], 320));
-                }
-                else
-                {
-                    stride *= sizes[i];
-                }
-
+                stride *= sizes[i];
             }
         }
 
@@ -139,6 +127,8 @@ public:
         , d3d12_device_(d3d12_device)
     {
     }
+
+
 
     virtual void record_initialize(IDMLCommandRecorder* dml_cmd_recorder, ID3D12GraphicsCommandList* cmd_list)
     {
@@ -230,12 +220,12 @@ protected:
         if (persistent_resource_size != 0)
         {
             const auto heap_props = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
-            const auto buffder_desc = CD3DX12_RESOURCE_DESC::Buffer(persistent_resource_size);
+            const auto buffder_desc = CD3DX12_RESOURCE_DESC::Buffer(persistent_resource_size, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
             throw_if_failed(d3d12_device_->CreateCommittedResource(
                 &heap_props,
                 D3D12_HEAP_FLAG_NONE,
                 &buffder_desc,
-                D3D12_RESOURCE_STATE_COMMON,
+                D3D12_RESOURCE_STATE_COMMON | D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
                 nullptr, IID_PPV_ARGS(persistent_buffer_.ReleaseAndGetAddressOf())), "create buffer resource");
         }
     }

@@ -191,7 +191,7 @@ int main()
         else if (opts.node_type == NodeType::eConvCm)
         {
             node = std::make_unique<ConvolutionCmDispatcher>(std::move(opts.conv_opts), std::move(opts.conv_cm_params),
-                intel_extension_d3d12, d3d12_device.Get(), command_list.Get());
+                intel_extension_d3d12, d3d12_device.Get(), command_list.Get(), dml_device.Get(), dml_command_recorder.Get());
         }
         else if (opts.node_type == NodeType::eSoftmaxDml)
         {

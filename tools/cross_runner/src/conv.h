@@ -13,8 +13,8 @@ public:
         const TensorShape& filter_shape, const dml::TensorPolicy& filter_tensor_policy,
         const DML_TENSOR_DATA_TYPE data_type,
         const TensorShape& stride_shape, std::uint32_t input_pad, std::uint32_t output_pad,
-            bool use_bias, bool allow_fp16_computations, 
-            IDMLDevice* dml_device, ID3D12Device* d3d12_device)
+            bool use_bias, bool allow_fp16_computations, ActivationType activation, bool allow_weights_to_be_managed,
+            IDMLDevice* dml_device, ID3D12Device* d3d12_device, bool disable_mc = false)
         : DirectMlBaseNode(dml_device, d3d12_device)
     {
 
@@ -45,11 +45,11 @@ public:
         dml::TensorProperties filter_tensor_properites{};
         {
             tensor_filter_desc_.DataType = data_type;
-            tensor_filter_desc_.Flags = DML_TENSOR_FLAG_NONE; // DML_TENSOR_FLAG_OWNED_BY_DML;
+            tensor_filter_desc_.Flags = allow_weights_to_be_managed ? DML_TENSOR_FLAG_OWNED_BY_DML : DML_TENSOR_FLAG_NONE;
             tensor_filter_desc_.DimensionCount = static_cast<std::uint32_t>(filter_dims.size());
             tensor_filter_desc_.Sizes = filter_dims.data();
 
-            filter_tensor_properites = input_tensor_policy.Get(tensor_filter_desc_.DataType, tensor_filter_desc_.Flags, filter_dims);
+            filter_tensor_properites = filter_tensor_policy.Get(tensor_filter_desc_.DataType, tensor_filter_desc_.Flags, filter_dims);
             tensor_filter_desc_.Strides = filter_tensor_properites.strides.has_value() ? filter_tensor_properites.strides->data() : nullptr;;
             tensor_filter_desc_.TotalTensorSizeInBytes = filter_tensor_properites.totalTensorSizeInBytes;
             tensor_filter_desc_.GuaranteedBaseOffsetAlignment = filter_tensor_properites.guaranteedBaseOffsetAlignment;
@@ -60,10 +60,10 @@ public:
         {
             DML_BUFFER_TENSOR_DESC bias_desc{};
             bias_desc.DataType = data_type;
-            bias_desc.Flags = DML_TENSOR_FLAG_NONE;
+            bias_desc.Flags = allow_weights_to_be_managed ? DML_TENSOR_FLAG_OWNED_BY_DML : DML_TENSOR_FLAG_NONE;
             bias_desc.DimensionCount = static_cast<std::uint32_t>(bias_dims.size());
             bias_desc.Sizes = bias_dims.data();
-            bias_tensor_properites = input_tensor_policy.Get(bias_desc.DataType, bias_desc.Flags, bias_dims);
+            bias_tensor_properites = filter_tensor_policy.Get(bias_desc.DataType, bias_desc.Flags, bias_dims);
             bias_desc.TotalTensorSizeInBytes = bias_tensor_properites.totalTensorSizeInBytes;
             bias_desc.GuaranteedBaseOffsetAlignment = bias_tensor_properites.guaranteedBaseOffsetAlignment;
             tensor_bias_desc_.emplace(std::move(bias_desc));
@@ -76,7 +76,7 @@ public:
             tensor_out_desc_.DimensionCount = static_cast<std::uint32_t>(output_dims.size());
             tensor_out_desc_.Sizes = output_dims.data();
 
-            output_tensor_properites = input_tensor_policy.Get(tensor_out_desc_.DataType, tensor_out_desc_.Flags, output_dims);
+            output_tensor_properites = output_tensor_policy.Get(tensor_out_desc_.DataType, tensor_out_desc_.Flags, output_dims);
             tensor_out_desc_.Strides = output_tensor_properites.strides.has_value() ? output_tensor_properites.strides->data() : nullptr;
             tensor_out_desc_.TotalTensorSizeInBytes = output_tensor_properites.totalTensorSizeInBytes;
             tensor_out_desc_.GuaranteedBaseOffsetAlignment = output_tensor_properites.guaranteedBaseOffsetAlignment;
@@ -115,8 +115,22 @@ public:
         desc.EndPadding = end_pad.data();
         desc.OutputPadding = out_pad.data();
         desc.GroupCount = 1u;
-        desc.FusedActivation = nullptr;
+        
+        DML_OPERATOR_DESC activation_desc{};
+        DML_ACTIVATION_RELU_OPERATOR_DESC relu_op{};
+        if (activation == ActivationType::eRelu)
+        {
+            relu_op.InputTensor = nullptr;
+            relu_op.OutputTensor = nullptr;
+            activation_desc.Type = DML_OPERATOR_ACTIVATION_RELU;
+            activation_desc.Desc = &relu_op;
+        }
+        else
+        {
+            throw_with_msg("Unknown activation type!");
+        }
 
+        desc.FusedActivation = activation_desc.Type == DML_OPERATOR_INVALID ? nullptr : &activation_desc;
         DML_OPERATOR_DESC dml_operator_desc{};
         dml_operator_desc.Type = DML_OPERATOR_CONVOLUTION;
         dml_operator_desc.Desc = &desc;
@@ -129,6 +143,11 @@ public:
         if (allow_fp16_computations)
         {
             exec_flags |= DML_EXECUTION_FLAG_ALLOW_HALF_PRECISION_COMPUTATION;
+        }
+
+        if (disable_mc)
+        {
+            exec_flags |= DML_EXECUTION_FLAG_DISABLE_META_COMMANDS;
         }
 
         throw_if_failed(dml_device->CompileOperator(
@@ -163,6 +182,52 @@ public:
         return tensor_out_desc_;
     }
 
+    virtual void record_initialize(IDMLCommandRecorder* dml_cmd_recorder, ID3D12GraphicsCommandList* cmd_list, ID3D12Resource* resource_filter, ID3D12Resource* resource_bias)
+    {
+        const auto initialize_binding_properties = dml_op_initializer_->GetBindingProperties();
+        if(initialize_binding_properties.TemporaryResourceSize > 0 && temporary_buffer_)
+        {
+            DML_BUFFER_BINDING buffer_binding{ temporary_buffer_.Get(), 0, temporary_buffer_->GetDesc().Width };
+            DML_BINDING_DESC binding_desc{ DML_BINDING_TYPE_BUFFER, &buffer_binding };
+            dml_init_binding_table->BindTemporaryResource(&binding_desc);
+        }
+
+        if (persistent_buffer_)
+        {
+            // The persistent resource should be bound as the output to the IDMLOperatorInitializer.
+            DML_BUFFER_BINDING buffer_binding{ persistent_buffer_.Get(), 0, persistent_buffer_->GetDesc().Width };
+            DML_BINDING_DESC binding_desc{ DML_BINDING_TYPE_BUFFER, &buffer_binding };
+            dml_init_binding_table->BindOutputs(1, &binding_desc);
+        }
+
+
+        std::vector<DML_BUFFER_BINDING> input_binds{};
+        input_binds.push_back({ nullptr, 0, 0 });
+        if (tensor_filter_desc_.Flags == DML_TENSOR_FLAG_OWNED_BY_DML)
+        {
+            input_binds.push_back({ resource_filter, 0, resource_filter->GetDesc().Width });
+        }
+        if (tensor_bias_desc_.has_value() && tensor_bias_desc_->Flags == DML_TENSOR_FLAG_OWNED_BY_DML)
+        {
+            input_binds.push_back({ resource_bias, 0, resource_bias->GetDesc().Width });
+        }
+        DML_BUFFER_ARRAY_BINDING input_bind{};
+        input_bind.BindingCount = static_cast<UINT>(input_binds.size());
+        input_bind.Bindings = input_binds.data();
+        if (!input_binds.empty())
+        {
+            DML_BINDING_DESC binding{};
+            binding.Type = DML_BINDING_TYPE_BUFFER_ARRAY;
+            binding.Desc = &input_bind;
+            dml_init_binding_table->BindInputs(1, &binding);
+        }
+
+        dml_cmd_recorder->RecordDispatch(
+            cmd_list,
+            dml_op_initializer_.Get(),
+            dml_init_binding_table.Get());
+    }
+
 
     void record_execute(IDMLCommandRecorder* dml_cmd_recorder, ID3D12GraphicsCommandList* cmd_list, ID3D12Resource* resource_out,
         ID3D12Resource* resource_input, ID3D12Resource* resource_filter, ID3D12Resource* resource_bias)
@@ -176,8 +241,16 @@ public:
         std::vector<DML_BINDING_DESC> input_bindings;
         input_bindings.reserve(3);
         input_bindings.push_back({ DML_BINDING_TYPE_BUFFER, &input_buffer_binding });
-        input_bindings.push_back({ DML_BINDING_TYPE_BUFFER, &filter_buffer_binding });
-        if (resource_bias)
+        if (tensor_filter_desc_.Flags != DML_TENSOR_FLAG_OWNED_BY_DML)
+        {
+            input_bindings.push_back({ DML_BINDING_TYPE_BUFFER, &filter_buffer_binding });
+        }
+        else
+        {
+            input_bindings.push_back({ DML_BINDING_TYPE_NONE, nullptr });
+        }
+
+        if (resource_bias && tensor_filter_desc_.Flags != DML_TENSOR_FLAG_OWNED_BY_DML)
         {
             bias_buffer_binding = { resource_bias, 0, resource_bias->GetDesc().Width };
             input_bindings.push_back({ DML_BINDING_TYPE_BUFFER, &bias_buffer_binding });
@@ -245,18 +318,21 @@ public:
         TensorShape input_shape;
         TensorShape filter_shape;
         const DataLayout filter_layout = DataLayout::eNCHW;
+        ActivationType activation = ActivationType::eNone;
         std::uint32_t in_pad;
         std::uint32_t out_pad;
         TensorShape stride;
         bool no_bias = false;
         bool allow_fp16_computations = false;
-        bool managaed_weights = false; // ToDo: pass it to DML class so its actually beigned used
+        bool managed_weights = true;
+
 
         inline static void add_cli_options(CLI::App* opts, create_params_t& params)
         {
             add_data_type_cli_option(opts, "--data_type", params.dt)->required();
             add_data_layout_cli_option(opts, "--input_layout", params.input_layout)->required();
             add_data_layout_cli_option(opts, "--output_layout", params.output_layout)->required();
+            add_activation_type_cli_option(opts, "--activation", params.activation)->default_val(ActivationType::eNone);
             opts->add_option("--input_shape", params.input_shape, "speciify list: <n, ic, h, w")->required();
             opts->add_option("--filter_shape", params.filter_shape, "speciify list: <oc, ic, kh, kw")->required();
             opts->add_option("--in_pad", params.in_pad)->required();
@@ -264,13 +340,16 @@ public:
             opts->add_option("--stride", params.stride, "speciify list: <stride_h, stride_w>")->required();
             opts->add_flag("--no_bias", params.no_bias);
             opts->add_flag("--allow_fp16_computations", params.allow_fp16_computations);
+            opts->add_flag("--managed_weights", params.managed_weights);
 
         }
     };
 
-    ConvolutionBaseDispatcher(create_params_t&& params, ID3D12Device* d3d12_device, ID3D12GraphicsCommandList* cmd_list)
+    ConvolutionBaseDispatcher(create_params_t&& params, ID3D12Device* d3d12_device, IDMLDevice* dml_device, IDMLCommandRecorder* dml_cmd_recorder, ID3D12GraphicsCommandList* cmd_list)
         : params_(std::move(params))
         , d3d12_device_(d3d12_device)
+        , dml_cmd_recorder_(dml_cmd_recorder)
+        , dml_device_(dml_device)
         , input_data_(params_.input_shape.get_elements_count()* get_data_type_bytes_width(params_.dt))
         , filter_data_(params_.filter_shape.get_elements_count()* get_data_type_bytes_width(params_.dt))
 
@@ -319,7 +398,7 @@ public:
         const auto tensor_filter_bytes_width = filter_data_.size();
         const auto tensor_bias_bytes_width = bias_data_.size();
         const auto output_shape = get_output_shape();
-        const auto tensor_out_bytes_width = output_shape.get_elements_count() * get_data_type_bytes_width(params_.dt);
+        const auto tensor_out_bytes_width = output_shape.get_elements_count(params_.output_layout) * get_data_type_bytes_width(params_.dt);
 
         upload_buffer_ = create_buffer(d3d12_device_, tensor_input_bytes_width + tensor_filter_bytes_width + tensor_bias_bytes_width,
             D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ);
@@ -392,15 +471,57 @@ public:
         std::memcpy(data_out.data(), readback_mapped_ptr, data_out.size());
         readback_buffer->Unmap(0, nullptr);
 
-        const auto dnnl_untyped_result = get_dnnl_result();
+        std::vector<std::byte> ref_untyped_result{};
+
+        if (false)
+        {
+            ref_untyped_result = get_dnnl_result();
+        }
+        else
+        {
+            readback_output_barrirer = CD3DX12_RESOURCE_BARRIER::Transition(output_buffer_.Get(),
+                D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+            command_list->ResourceBarrier(1, &readback_output_barrirer);
+
+            auto dml_conv_ref = gpu_op::Convolution(params_.input_shape, to_dml_tensor_policy(params_.input_layout),
+                get_output_shape(), to_dml_tensor_policy(params_.output_layout),
+                params_.filter_shape, to_dml_tensor_policy(params_.filter_layout),
+                to_dml_data_type(params_.dt), params_.stride, params_.in_pad, params_.out_pad, !params_.no_bias, params_.allow_fp16_computations, params_.activation, false/*params_.managed_weights*/,
+                dml_device_, d3d12_device_, true/*disable_mc*/);
+
+            // bind descriptor heap
+            auto descriptor_heap = create_descriptor_heap(d3d12_device_, dml_conv_ref.get_total_descriptor_count());
+            ID3D12DescriptorHeap* d3d12_descriptor_heaps[] = { descriptor_heap.Get() };
+            command_list->SetDescriptorHeaps(1, d3d12_descriptor_heaps);
+
+            dml_conv_ref.create_binding_tables(descriptor_heap->GetCPUDescriptorHandleForHeapStart(), descriptor_heap->GetGPUDescriptorHandleForHeapStart());
+            dml_conv_ref.record_initialize(dml_cmd_recorder_, command_list, filter_buffer_.Get(), bias_buffer_.Get());
+            close_execute_reset_wait(d3d12_device_, command_queue, command_allocator, command_list);
+
+            command_list->SetDescriptorHeaps(1, d3d12_descriptor_heaps);
+            dml_conv_ref.record_execute(dml_cmd_recorder_, command_list, output_buffer_.Get(), input_buffer_.Get(), filter_buffer_.Get(), bias_buffer_.Get());
+            close_execute_reset_wait(d3d12_device_, command_queue, command_allocator, command_list);
+
+            readback_output_barrirer = CD3DX12_RESOURCE_BARRIER::Transition(output_buffer_.Get(),
+                D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
+            command_list->ResourceBarrier(1, &readback_output_barrirer);
+            command_list->CopyResource(readback_buffer.Get(), output_buffer_.Get());
+            close_execute_reset_wait(d3d12_device_, command_queue, command_allocator, command_list);
+
+            ref_untyped_result.resize(tensor_out_bytes_width);
+            readback_mapped_ptr = nullptr;
+            readback_buffer->Map(0, nullptr, reinterpret_cast<void**>(&readback_mapped_ptr));
+            std::memcpy(ref_untyped_result.data(), readback_mapped_ptr, ref_untyped_result.size());
+            readback_buffer->Unmap(0, nullptr);
+        }
 
         if (params_.dt == DataType::eFp32)
         {
-            return run_conformance_check<float>(data_out, dnnl_untyped_result, 0.001f);
+            return run_conformance_check<float>(data_out, ref_untyped_result, 0.001f);
         }
         else if (params_.dt == DataType::eFp16)
         {
-            return run_conformance_check<Half>(data_out, dnnl_untyped_result, 0.05f);
+            return run_conformance_check<Half>(data_out, ref_untyped_result, 0.05f);
         }
         assert(false && "Unsupported output data type!");
         ConformanceResult ret{};
@@ -459,6 +580,9 @@ protected:
 
 protected:
     ID3D12Device* d3d12_device_;
+    IDMLDevice* dml_device_;
+    IDMLCommandRecorder* dml_cmd_recorder_;
+
     create_params_t params_;
 
     std::vector<std::byte> input_data_;
@@ -477,12 +601,12 @@ class ConvolutionDirectMLDispatcher : public ConvolutionBaseDispatcher
 public:
 
     ConvolutionDirectMLDispatcher(create_params_t&& params, ID3D12Device* d3d12_device, IDMLDevice* dml_device, IDMLCommandRecorder* dml_cmd_recorder, ID3D12GraphicsCommandList* cmd_list)
-        : ConvolutionBaseDispatcher(std::move(params), d3d12_device, cmd_list)
+        : ConvolutionBaseDispatcher(std::move(params), d3d12_device, dml_device, dml_cmd_recorder, cmd_list)
         , dml_cmd_recorder_(dml_cmd_recorder)
         , conv_(params_.input_shape, to_dml_tensor_policy(params_.input_layout),
             get_output_shape(), to_dml_tensor_policy(params_.output_layout),
             params_.filter_shape, to_dml_tensor_policy(params_.filter_layout),
-            to_dml_data_type(params_.dt), params_.stride, params_.in_pad, params_.out_pad, !params_.no_bias, params_.allow_fp16_computations,
+            to_dml_data_type(params_.dt), params_.stride, params_.in_pad, params_.out_pad, !params_.no_bias, params_.allow_fp16_computations, params_.activation, params_.managed_weights,
             dml_device, d3d12_device)
     {
     }
@@ -495,7 +619,7 @@ public:
     void initialize(ID3D12GraphicsCommandList* cmd_list, D3D12_CPU_DESCRIPTOR_HANDLE cpu_handle, D3D12_GPU_DESCRIPTOR_HANDLE gpu_handle) override
     {
         conv_.create_binding_tables(cpu_handle, gpu_handle);
-        conv_.record_initialize(dml_cmd_recorder_, cmd_list);
+        conv_.record_initialize(dml_cmd_recorder_, cmd_list, filter_buffer_.Get(), bias_buffer_.Get());
     }
 
     void execute(ID3D12GraphicsCommandList* cmd_list) override
@@ -540,8 +664,8 @@ public:
         }
     };
 public:
-    ConvolutionCmDispatcher(create_params_t&& params, conv_cm_params_t&& cm_params, IntelExtension& intc_ext, ID3D12Device* d3d12_device, ID3D12GraphicsCommandList* cmd_list)
-        : ConvolutionBaseDispatcher(std::move(params), d3d12_device, cmd_list)
+    ConvolutionCmDispatcher(create_params_t&& params, conv_cm_params_t&& cm_params, IntelExtension& intc_ext, ID3D12Device* d3d12_device, ID3D12GraphicsCommandList* cmd_list, IDMLDevice* dml_device, IDMLCommandRecorder* dml_cmd_recorder)
+        : ConvolutionBaseDispatcher(std::move(params), d3d12_device, dml_device, dml_cmd_recorder, cmd_list)
         , intc_ext_(intc_ext)
         , d3d12_device_(d3d12_device)
         , cm_params_(std::move(cm_params))
@@ -736,7 +860,7 @@ public:
         assert(!gpu_handles_.empty());
 
         // dispatch weights reorder here in initalized if weights are managed
-        if (params_.managaed_weights && weights_reorder_.has_value())
+        if (params_.managed_weights && weights_reorder_.has_value())
         {
             weights_reorder_->execute(cmd_list);
 
@@ -748,7 +872,7 @@ public:
     void execute(ID3D12GraphicsCommandList* cmd_list) override
     {
         // dispatch weights reorder if needed (non managed case)
-        if (!params_.managaed_weights && weights_reorder_.has_value())
+        if (!params_.managed_weights && weights_reorder_.has_value())
         {
             weights_reorder_->execute(cmd_list);
             auto barrier = CD3DX12_RESOURCE_BARRIER::UAV(weights_reorder_->get_output_resource());
