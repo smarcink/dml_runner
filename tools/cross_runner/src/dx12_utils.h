@@ -225,7 +225,8 @@ inline ComPtr<ID3D12Resource> create_buffer(ID3D12Device* d3d12_device, std::siz
 {
     ComPtr<ID3D12Resource> ret;
     const auto heap_props = CD3DX12_HEAP_PROPERTIES(heap_type);
-    const auto buffer_desc = CD3DX12_RESOURCE_DESC::Buffer(align(bytes_width, 256), resource_flag);
+    //const auto buffer_desc = CD3DX12_RESOURCE_DESC::Buffer(align(bytes_width, 256), resource_flag);
+    const auto buffer_desc = CD3DX12_RESOURCE_DESC::Buffer(bytes_width, resource_flag);
     throw_if_failed(d3d12_device->CreateCommittedResource(
         &heap_props,
         D3D12_HEAP_FLAG_NONE,

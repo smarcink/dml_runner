@@ -12,7 +12,7 @@ public:
         const DML_TENSOR_DATA_TYPE data_type, const dml::TensorPolicy& tensor_policy,
         const TensorShape& stride_shape, std::uint32_t input_pad, std::uint32_t output_pad,
             bool use_bias, bool allow_fp16_computations, 
-            IDMLDevice* dml_device, ID3D12Device* d3d12_device)
+            IDMLDevice* dml_device, ID3D12Device* d3d12_device, bool disable_mc = false)
         : DirectMlBaseNode(dml_device, d3d12_device)
     {
 
@@ -128,6 +128,11 @@ public:
         {
             exec_flags |= DML_EXECUTION_FLAG_ALLOW_HALF_PRECISION_COMPUTATION;
         }
+        disable_mc = true; // PR5 : Remove this before check-in
+        if (disable_mc)
+        {
+            exec_flags |= DML_EXECUTION_FLAG_DISABLE_META_COMMANDS;
+        }
 
         throw_if_failed(dml_device->CompileOperator(
             dml_operator_.Get(),
@@ -163,13 +168,14 @@ public:
 
 
     void record_execute(IDMLCommandRecorder* dml_cmd_recorder, ID3D12GraphicsCommandList* cmd_list, ID3D12Resource* resource_out,
-        ID3D12Resource* resource_input, ID3D12Resource* resource_filter, ID3D12Resource* resource_bias)
+        ID3D12Resource* resource_input, ID3D12Resource* resource_filter, ID3D12Resource* resource_bias, ID3D12Resource* resource_constant)
     {
         assert(((resource_bias != nullptr)== tensor_bias_desc_.has_value()) && "bias resources is not matching what was expected.");
 
         DML_BUFFER_BINDING input_buffer_binding{ resource_input, 0, resource_input->GetDesc().Width };
         DML_BUFFER_BINDING filter_buffer_binding{ resource_filter, 0, resource_filter->GetDesc().Width };
         DML_BUFFER_BINDING bias_buffer_binding;
+        DML_BUFFER_BINDING constant_buffer_binding{ resource_constant, 0, resource_constant->GetDesc().Width };
 
         std::vector<DML_BINDING_DESC> input_bindings;
         input_bindings.reserve(3);
@@ -184,6 +190,7 @@ public:
         {
             input_bindings.push_back({ DML_BINDING_TYPE_NONE, nullptr});
         }
+        input_bindings.push_back({ DML_BINDING_TYPE_BUFFER, &constant_buffer_binding });
         DML_BUFFER_BINDING output_buffer_binding{ resource_out, 0, resource_out->GetDesc().Width };
         DML_BINDING_DESC output_binding_desc{ DML_BINDING_TYPE_BUFFER, &output_buffer_binding };
 
@@ -271,6 +278,9 @@ public:
 
     {
         assert(params_.input_shape.c == params_.filter_shape.c);
+        const auto output_shape = get_output_shape();
+        prepare_constant_data();
+
         if (!params_.no_bias)
         {
             bias_data_ = std::vector<std::byte>(params_.filter_shape.n * get_data_type_bytes_width(params_.dt));
@@ -310,13 +320,13 @@ public:
             assert(false && "Unsupported data type in convolution dispatcher!");
         }
 
+        const auto tensor_constant_bytes_width = constant_data_.size();
         const auto tensor_input_bytes_width = input_data_.size();
         const auto tensor_filter_bytes_width = filter_data_.size();
         const auto tensor_bias_bytes_width = bias_data_.size();
-        const auto output_shape = get_output_shape();
         const auto tensor_out_bytes_width = output_shape.get_elements_count() * get_data_type_bytes_width(params_.dt);
 
-        upload_buffer_ = create_buffer(d3d12_device_, tensor_input_bytes_width + tensor_filter_bytes_width + tensor_bias_bytes_width,
+        upload_buffer_ = create_buffer(d3d12_device_, tensor_input_bytes_width + tensor_filter_bytes_width + tensor_bias_bytes_width + tensor_constant_bytes_width,
             D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ);
         input_buffer_ = create_buffer(d3d12_device, tensor_input_bytes_width,
             D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
@@ -327,8 +337,12 @@ public:
             bias_buffer_ = create_buffer(d3d12_device, tensor_bias_bytes_width,
                 D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
         }
+        constant_buffer_ = create_buffer(d3d12_device, tensor_constant_bytes_width,
+            D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
         output_buffer_ = create_buffer(d3d12_device, tensor_out_bytes_width,
             D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+
+        const auto tensor_out_bytes_width_1 = output_buffer_->GetDesc().Width;
 
         // copy data into buffer
         std::byte* upload_mapped_ptr = nullptr;
@@ -337,11 +351,13 @@ public:
         std::memcpy(upload_mapped_ptr, input_data_.data(), tensor_input_bytes_width);
         memcopy_offset += tensor_input_bytes_width;
         std::memcpy(upload_mapped_ptr + memcopy_offset, filter_data_.data(), tensor_filter_bytes_width);
+        memcopy_offset += tensor_filter_bytes_width;
         if (use_bias())
         {
-            memcopy_offset += tensor_filter_bytes_width;
             std::memcpy(upload_mapped_ptr + memcopy_offset, bias_data_.data(), tensor_bias_bytes_width);
+            memcopy_offset += tensor_bias_bytes_width;
         }
+        std::memcpy(upload_mapped_ptr + memcopy_offset, constant_data_.data(), tensor_constant_bytes_width);
         // unmap memory
         upload_buffer_->Unmap(0, nullptr);
 
@@ -349,11 +365,13 @@ public:
         cmd_list->CopyBufferRegion(input_buffer_.Get(), 0, upload_buffer_.Get(), 0, tensor_input_bytes_width);
         memcopy_offset += tensor_input_bytes_width;
         cmd_list->CopyBufferRegion(filter_buffer_.Get(), 0, upload_buffer_.Get(), memcopy_offset, tensor_filter_bytes_width);
+        memcopy_offset += tensor_filter_bytes_width;
         if (use_bias())
         {
-            memcopy_offset += tensor_filter_bytes_width;
             cmd_list->CopyBufferRegion(bias_buffer_.Get(), 0, upload_buffer_.Get(), memcopy_offset, tensor_bias_bytes_width);
+            memcopy_offset += tensor_bias_bytes_width;
         }
+        cmd_list->CopyBufferRegion(constant_buffer_.Get(), 0, upload_buffer_.Get(), memcopy_offset, tensor_constant_bytes_width);
 
         std::vector<CD3DX12_RESOURCE_BARRIER> barriers;
         barriers.push_back(CD3DX12_RESOURCE_BARRIER::Transition(input_buffer_.Get(),
@@ -365,6 +383,8 @@ public:
             barriers.push_back(CD3DX12_RESOURCE_BARRIER::Transition(bias_buffer_.Get(),
                 D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_UNORDERED_ACCESS));
         }
+        barriers.push_back(CD3DX12_RESOURCE_BARRIER::Transition(constant_buffer_.Get(),
+            D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_UNORDERED_ACCESS));
         cmd_list->ResourceBarrier(static_cast<std::uint32_t>(barriers.size()), barriers.data());
     }
 
@@ -414,6 +434,22 @@ protected:
         return ret;
     }
 
+    void prepare_constant_data()
+    {
+        constant_data_ = std::vector<std::byte>(100);
+        const auto output_shape = get_output_shape();
+        using Dt = int;
+        auto* ptr = reinterpret_cast<Dt*>(constant_data_.data());
+        *ptr++ = static_cast<Dt>(params_.input_shape.h);
+        *ptr++ = static_cast<Dt>(params_.input_shape.w);
+        *ptr++ = static_cast<Dt>(params_.in_pad);
+        *ptr++ = static_cast<Dt>(output_shape.c);
+        *ptr++ = static_cast<Dt>(output_shape.h);
+        *ptr++ = static_cast<Dt>(output_shape.w);
+        *ptr++ = static_cast<Dt>(params_.stride.h);
+        *ptr++ = static_cast<Dt>(params_.filter_shape.c);
+        *ptr++ = static_cast<Dt>(params_.filter_shape.n);
+    }
     inline bool use_bias() const
     {
         return !params_.no_bias;
@@ -442,6 +478,7 @@ protected:
             bindings.bias.layout = params_.layout;
             bindings.bias.shape = TensorShape(params_.filter_shape.n, 1u, 1u, 1u);
         }
+
         cpu_op::opts_t opts{};
         opts.output_shape = get_output_shape();
         opts.inp_pad = params_.in_pad;
@@ -459,7 +496,9 @@ protected:
     std::vector<std::byte> input_data_;
     std::vector<std::byte> filter_data_;
     std::vector<std::byte> bias_data_;
+    std::vector<std::byte> constant_data_;
 
+    ComPtr<ID3D12Resource> constant_buffer_;
     ComPtr<ID3D12Resource> input_buffer_;
     ComPtr<ID3D12Resource> filter_buffer_;
     ComPtr<ID3D12Resource> bias_buffer_;
@@ -494,7 +533,7 @@ public:
 
     void execute(ID3D12GraphicsCommandList* cmd_list) override
     {
-        conv_.record_execute(dml_cmd_recorder_, cmd_list, output_buffer_.Get(), input_buffer_.Get(), filter_buffer_.Get(), bias_buffer_.Get());
+        conv_.record_execute(dml_cmd_recorder_, cmd_list, output_buffer_.Get(), input_buffer_.Get(), filter_buffer_.Get(), bias_buffer_.Get(), constant_buffer_.Get());
     }
 
 private:
@@ -554,11 +593,11 @@ public:
             wr_params.k_size = params_.filter_shape.w;
             wr_params.input_layout = params_.layout == DataLayout::eNCHW ? DataLayout::eOIYX : DataLayout::eWeightsLayoutStart;
 
-            if (params_.dt == DataType::eFp16 && params_.filter_shape.w == 1 && params_.filter_shape.h == 1)
+            /*if (params_.dt == DataType::eFp16 && params_.filter_shape.w == 1 && params_.filter_shape.h == 1)
             {
                 wr_params.output_layout = DataLayout::eIO_i8_o8_i2;
             }
-            else if (params_.dt == DataType::eFp16 && params_.filter_shape.w != 1 && params_.filter_shape.h != 1)
+            else*/ if (params_.dt == DataType::eFp16 /* && params_.filter_shape.w != 1 && params_.filter_shape.h != 1*/)
             {
                 if (cm_params_.block_oc == 8)
                 {
@@ -570,7 +609,7 @@ public:
                 }
             }
 
-            weights_reorder_.emplace(WeightsReorder(std::move(wr_params), filter_buffer_, intc_ext, d3d12_device, cmd_list));
+            weights_reorder_.emplace(WeightsReorder(std::move(wr_params), filter_buffer_, constant_buffer_, intc_ext, d3d12_device, cmd_list));
         }
 
         // root signature
@@ -581,6 +620,7 @@ public:
             {
                 desc_list.push_back(DescType::eSrv);
             }
+            desc_list.push_back(DescType::eSrv);
             // output 
             desc_list.push_back(DescType::eUav);
             root_signature_ = create_root_signature(d3d12_device_, desc_list);
@@ -616,29 +656,29 @@ public:
         {
             add_define("DT_ACCU", "float");
         }
-        add_define("INPUT_WIDTH", params_.input_shape.w);
-        add_define("INPUT_HEIGHT", params_.input_shape.h);
+        //add_define("INPUT_WIDTH", params_.input_shape.w);
+        //add_define("INPUT_HEIGHT", params_.input_shape.h);
         add_define("INPUT_CHANNELS", params_.input_shape.c);
 
-        add_define("OUTPUT_WIDTH", output_shape_.w);
-        add_define("OUTPUT_HEIGHT", output_shape_.h);
-        add_define("OUTPUT_CHANNELS", output_shape_.c);
+        //add_define("OUTPUT_WIDTH", output_shape_.w);
+        //add_define("OUTPUT_HEIGHT", output_shape_.h);
+        //("OUTPUT_CHANNELS", output_shape_.c);
 
-        add_define("BATCH", params_.input_shape.n);
-        add_define("INPUT_PAD", params_.in_pad);
-        add_define("OUTPUT_PAD", params_.out_pad);
+        //add_define("BATCH", params_.input_shape.n);
+        //add_define("INPUT_PAD", params_.in_pad);
+        //add_define("OUTPUT_PAD", params_.out_pad);
         add_define("USE_BIAS", !params_.no_bias);
         add_define("KERNEL_SIZE", params_.filter_shape.h);
         add_define("STRIDE_W", params_.stride.w);
-        add_define("STRIDE_H", params_.stride.h);
+        //add_define("STRIDE_H", params_.stride.h);
 
-        add_define("SLICE_IC", cm_params_.slice_ic);
-        add_define("BLOCK_W", cm_params_.block_w);
-        add_define("BLOCK_H", cm_params_.block_h);
-        add_define("BLOCK_OC", cm_params_.block_oc);
-        add_define("BLOCK_BATCH", cm_params_.block_batch);
+        //add_define("SLICE_IC", cm_params_.slice_ic);
+        //add_define("BLOCK_W", cm_params_.block_w);
+        //add_define("BLOCK_H", cm_params_.block_h);
+        //add_define("BLOCK_OC", cm_params_.block_oc);
+        //add_define("BLOCK_BATCH", cm_params_.block_batch);
 
-        add_define("WEIGHTS_IN_OPTIMAL_FORMAT", cm_params.reorder_weights);
+        //add_define("WEIGHTS_IN_OPTIMAL_FORMAT", cm_params.reorder_weights);
 
         // kernel compilation
         const auto dump_asm_str = cm_params_.dump_asm ? " -mdump_asm" : "";
@@ -657,7 +697,7 @@ public:
         auto kernel_source_content = [](const auto kernel_size)
         {
             std::string path = "";
-            if (kernel_size == 1)
+            if (false/*kernel_size == 1*/)
             {
                 path = "conv_1x1_nchw_fp16.cpp";
             }
@@ -687,7 +727,7 @@ public:
     std::uint32_t get_total_descriptor_count() override
     {
         // input, weights, output
-        std::uint32_t descriptor_count = 3;
+        std::uint32_t descriptor_count = 4;
         if (!params_.no_bias)
         {
             descriptor_count++;
@@ -724,6 +764,9 @@ public:
         {
             resources_list.push_back({ DescType::eSrv, bias_buffer_.Get() });
         }
+        resources_list.push_back({ DescType::eSrv, constant_buffer_.Get() });
+
+        const auto tensor_out_bytes_width = output_buffer_->GetDesc().Width;
         resources_list.push_back({ DescType::eUav, output_buffer_.Get() });
 
         gpu_handles_ = create_resource_views_and_handles(d3d12_device_, resources_list, base_cpu_handle, base_gpu_handle);
@@ -835,11 +878,12 @@ private:
             }
         };
     public:
-        WeightsReorder(create_params_t&& params, ComPtr<ID3D12Resource> input_resource, IntelExtension& intc_ext, ID3D12Device* d3d12_device, ID3D12GraphicsCommandList* cmd_list)
+        WeightsReorder(create_params_t&& params, ComPtr<ID3D12Resource> input_resource, ComPtr<ID3D12Resource> constant_resource, IntelExtension& intc_ext, ID3D12Device* d3d12_device, ID3D12GraphicsCommandList* cmd_list)
             : params_(std::move(params))
             , intc_ext_(intc_ext)
             , d3d12_device_(d3d12_device)
             , input_buffer_(input_resource)
+            , constant_buffer_(constant_resource)
         {
             assert(params_.input_dt != DataType::eCount);
             assert(params_.output_dt != DataType::eCount);
@@ -849,7 +893,7 @@ private:
             // root signature
             {
                 // input, filter
-                const std::vector<DescType> desc_list = { DescType::eSrv, DescType::eUav };
+                const std::vector<DescType> desc_list = { DescType::eSrv, DescType::eSrv, DescType::eUav };
                 root_signature_ = create_root_signature(d3d12_device_, desc_list);
                 assert(root_signature_);
             }
@@ -876,17 +920,16 @@ private:
                 build_options += pre_jit + name + between_name_and_value + value_str + post_jit;
             };
 
-            add_define("INPUT_TYPE", "half");
-            add_define("OUTPUT_TYPE", "half");
-            add_define("WEI_OFFSET", 0);
-            add_define("IC", params_.ic);
-            add_define("OC", params_.oc);
+            add_define("DT", "half");
+            //add_define("WEI_OFFSET", 0);
+            //add_define("IC", params_.ic);
+            //add_define("OC", params_.oc);
             add_define("K_SIZE", params_.k_size);
 
-            for (std::int32_t i = static_cast<std::int32_t>(DataLayout::eWeightsLayoutStart) + 1; i < static_cast<std::int32_t>(DataLayout::eCount); i++)
+            /*for (std::int32_t i = static_cast<std::int32_t>(DataLayout::eWeightsLayoutStart) + 1; i < static_cast<std::int32_t>(DataLayout::eCount); i++)
             {
                 add_define("LAYOUT_" + data_layout_name(static_cast<DataLayout>(i)), i);
-            }
+            }*/
             add_define("INPUT_LAYOUT", static_cast<std::int32_t>(params_.input_layout));
             add_define("OUTPUT_LAYOUT", static_cast<std::int32_t>(params_.output_layout));
 
@@ -940,6 +983,7 @@ private:
         {
             assert(input_buffer_);
             assert(output_buffer_);
+            assert(constant_buffer_);
 
             const auto desc_heap_incrs_size = d3d12_device_->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
             // i.e. add weights reorder
@@ -950,6 +994,7 @@ private:
             std::vector<std::pair<DescType, ID3D12Resource*>> resources_list;
             resources_list.reserve(get_total_descriptor_count());
             resources_list.push_back({ DescType::eSrv, input_buffer_.Get() });
+            resources_list.push_back({ DescType::eSrv, constant_buffer_.Get() });
             resources_list.push_back({ DescType::eUav, output_buffer_.Get() });
 
             gpu_handles_ = create_resource_views_and_handles(d3d12_device_, resources_list, base_cpu_handle, base_gpu_handle);
@@ -957,7 +1002,7 @@ private:
 
         std::uint32_t get_total_descriptor_count() override
         {
-            return 2;
+            return 3;
         }
 
         void execute(ID3D12GraphicsCommandList* cmd_list) override
@@ -1064,6 +1109,7 @@ private:
         IntelExtension& intc_ext_;
         ID3D12Device* d3d12_device_;
         ComPtr<ID3D12Resource> input_buffer_;
+        ComPtr<ID3D12Resource> constant_buffer_;
         ComPtr<ID3D12Resource> output_buffer_;
         ComPtr<ID3D12PipelineState> pso_;
         ComPtr<ID3D12RootSignature> root_signature_;

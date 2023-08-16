@@ -18,6 +18,11 @@ implied warranties, other than those that are expressly stated in the License.
 #include <cm/cm.h>
 #include <cm/cmtl.h>
 
+#define BLOCK_H 1
+#define BLOCK_W 4
+#define BLOCK_BATCH 1
+#define BLOCK_OC 8
+
 #if !CM_HAS_LSC
 #error [Error_device_no_lsc] Kernel designed to use lsc. Current device does not support lsc.
 #endif
@@ -37,57 +42,23 @@ implied warranties, other than those that are expressly stated in the License.
 #if INPUT_CHANNELS >= 16
 #error [Error_input_channel_count] This kernel was designed to work with small input channels, which are not fitting dpas scenarios.
 #endif
-
-#define BLOCK_H 1
-#define WIDTH_LEFTOVER (OUTPUT_WIDTH % BLOCK_W)
-#define HAS_LEFTOVER (WIDTH_LEFTOVER != 0)
-#define LEFTOVER_COVERS_FULL_WIDTH (OUTPUT_WIDTH == WIDTH_LEFTOVER)
-
+	
 #define DT_OUT half
 #define DT_IN half
 #define DT_IN_SIZE 2 
 #define DT_WEIGHTS half
 
-#define OUTPUT_CHANNELS_PER_REG 8
-
-
-#define DWORD_SIZE 4
-#define INPUT_WIDTH_ALIGNED_TO_DWORD ((INPUT_WIDTH * DT_IN_SIZE) % DWORD_SIZE == 0)
-
-#define INPUT_NCHW_PLANE_SIZE (INPUT_WIDTH * INPUT_HEIGHT * sizeof(DT_IN))
-#define OUTPUT_NCHW_PLANE_SIZE (OUTPUT_WIDTH * OUTPUT_HEIGHT * sizeof(DT_OUT))
 #define OUTPUT_ELEMENT_SIZE (sizeof(DT_OUT))
 
 #define INPUT_REG_W (BLOCK_W * STRIDE_W + KERNEL_SIZE - 1)
 #define INPUT_REG_SIZE (INPUT_REG_W* INPUT_CHANNELS)
 #define INPUT_ELEMENT_SIZE (sizeof(DT_IN))
-
-// (kernel width) * input channels * block oc
-#define WEIGHTS_REG_SIZE (KERNEL_SIZE * INPUT_CHANNELS * BLOCK_OC)
 #define WEIGHT_ELEMENT_SIZE (sizeof(DT_WEIGHTS))
-#define WEIGHTS_OC_OFFSET (KERNEL_SIZE * KERNEL_SIZE * INPUT_CHANNELS * WEIGHT_ELEMENT_SIZE)
 
 
 #define ACCU_REG_SIZE (BLOCK_OC * BLOCK_W)
 
 #define INPUT_ELEMENT_SIZE_I32 int32_t(INPUT_ELEMENT_SIZE)
-static const int32_t init_linear_offsets[] = {  (0 - INPUT_PAD) * INPUT_ELEMENT_SIZE_I32,
-											    (1 - INPUT_PAD) * INPUT_ELEMENT_SIZE_I32, 
-											    (2 - INPUT_PAD) * INPUT_ELEMENT_SIZE_I32,
-											    (3 - INPUT_PAD) * INPUT_ELEMENT_SIZE_I32,
-											    (4 - INPUT_PAD) * INPUT_ELEMENT_SIZE_I32,
-											    (5 - INPUT_PAD) * INPUT_ELEMENT_SIZE_I32,
-											    (6 - INPUT_PAD) * INPUT_ELEMENT_SIZE_I32,
-											    (7 - INPUT_PAD) * INPUT_ELEMENT_SIZE_I32,
-												(8 - INPUT_PAD) * INPUT_ELEMENT_SIZE_I32, 
-											    (9 - INPUT_PAD) * INPUT_ELEMENT_SIZE_I32,
-											    (10 - INPUT_PAD) * INPUT_ELEMENT_SIZE_I32,
-											    (11 - INPUT_PAD) * INPUT_ELEMENT_SIZE_I32,
-											    (12 - INPUT_PAD) * INPUT_ELEMENT_SIZE_I32,
-											    (13 - INPUT_PAD) * INPUT_ELEMENT_SIZE_I32,
-											    (14 - INPUT_PAD) * INPUT_ELEMENT_SIZE_I32,
-											    (15 - INPUT_PAD) * INPUT_ELEMENT_SIZE_I32
-											  };
 
 static const uint32_t output_linear_init_offsets[] = {
                                                 0 * OUTPUT_ELEMENT_SIZE,
@@ -107,63 +78,30 @@ static const uint32_t output_linear_init_offsets[] = {
 											    14 * OUTPUT_ELEMENT_SIZE,
 											    15 * OUTPUT_ELEMENT_SIZE
                                             };
-
-static const uint32_t output_scattered_init_offsets[] = {
-                                                0 * OUTPUT_NCHW_PLANE_SIZE,
-                                                1 * OUTPUT_NCHW_PLANE_SIZE,
-                                                2 * OUTPUT_NCHW_PLANE_SIZE,
-                                                3 * OUTPUT_NCHW_PLANE_SIZE,
-                                                4 * OUTPUT_NCHW_PLANE_SIZE,
-                                                5 * OUTPUT_NCHW_PLANE_SIZE,
-                                                6 * OUTPUT_NCHW_PLANE_SIZE,
-                                                7 * OUTPUT_NCHW_PLANE_SIZE, 
-												8 * OUTPUT_NCHW_PLANE_SIZE, 
-											    9 * OUTPUT_NCHW_PLANE_SIZE,
-											    10 * OUTPUT_NCHW_PLANE_SIZE,
-											    11 * OUTPUT_NCHW_PLANE_SIZE,
-											    12 * OUTPUT_NCHW_PLANE_SIZE,
-											    13 * OUTPUT_NCHW_PLANE_SIZE,
-											    14 * OUTPUT_NCHW_PLANE_SIZE,
-											    15 * OUTPUT_NCHW_PLANE_SIZE
-                                            };
-
-static const uint32_t weights_init_offsets[] = {
-                                                0 * WEIGHTS_OC_OFFSET,
-                                                1 * WEIGHTS_OC_OFFSET,
-                                                2 * WEIGHTS_OC_OFFSET,
-                                                3 * WEIGHTS_OC_OFFSET,
-                                                4 * WEIGHTS_OC_OFFSET,
-                                                5 * WEIGHTS_OC_OFFSET,
-                                                6 * WEIGHTS_OC_OFFSET,
-                                                7 * WEIGHTS_OC_OFFSET, 
-												8 * WEIGHTS_OC_OFFSET, 
-											    9 * WEIGHTS_OC_OFFSET,
-											    10 * WEIGHTS_OC_OFFSET,
-											    11 * WEIGHTS_OC_OFFSET,
-											    12 * WEIGHTS_OC_OFFSET,
-											    13 * WEIGHTS_OC_OFFSET,
-											    14 * WEIGHTS_OC_OFFSET,
-											    15 * WEIGHTS_OC_OFFSET
-                                                };
-
-static const uint32_t predicate_init_values[] = {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1};
-
-_GENX_ inline vector<DT_ACCU, INPUT_REG_SIZE> load_input_nchw(SurfaceIndex surface [[type("buffer_t")]], uint32_t w_offset, int32_t h_offset, uint32_t batch_base_offset_bytes)
+	
+_GENX_ inline vector<DT_ACCU, INPUT_REG_SIZE> load_input_nchw(SurfaceIndex surface [[type("buffer_t")]], uint32_t input_width, uint32_t input_height, uint32_t input_pad, uint32_t w_offset, int32_t h_offset, uint32_t batch_base_offset_bytes)
 {
 	const uint32_t LINEAR_LOAD_SIZE = 16;
-	const int32_t h_offset_pad = h_offset - int32_t(INPUT_PAD);
+	const int32_t h_offset_pad = h_offset - int32_t(input_pad);
 	vector<DT_ACCU, INPUT_REG_SIZE> ret(0.0f);
 	vector<uint8_t, LINEAR_LOAD_SIZE> predicate(0);
-	vector<int32_t, LINEAR_LOAD_SIZE> offsets(init_linear_offsets);
+	vector<int32_t, LINEAR_LOAD_SIZE> offsets;
+	
+	#pragma unroll
+	for(int i = 0; i < LINEAR_LOAD_SIZE; i++)
+	{
+		offsets[i] = (i - int32_t(input_pad)) * INPUT_ELEMENT_SIZE_I32;
+	}
+	
 	offsets += w_offset * INPUT_ELEMENT_SIZE; 	// offset by X
 	
 	// update predicate mask for left and right padding
-	predicate.merge(1, offsets >= 0 & offsets < (INPUT_WIDTH * INPUT_ELEMENT_SIZE));
+	predicate.merge(1, offsets >= 0 & offsets < (input_width * INPUT_ELEMENT_SIZE));
 	// update predicate mask for top and bottom padding
-	vector<int32_t, LINEAR_LOAD_SIZE> is_not_in_height_range(h_offset_pad < 0 |  h_offset_pad > (INPUT_HEIGHT - 1));
+	vector<int32_t, LINEAR_LOAD_SIZE> is_not_in_height_range(h_offset_pad < 0 |  h_offset_pad > (input_height - 1));
 	predicate.merge(0, is_not_in_height_range);
 	
-	offsets += h_offset_pad * INPUT_WIDTH * INPUT_ELEMENT_SIZE;
+	offsets += h_offset_pad * input_width * INPUT_ELEMENT_SIZE;
 	vector<uint32_t, LINEAR_LOAD_SIZE> offsets_u32 = offsets;
 	offsets_u32 += batch_base_offset_bytes;
 	#pragma unroll
@@ -172,7 +110,7 @@ _GENX_ inline vector<DT_ACCU, INPUT_REG_SIZE> load_input_nchw(SurfaceIndex surfa
 		vector<DT_IN, LINEAR_LOAD_SIZE> load_chunk = cm_load<DT_IN, VectorSize::N1, DataSize::Default, CacheHint::Default, CacheHint::Default>(surface, offsets_u32);
 		vector<DT_ACCU, LINEAR_LOAD_SIZE> load_chunk_accu_dt = vector<DT_ACCU, LINEAR_LOAD_SIZE>(load_chunk);
 		ret.select<INPUT_REG_W, 1>(i * INPUT_REG_W).merge(load_chunk_accu_dt.select<INPUT_REG_W, 1>(), predicate.select<INPUT_REG_W, 1>());
-		offsets_u32 += (INPUT_WIDTH * INPUT_HEIGHT * INPUT_ELEMENT_SIZE);
+		offsets_u32 += (input_width * input_height * INPUT_ELEMENT_SIZE);
 	}
 	
 	return ret;
@@ -202,12 +140,13 @@ _GENX_ inline vector<DT_ACCU, BLOCK_OC * INPUT_CHANNELS> load_weights(SurfaceInd
 }
 
 
-_GENX_ inline void store_output_wc8_as_nchw(SurfaceIndex surface [[type("buffer_t")]], vector_ref<DT_OUT, ACCU_REG_SIZE> grf_chunk, uint32_t byte_offset, uint32_t w_chunk_id)
+_GENX_ inline void store_output_wc8_as_nchw(SurfaceIndex surface [[type("buffer_t")]], vector_ref<DT_OUT, ACCU_REG_SIZE> grf_chunk, uint32_t output_width, uint32_t output_height, uint32_t byte_offset, uint32_t w_chunk_id)
 {    
+	const uint32_t output_nchw_plane_size = (output_width * output_height * sizeof(DT_OUT));
 	// first: check if block stores can be used (address aligned to u32)
 	// second check if scattared cache-friendly writes can be used 
 	// third: use generic, slowest path with scattared, partial writes
-	if constexpr((OUTPUT_WIDTH * OUTPUT_ELEMENT_SIZE) % (BLOCK_W * OUTPUT_ELEMENT_SIZE / sizeof(uint32_t)) == 0)
+	if ((output_width * OUTPUT_ELEMENT_SIZE) % (BLOCK_W * OUTPUT_ELEMENT_SIZE / sizeof(uint32_t)) == 0)
 	{
 		#pragma unroll
 		for(int i = 0; i < BLOCK_OC; i++)
@@ -215,7 +154,7 @@ _GENX_ inline void store_output_wc8_as_nchw(SurfaceIndex surface [[type("buffer_
 			// pick data to store
 			vector<DT_OUT, BLOCK_W> grf_chunk_store = grf_chunk.select<BLOCK_W, BLOCK_OC>(i);                  
 			cm_store<uint32_t, BLOCK_W/2>(surface, byte_offset, grf_chunk_store.format<uint32_t>());
-			byte_offset += OUTPUT_WIDTH * OUTPUT_HEIGHT * OUTPUT_ELEMENT_SIZE;
+			byte_offset += output_width * output_height * OUTPUT_ELEMENT_SIZE;
 		}		
 	}
 	else if constexpr(BLOCK_W == 8 || BLOCK_W == 16)
@@ -228,13 +167,18 @@ _GENX_ inline void store_output_wc8_as_nchw(SurfaceIndex surface [[type("buffer_
 			// pick data to store
 			vector<DT_OUT, BLOCK_W> grf_chunk_store = grf_chunk.select<BLOCK_W, BLOCK_OC>(i);                  
 			cm_store<half, VectorSize::N1, DataSize::Default, CacheHint::WriteBack, CacheHint::WriteBack>(surface, offsets, grf_chunk_store/*, predicate*/);
-			offsets += OUTPUT_NCHW_PLANE_SIZE;
+			offsets += output_nchw_plane_size;
 		}
 	}
 	else
 	{
-		vector<uint32_t, BLOCK_OC> offsets(output_scattered_init_offsets);
-		offsets += byte_offset;
+		vector<uint32_t, BLOCK_OC> offsets;
+		#pragma unroll
+		for(int i = 0; i < BLOCK_OC; i++)
+		{
+			offsets[i] = i * output_nchw_plane_size + byte_offset;
+		}
+		
 		#pragma unroll
 		for(int i = 0; i < BLOCK_W; i++)
 		{
@@ -252,22 +196,32 @@ extern "C" _GENX_MAIN_ void convolution_nchw_nondpas(
 #if USE_BIAS
 	SurfaceIndex surface_bias [[type("buffer_t")]],
 #endif
+	SurfaceIndex surface_constants [[type("buffer_t")]],
 	SurfaceIndex surface_output [[type("buffer_t")]]
 )
 {
-    const uint32_t thg_0 = cm_group_id(0) * cm_local_size(0) + cm_local_id(0);
+    vector<uint32_t, 32> constants = cm_load<uint32_t, 32, DataSize::Default, CacheHint::Cached, CacheHint::Cached>(surface_constants, 0);
+	const uint32_t input_height = constants[0];
+	const uint32_t input_width = constants[1];
+	const uint32_t input_pad = constants[2];
+	const uint32_t output_channels = constants[3];
+	const uint32_t output_height = constants[4];
+	const uint32_t output_width = constants[5];
+	const uint32_t stride_h = constants[6];
+
+	const uint32_t thg_0 = cm_group_id(0) * cm_local_size(0) + cm_local_id(0);
     const uint32_t thg_1 = cm_group_id(1) * cm_local_size(1) + cm_local_id(1);
     const uint32_t thg_2 = cm_group_id(2) * cm_local_size(2) + cm_local_id(2);   
 
 	const uint32_t w_chunk_id = thg_0;
 	const uint32_t h_chunk_id = thg_1;
-	const uint32_t thread_per_full_oc = OUTPUT_CHANNELS / BLOCK_OC;
+	const uint32_t thread_per_full_oc = output_channels / BLOCK_OC;
 	const uint32_t batch_id = thg_2 / thread_per_full_oc;
 	const uint32_t oc_chunk_id = thg_2 % thread_per_full_oc;
 
-    const uint32_t input_batch_offset = batch_id * BLOCK_BATCH * INPUT_WIDTH * INPUT_HEIGHT * INPUT_CHANNELS * sizeof(DT_IN);
+    const uint32_t input_batch_offset = batch_id * BLOCK_BATCH * input_width * input_height * INPUT_CHANNELS * sizeof(DT_IN);
     const uint32_t input_w_chunk_offset = w_chunk_id * BLOCK_W * STRIDE_W;
-    const uint32_t input_h_chunk_offset = h_chunk_id * BLOCK_H * STRIDE_H;
+    const uint32_t input_h_chunk_offset = h_chunk_id * BLOCK_H * stride_h;
 	
 	matrix<DT_ACCU, BLOCK_BATCH, ACCU_REG_SIZE> accu_row_0(0.0f);
 	
@@ -278,7 +232,7 @@ extern "C" _GENX_MAIN_ void convolution_nchw_nondpas(
 		#pragma unroll
 		for(int b = 0; b < BLOCK_BATCH; b++)
 		{
-			input_0.row(b) = load_input_nchw(surface_input, input_w_chunk_offset, input_h_chunk_offset + kh, input_batch_offset + b * INPUT_WIDTH * INPUT_HEIGHT * INPUT_CHANNELS * sizeof(DT_IN));
+			input_0.row(b) = load_input_nchw(surface_input, input_width, input_height, input_pad, input_w_chunk_offset, input_h_chunk_offset + kh, input_batch_offset + b * input_width * input_height * INPUT_CHANNELS * sizeof(DT_IN));
 		}
 
 		#pragma unroll
@@ -310,12 +264,12 @@ extern "C" _GENX_MAIN_ void convolution_nchw_nondpas(
     //vector<DT_OUT, ACCU_REG_SIZE> output_row_0 = vector<DT_OUT, ACCU_REG_SIZE>(accu_row_0);
     matrix<DT_OUT, BLOCK_BATCH, ACCU_REG_SIZE> output_row_0 = matrix<DT_OUT, BLOCK_BATCH, ACCU_REG_SIZE>(accu_row_0);
 	
-	const uint output_batch_offset = batch_id * BLOCK_BATCH * OUTPUT_HEIGHT * OUTPUT_WIDTH * OUTPUT_CHANNELS;
-    const uint output_oc_chunk_offset = oc_chunk_id * BLOCK_OC * OUTPUT_HEIGHT * OUTPUT_WIDTH;
+	const uint output_batch_offset = batch_id * BLOCK_BATCH * output_height * output_width * output_channels;
+    const uint output_oc_chunk_offset = oc_chunk_id * BLOCK_OC * output_height * output_width;
     const uint output_w_chunk_offset = w_chunk_id * BLOCK_W;
-    const uint output_h_chunk_offset = h_chunk_id * BLOCK_H * OUTPUT_WIDTH;
+    const uint output_h_chunk_offset = h_chunk_id * BLOCK_H * output_width;
     uint32_t output_offset = (output_batch_offset + output_oc_chunk_offset + output_h_chunk_offset + output_w_chunk_offset) * sizeof(DT_OUT);
 	
-	store_output_wc8_as_nchw(surface_output, output_row_0.row(0), output_offset, w_chunk_id);
-	store_output_wc8_as_nchw(surface_output, output_row_0.row(1), output_offset + OUTPUT_HEIGHT * OUTPUT_WIDTH * OUTPUT_CHANNELS * sizeof(DT_OUT), w_chunk_id);
+	store_output_wc8_as_nchw(surface_output, output_row_0.row(0), output_width, output_height, output_offset, w_chunk_id);
+	store_output_wc8_as_nchw(surface_output, output_row_0.row(1), output_width, output_height, output_offset + output_height * output_width * output_channels * sizeof(DT_OUT), w_chunk_id);
 }
