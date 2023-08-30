@@ -231,8 +231,10 @@ struct opts_t
     std::uint32_t out_pad;
     TensorShape stride;
     TensorShape output_shape;
-
     DataType out_dt = DataType::eCount;
+    std::uint32_t activation_type;
+    float activation_alpha;
+    float activation_beta;
     DataLayout out_layout = DataLayout::eCount;
 };
 std::vector<std::byte> convolution(const bindings_t& bindings, opts_t opts);
@@ -250,6 +252,9 @@ public:
         TensorShape filter_shape;
         std::uint32_t in_pad;
         std::uint32_t out_pad;
+        std::uint32_t act_type;
+        float act_alpha;
+        float act_beta;
         TensorShape stride;
         bool no_bias = false;
         bool allow_fp16_computations = false;
@@ -266,7 +271,9 @@ public:
             opts->add_option("--stride", params.stride, "speciify list: <stride_h, stride_w>")->required();
             opts->add_flag("--no_bias", params.no_bias);
             opts->add_flag("--allow_fp16_computations", params.allow_fp16_computations);
-
+            opts->add_option("--activation_type", params.act_type);
+            opts->add_option("--activation_alpha", params.act_alpha);
+            opts->add_option("--activation_beta", params.act_beta);
         }
     };
 
@@ -449,6 +456,9 @@ protected:
         *ptr++ = static_cast<Dt>(params_.stride.h);
         *ptr++ = static_cast<Dt>(params_.filter_shape.c);
         *ptr++ = static_cast<Dt>(params_.filter_shape.n);
+        *ptr++ = static_cast<Dt>(params_.act_type);
+        *ptr++ = static_cast<Dt>(params_.act_alpha);
+        *ptr++ = static_cast<Dt>(params_.act_beta);
     }
     inline bool use_bias() const
     {
@@ -486,6 +496,9 @@ protected:
         opts.stride = params_.stride;
         opts.out_layout = params_.layout;
         opts.out_dt = params_.dt;
+        opts.activation_type = params_.act_type;
+        opts.activation_alpha = params_.act_alpha;
+        opts.activation_beta = params_.act_beta;
         return cpu_op::convolution(bindings, opts);
     }
 
@@ -597,8 +610,8 @@ public:
             {
                 wr_params.output_layout = DataLayout::eIO_i8_o8_i2;
             }
-            else*/ if (params_.dt == DataType::eFp16 /* && params_.filter_shape.w != 1 && params_.filter_shape.h != 1*/)
-            {
+            else if (params_.dt == DataType::eFp16  && params_.filter_shape.w != 1 && params_.filter_shape.h != 1)
+            {*/
                 if (cm_params_.block_oc == 8)
                 {
                     wr_params.output_layout = DataLayout::eOYXI_o8;
@@ -607,7 +620,7 @@ public:
                 {
                     wr_params.output_layout = DataLayout::eOYXI_o16;
                 }
-            }
+            //}
 
             weights_reorder_.emplace(WeightsReorder(std::move(wr_params), filter_buffer_, constant_buffer_, intc_ext, d3d12_device, cmd_list));
         }
@@ -648,7 +661,7 @@ public:
             build_options += pre_jit + name + between_name_and_value + value_str + post_jit;
         };
 
-        if (params_.allow_fp16_computations)
+        if (params_.dt == DataType::eFp16)
         {
             add_define("DT_ACCU", "half");
         }
@@ -919,8 +932,14 @@ private:
 
                 build_options += pre_jit + name + between_name_and_value + value_str + post_jit;
             };
-
-            add_define("DT", "half");
+            if (params_.input_dt == DataType::eFp16 && params_.output_dt == DataType::eFp16)
+            {
+                add_define("DT", "half");
+            }
+            else
+            {
+                add_define("DT", "float");
+            }
             //add_define("WEI_OFFSET", 0);
             //add_define("IC", params_.ic);
             //add_define("OC", params_.oc);

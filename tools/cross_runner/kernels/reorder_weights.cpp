@@ -41,7 +41,7 @@ implied warranties, other than those that are expressly stated in the License.
 #endif
 
 #define WEIGHT_TYPE_SIZE sizeof(DT)
-
+	
 static const uint32_t weights_init_linear_offsets[] = {
 													0 * WEIGHT_TYPE_SIZE,
 													1 * WEIGHT_TYPE_SIZE,
@@ -117,14 +117,16 @@ extern "C" _GENX_MAIN_ void weights_reorder(SurfaceIndex surface_input [[type("b
     const uint32_t kh = thread_id_2;
 	const uint32_t weights_oc_offset = IC * weights_ic_offset;
 	const uint32_t chunks_count = SIMD_SIZE;
+	const uint32_t max_dt_size = sizeof(float)/WEIGHT_TYPE_SIZE;
+	const uint32_t LOAD_SIZE = ((K_SIZE + SIMD_SIZE) >> 3) << 3;
     matrix<DT, SIMD_SIZE, K_SIZE> data_input;
 	
-	vector<uint32_t, 8> offsets(weights_init_linear_offsets);
+	vector<uint32_t, LOAD_SIZE> offsets(weights_init_linear_offsets);
 	offsets += oc * weights_oc_offset + ic * weights_ic_offset + kh * K_SIZE * WEIGHT_TYPE_SIZE;
 	#pragma unroll
 	for(int i = 0; i < chunks_count; i++)
 	{
-		vector<DT, 8> data_load = cm_load<DT, VectorSize::N1, DataSize::Default, CacheHint::Default, CacheHint::Default>(surface_input, offsets);
+		vector<DT, LOAD_SIZE> data_load = cm_load<DT, VectorSize::N1, DataSize::Default, CacheHint::Default, CacheHint::Default>(surface_input, offsets);
 		data_input.select<1, 1, K_SIZE, 1>(i, 0) = data_load.select<K_SIZE, 1>();
 		offsets += K_SIZE * K_SIZE * IC * WEIGHT_TYPE_SIZE;
 	}
@@ -134,7 +136,7 @@ extern "C" _GENX_MAIN_ void weights_reorder(SurfaceIndex surface_input [[type("b
 	for(int kw = 0; kw < K_SIZE; kw++)
 	{
 		vector<DT, SIMD_SIZE> data_out = data_input.select<SIMD_SIZE, 1, 1, 1>(0, kw);
-		cm_store<uint32_t, SIMD_SIZE/2>(surface_output, ouput_offset, data_out.format<uint32_t>());
+		cm_store<uint32_t, SIMD_SIZE/max_dt_size>(surface_output, ouput_offset, data_out.format<uint32_t>());
 		ouput_offset += IC * SIMD_SIZE * WEIGHT_TYPE_SIZE;
 	}
 #else

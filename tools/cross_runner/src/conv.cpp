@@ -9,6 +9,21 @@ inline dnnl::memory create_dnnl_memory(const cpu_op::binding_t binding, dnnl::en
     return dnnl::memory({ dims, dt, ft }, engine);
 }
 
+inline dnnl::primitive_attr CreateEltwisePostOps(dnnl::algorithm Activation, float alpha, float beta)
+{
+    // create a post-op with relu
+    dnnl::post_ops ops;
+    dnnl::primitive_attr attr;
+
+    if (Activation != dnnl::algorithm::undef)
+    {
+        ops.append_eltwise(Activation, alpha, beta);
+        // create an attribute and set the corresponding post op
+        attr.set_post_ops(ops);
+    }
+    return attr;
+}
+
 std::vector<std::byte> cpu_op::convolution(const bindings_t& bindings, opts_t opts)
 {
     static dnnl::engine engine(dnnl::engine::kind::gpu, 0);
@@ -72,9 +87,10 @@ std::vector<std::byte> cpu_op::convolution(const bindings_t& bindings, opts_t op
 
     const dnnl::memory::dims pad{ opts.inp_pad, opts.inp_pad };
     const dnnl::memory::dims stride{ opts.stride.h, opts.stride.w };
+    const dnnl::primitive_attr attr = CreateEltwisePostOps(static_cast<dnnl::algorithm>(opts.activation_type), opts.activation_alpha, opts.activation_beta);
     const dnnl::convolution_forward::primitive_desc conv_desc(engine,
         dnnl::prop_kind::forward_inference, dnnl::algorithm::convolution_direct,
-        input_memory.get_desc(), filter_memory.get_desc(), bindings.bias.data ? bias_memory.get_desc() : dnnl::memory::desc{}, output_memory.get_desc(), stride, pad, pad);
+        input_memory.get_desc(), filter_memory.get_desc(), bindings.bias.data ? bias_memory.get_desc() : dnnl::memory::desc{}, output_memory.get_desc(), stride, pad, pad, attr);
 
     const auto guery_impl_str = conv_desc.impl_info_str();
 
