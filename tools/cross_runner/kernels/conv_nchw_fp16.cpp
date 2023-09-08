@@ -22,7 +22,6 @@ implied warranties, other than those that are expressly stated in the License.
 #define UNIT_VAL_ZERO 0.0f
 
 #define BLOCK_H 1
-#define BLOCK_W 4
 #define BLOCK_BATCH 1
 #define BLOCK_OC 8
 
@@ -42,9 +41,6 @@ implied warranties, other than those that are expressly stated in the License.
 #error [Error_kernel_config_unsupported_block_w] Kernel designed to with with block_oc which is equal to 8 or 16 or 32;
 #endif
 
-#if INPUT_CHANNELS >= 16
-#error [Error_input_channel_count] This kernel was designed to work with small input channels, which are not fitting dpas scenarios.
-#endif
 
 #define DT_OUT DT_ACCU
 #define DT_IN DT_ACCU
@@ -131,6 +127,7 @@ _GENX_ inline vector<DT_ACCU, INPUT_REG_SIZE> load_input_nchw(SurfaceIndex surfa
 	offsets += h_offset_pad * input_width * INPUT_ELEMENT_SIZE;
 	vector<uint32_t, LINEAR_LOAD_SIZE> offsets_u32 = offsets;
 	offsets_u32 += batch_base_offset_bytes;
+	
 	#pragma unroll
 	for(int i = 0; i < INPUT_CHANNELS; i++)
 	{
@@ -158,8 +155,6 @@ _GENX_ inline vector<DT_ACCU, BLOCK_OC * INPUT_CHANNELS> load_weights(SurfaceInd
 		vector<uint32_t, BLOCK_OC/BLOCK_SC> typed_load = cm_load<uint32_t, BLOCK_OC/BLOCK_SC, DataSize::Default, CacheHint::Cached, CacheHint::Cached>(surface, offset);	
 		vector_ref<DT_WEIGHTS, BLOCK_OC> load_data = typed_load.format<DT_WEIGHTS>();
 		ret.select<BLOCK_OC, 1>(i * BLOCK_OC) = vector<DT_ACCU, BLOCK_OC>(load_data);
-				
-		
 		offset += BLOCK_OC * WEIGHT_ELEMENT_SIZE;
 	}
 
@@ -200,7 +195,7 @@ _GENX_ inline void store_output_wc8_as_nchw(SurfaceIndex surface [[type("buffer_
 		{
 			// pick data to store
 			vector<DT_OUT, BLOCK_W> grf_chunk_store = grf_chunk.select<BLOCK_W, BLOCK_OC>(i);                  
-			cm_store<half, VectorSize::N1, DataSize::Default, CacheHint::WriteBack, CacheHint::WriteBack>(surface, offsets, grf_chunk_store/*, predicate*/);
+			cm_store<DT_OUT, VectorSize::N1, DataSize::Default, CacheHint::WriteBack, CacheHint::WriteBack>(surface, offsets, grf_chunk_store);
 			offsets += output_nchw_plane_size;
 		}
 	}
@@ -218,7 +213,7 @@ _GENX_ inline void store_output_wc8_as_nchw(SurfaceIndex surface [[type("buffer_
 		{
 			// pick data to store
 			vector<DT_OUT, BLOCK_OC> grf_chunk_store = grf_chunk.select<BLOCK_OC, 1>(i * BLOCK_OC);                  
-			cm_store<half, VectorSize::N1, DataSize::Default, CacheHint::WriteBack, CacheHint::WriteBack>(surface, offsets, grf_chunk_store/*, predicate*/);
+			cm_store<DT_OUT, VectorSize::N1, DataSize::Default, CacheHint::WriteBack, CacheHint::WriteBack>(surface, offsets, grf_chunk_store);
 			offsets += OUTPUT_ELEMENT_SIZE;
 		}
 	}
@@ -234,7 +229,7 @@ extern "C" _GENX_MAIN_ void convolution_nchw_nondpas(
 	SurfaceIndex surface_output [[type("buffer_t")]]
 )
 {
-    vector<uint32_t, 16> constants = cm_load<uint32_t, 16, DataSize::Default, CacheHint::Cached, CacheHint::Cached>(surface_constants, 0);
+	vector<uint32_t, 16> constants = cm_load<uint32_t, 16, DataSize::Default, CacheHint::Cached, CacheHint::Cached>(surface_constants, 0);
 	const uint32_t input_height = constants[0];
 	const uint32_t input_width = constants[1];
 	const uint32_t input_pad = constants[2];
@@ -252,7 +247,7 @@ extern "C" _GENX_MAIN_ void convolution_nchw_nondpas(
 
 	const uint32_t w_chunk_id = thg_0;
 	const uint32_t h_chunk_id = thg_1;
-	const uint32_t thread_per_full_oc = output_channels / BLOCK_OC;
+	const uint32_t thread_per_full_oc = (output_channels + BLOCK_OC - 1)/ BLOCK_OC;
 	const uint32_t batch_id = thg_2 / thread_per_full_oc;
 	const uint32_t oc_chunk_id = thg_2 % thread_per_full_oc;
 

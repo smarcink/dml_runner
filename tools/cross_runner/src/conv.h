@@ -686,7 +686,7 @@ public:
         //add_define("STRIDE_H", params_.stride.h);
 
         //add_define("SLICE_IC", cm_params_.slice_ic);
-        //add_define("BLOCK_W", cm_params_.block_w);
+        add_define("BLOCK_W", cm_params_.block_w);
         //add_define("BLOCK_H", cm_params_.block_h);
         //add_define("BLOCK_OC", cm_params_.block_oc);
         //add_define("BLOCK_BATCH", cm_params_.block_batch);
@@ -810,9 +810,10 @@ public:
             }
         }
 
+        const uint32_t out_ch_size = static_cast<uint32_t>(std::ceil(params_.filter_shape.n / (double)(cm_params_.block_oc)));
         const auto gws_x = cm_params_.slice_ic * (round_up_next_multiple(output_shape_.w, cm_params_.block_w) / cm_params_.block_w);
         const auto gws_y = round_up_next_multiple(output_shape_.h, cm_params_.block_h) / cm_params_.block_h;
-        const auto gws_z = (params_.input_shape.n / cm_params_.block_batch) * (params_.filter_shape.n / cm_params_.block_oc);
+        const auto gws_z = (params_.input_shape.n / cm_params_.block_batch) * out_ch_size;
 
         assert(gws_x % cm_params_.lws[0] == 0);
         assert(gws_y % cm_params_.lws[1] == 0);
@@ -873,13 +874,13 @@ private:
                 }
                 else if (output_layout == DataLayout::eOYXI_o8)
                 {
-                    gws_x = oc / 8;
+                    gws_x = static_cast<uint32_t>(std::ceil(oc / 8.0));
                     gws_y = ic;
                     gws_z = k_size;  // kernel size Y
                 }
                 else if (output_layout == DataLayout::eOYXI_o16)
                 {
-                    gws_x = oc / 16;
+                    gws_x = static_cast<uint32_t>(std::ceil(oc / 16.0));
                     gws_y = ic;
                     gws_z = k_size;  // kernel size Y
                 }
@@ -985,9 +986,22 @@ private:
             pso_ = intc_ext_.create_pipeline(byte_code, build_options_final, root_signature_.Get(), INTC_D3D12_SHADER_INPUT_TYPE::CM);
             assert(pso_);
 
+            uint32_t filter_channels = 0;
+            if (params_.output_layout == DataLayout::eOYXI_o8)
+            {
+                filter_channels = (params_.oc + params_.oc % 8);
+            }
+            else if (params_.output_layout == DataLayout::eOYXI_o16)
+            {
+                filter_channels = (params_.oc + params_.oc % 16);
+            }
+            else
+            {
+                filter_channels = params_.oc;
+            }
             // compiled success -> create buffer
             {
-                const auto size_bytes = params_.ic * params_.oc * params_.k_size * params_.k_size * get_data_type_bytes_width(params_.output_dt);
+                const auto size_bytes = params_.ic * filter_channels * params_.k_size * params_.k_size * get_data_type_bytes_width(params_.output_dt);
                 output_buffer_ = create_buffer(d3d12_device, size_bytes,
                     D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
             }
