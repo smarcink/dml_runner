@@ -1,3 +1,5 @@
+cmake_policy(SET CMP0077 NEW)
+
 #d3d12x
 add_library(d3d12x INTERFACE)
 target_include_directories(d3d12x INTERFACE "d3dx12")

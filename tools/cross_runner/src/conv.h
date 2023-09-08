@@ -9,16 +9,17 @@ class Convolution : public DirectMlBaseNode
 {
 public:
     Convolution(const TensorShape& input_shape, const TensorShape& filter_shape, const TensorShape& output_shape,
-        const DML_TENSOR_DATA_TYPE data_type, const dml::TensorPolicy& tensor_policy,
+        const DML_TENSOR_DATA_TYPE data_type, const dml::TensorPolicy& input_tensor_policy, const dml::TensorPolicy& output_tensor_policy,
         const TensorShape& stride_shape, std::uint32_t input_pad, std::uint32_t output_pad,
-            bool use_bias, bool allow_fp16_computations, 
-            IDMLDevice* dml_device, ID3D12Device* d3d12_device, bool disable_mc = false)
+        bool use_bias, bool allow_fp16_computations,
+        IDMLDevice* dml_device, ID3D12Device* d3d12_device, bool disable_mc = false)
         : DirectMlBaseNode(dml_device, d3d12_device)
     {
 
         const dml::TensorDimensions input_dims{ input_shape.n, input_shape.c, input_shape.h, input_shape.w };
         const dml::TensorDimensions filter_dims{ filter_shape.n, filter_shape.c, filter_shape.h, filter_shape.w };
         const dml::TensorDimensions output_dims{ output_shape.n, output_shape.c, output_shape.h, output_shape.w };
+
         const dml::TensorDimensions bias_dims{ 1, output_shape.c, 1, 1 };
 
         const std::array<std::uint32_t, 2> strides = { stride_shape.h, stride_shape.w };
@@ -34,7 +35,7 @@ public:
             tensor_input_desc_.DimensionCount = static_cast<std::uint32_t>(input_dims.size());
             tensor_input_desc_.Sizes = input_dims.data();
 
-            input_tensor_properites = tensor_policy.Get(tensor_input_desc_.DataType, tensor_input_desc_.Flags, input_dims);
+            input_tensor_properites = input_tensor_policy.Get(tensor_input_desc_.DataType, tensor_input_desc_.Flags, input_dims);
             tensor_input_desc_.Strides = input_tensor_properites.strides.has_value() ? input_tensor_properites.strides->data() : nullptr;
             tensor_input_desc_.TotalTensorSizeInBytes = input_tensor_properites.totalTensorSizeInBytes;
             tensor_input_desc_.GuaranteedBaseOffsetAlignment = input_tensor_properites.guaranteedBaseOffsetAlignment;
@@ -47,7 +48,7 @@ public:
             tensor_filter_desc_.DimensionCount = static_cast<std::uint32_t>(filter_dims.size());
             tensor_filter_desc_.Sizes = filter_dims.data();
 
-            filter_tensor_properites = tensor_policy.Get(tensor_filter_desc_.DataType, tensor_filter_desc_.Flags, filter_dims);
+            filter_tensor_properites = input_tensor_policy.Get(tensor_filter_desc_.DataType, tensor_filter_desc_.Flags, filter_dims);
             tensor_filter_desc_.Strides = filter_tensor_properites.strides.has_value() ? filter_tensor_properites.strides->data() : nullptr;;
             tensor_filter_desc_.TotalTensorSizeInBytes = filter_tensor_properites.totalTensorSizeInBytes;
             tensor_filter_desc_.GuaranteedBaseOffsetAlignment = filter_tensor_properites.guaranteedBaseOffsetAlignment;
@@ -61,7 +62,7 @@ public:
             bias_desc.Flags = DML_TENSOR_FLAG_NONE;
             bias_desc.DimensionCount = static_cast<std::uint32_t>(bias_dims.size());
             bias_desc.Sizes = bias_dims.data();
-            bias_tensor_properites = tensor_policy.Get(bias_desc.DataType, bias_desc.Flags, bias_dims);
+            bias_tensor_properites = input_tensor_policy.Get(bias_desc.DataType, bias_desc.Flags, bias_dims);
             bias_desc.TotalTensorSizeInBytes = bias_tensor_properites.totalTensorSizeInBytes;
             bias_desc.GuaranteedBaseOffsetAlignment = bias_tensor_properites.guaranteedBaseOffsetAlignment;
             tensor_bias_desc_.emplace(std::move(bias_desc));
@@ -74,7 +75,7 @@ public:
             tensor_out_desc_.DimensionCount = static_cast<std::uint32_t>(output_dims.size());
             tensor_out_desc_.Sizes = output_dims.data();
 
-            output_tensor_properites = tensor_policy.Get(tensor_out_desc_.DataType, tensor_out_desc_.Flags, output_dims);
+            output_tensor_properites = output_tensor_policy.Get(tensor_out_desc_.DataType, tensor_out_desc_.Flags, output_dims);
             tensor_out_desc_.Strides = output_tensor_properites.strides.has_value() ? output_tensor_properites.strides->data() : nullptr;
             tensor_out_desc_.TotalTensorSizeInBytes = output_tensor_properites.totalTensorSizeInBytes;
             tensor_out_desc_.GuaranteedBaseOffsetAlignment = output_tensor_properites.guaranteedBaseOffsetAlignment;
@@ -247,7 +248,8 @@ public:
     struct create_params_t
     {
         DataType dt;
-        DataLayout layout;
+        DataLayout input_layout;
+        DataLayout output_layout = DataLayout::eNCHW;
         TensorShape input_shape;
         TensorShape filter_shape;
         std::uint32_t in_pad;
@@ -263,7 +265,8 @@ public:
         inline static void add_cli_options(CLI::App* opts, create_params_t& params)
         {
             add_data_type_cli_option(opts, "--data_type", params.dt)->required();
-            add_data_layout_cli_option(opts, "--layout", params.layout)->required();
+            add_data_layout_cli_option(opts, "--input_layout", params.input_layout)->required();
+            add_data_layout_cli_option(opts, "--output_layout", params.output_layout);
             opts->add_option("--input_shape", params.input_shape, "speciify list: <n, ic, h, w")->required();
             opts->add_option("--filter_shape", params.filter_shape, "speciify list: <oc, ic, kh, kw")->required();
             opts->add_option("--in_pad", params.in_pad)->required();
@@ -471,21 +474,21 @@ protected:
         {
             bindings.input.data = input_data_.data();
             bindings.input.dt = params_.dt;
-            bindings.input.layout = params_.layout;
+            bindings.input.layout = params_.input_layout;
             bindings.input.shape = params_.input_shape;
         }
 
         {
             bindings.filter.data = filter_data_.data();
             bindings.filter.dt = params_.dt;
-            bindings.filter.layout = params_.layout;
+            bindings.filter.layout = params_.input_layout;
             bindings.filter.shape = params_.filter_shape;
         }
         if (use_bias())
         {
             bindings.bias.data = bias_data_.data();
             bindings.bias.dt = params_.dt;
-            bindings.bias.layout = params_.layout;
+            bindings.bias.layout = params_.input_layout;
             bindings.bias.shape = TensorShape(params_.filter_shape.n, 1u, 1u, 1u);
         }
 
@@ -494,7 +497,7 @@ protected:
         opts.inp_pad = params_.in_pad;
         opts.out_pad = params_.out_pad;
         opts.stride = params_.stride;
-        opts.out_layout = params_.layout;
+        opts.out_layout = params_.output_layout;
         opts.out_dt = params_.dt;
         opts.activation_type = params_.act_type;
         opts.activation_alpha = params_.act_alpha;
@@ -527,7 +530,8 @@ public:
         : ConvolutionBaseDispatcher(std::move(params), d3d12_device, cmd_list)
         , dml_cmd_recorder_(dml_cmd_recorder)
         , conv_(params_.input_shape, params_.filter_shape, get_output_shape(),
-            to_dml_data_type(params_.dt), to_dml_tensor_policy(params_.layout),
+            to_dml_data_type(params_.dt), to_dml_tensor_policy(params_.input_layout),
+            to_dml_tensor_policy(params_.output_layout),
             params_.stride, params_.in_pad, params_.out_pad, !params_.no_bias, params_.allow_fp16_computations,
             dml_device, d3d12_device)
     {
@@ -604,7 +608,7 @@ public:
             wr_params.ic = params_.filter_shape.c;
             wr_params.oc = params_.filter_shape.n;
             wr_params.k_size = params_.filter_shape.w;
-            wr_params.input_layout = params_.layout == DataLayout::eNCHW ? DataLayout::eOIYX : DataLayout::eWeightsLayoutStart;
+            wr_params.input_layout = params_.input_layout == DataLayout::eNCHW ? DataLayout::eOIYX : DataLayout::eWeightsLayoutStart;
 
             /*if (params_.dt == DataType::eFp16 && params_.filter_shape.w == 1 && params_.filter_shape.h == 1)
             {
@@ -684,6 +688,8 @@ public:
         //add_define("BLOCK_BATCH", cm_params_.block_batch);
 
         //add_define("WEIGHTS_IN_OPTIMAL_FORMAT", cm_params.reorder_weights);
+
+        add_define("OUTPUT_LAYOUT_IS_NHWC", (params_.output_layout == DataLayout::eNHWC ) ? 1 : 0);
 
         // kernel compilation
         const auto dump_asm_str = cm_params_.dump_asm ? " -mdump_asm" : "";
