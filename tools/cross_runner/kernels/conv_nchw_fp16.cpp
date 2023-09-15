@@ -148,61 +148,63 @@ _GENX_ inline vector<DT_ACCU, BLOCK_OC> load_weights(SurfaceIndex surface [[type
 	return ret;
 }
 
-_GENX_ inline void store_output_wc8_as_nchw(SurfaceIndex surface [[type("buffer_t")]], vector_ref<DT_OUT, ACCU_REG_SIZE> grf_chunk, uint32_t output_width, uint32_t output_height, uint32_t byte_offset, uint32_t w_chunk_id)
+_GENX_ inline void store_output_wc8_as_nchw(SurfaceIndex surface [[type("buffer_t")]], vector_ref<DT_OUT, ACCU_REG_SIZE> grf_chunk, uint32_t output_width, uint32_t output_height, uint32_t byte_offset, uint32_t w_chunk_id, uint32_t output_channels)
 {   
 	const uint32_t output_nchw_plane_size = (output_width * output_height * sizeof(DT_OUT));
 	const uint32_t BLOCK_SC = MAX_ELEMENT_SIZE/OUTPUT_ELEMENT_SIZE;
-	// first: check if block stores can be used (address aligned to u32)
-	// second check if scattared cache-friendly writes can be used 
-	// third: use generic, slowest path with scattared, partial writes
+	const uint32_t pixel_offset = byte_offset / OUTPUT_ELEMENT_SIZE;
+	const bool b_oc_unalign_byte_offset = ((output_channels - (pixel_offset % output_channels)) < BLOCK_OC);
+	const bool b_ow_unalign_byte_offset = ((BLOCK_W + (pixel_offset % output_width)) > output_width);
 
-	if (sizeof(DT_OUT) == MAX_ELEMENT_SIZE && output_width == 1)
-	{	
-		vector<DT_OUT, BLOCK_OC> grf_chunk_store = grf_chunk.select<BLOCK_OC, 1>(0); 
-		cm_store<uint32_t, BLOCK_OC/BLOCK_SC>(surface, byte_offset, grf_chunk_store.format<uint32_t>());
-	}
-	else if ((output_width * OUTPUT_ELEMENT_SIZE) % (BLOCK_W * OUTPUT_ELEMENT_SIZE / sizeof(uint32_t)) == 0)
+#if DT_ACCU == fp32
+	if( output_width == 1 && b_oc_unalign_byte_offset == false)
 	{
-		#pragma unroll
-		for(int i = 0; i < BLOCK_OC; i++)
+		// Corner Case 1: This IF Statement handles incoming 1-D write blocks with channel sizes aligned to BLOCK_OC
+		// For Example: --input_shape=1,24,1,1 --filter_shape=6,24,1,1
+		cm_store<uint32_t, BLOCK_OC>(surface, byte_offset, grf_chunk.select<BLOCK_OC, 1>(0).format<uint32_t>());
+	}
+	else if (output_width == 1 && b_oc_unalign_byte_offset == true)
+	{
+		// Corner Case 2: This IF Statement handles incoming write blocks with output channels not aligned to BLOCK_OC and are less than BLOCK_OC
+		// For Example: --filter_shape=12,48,1,1 where output channel = 12 % BLOCK_OC (i.e., 8) = 4, which is unaligned and less than BLOCK_OC
+		for(int i = 0; i < output_channels % BLOCK_OC; i++)
 		{
-			// pick data to store
-			vector<DT_OUT, BLOCK_W> grf_chunk_store = grf_chunk.select<BLOCK_W, BLOCK_OC>(i);                  
-			cm_store<uint32_t, BLOCK_W/BLOCK_SC>(surface, byte_offset, grf_chunk_store.format<uint32_t>());
+			vector<DT_OUT, 1> grf_chunk_store = grf_chunk.select<1, 1>(i);                  
+			cm_store<uint32_t, 1>(surface, byte_offset, grf_chunk_store.format<uint32_t>());
 			byte_offset += output_width * output_height * OUTPUT_ELEMENT_SIZE;
-		}		
+		}
 	}
-	else if constexpr(BLOCK_W == 8 || BLOCK_W == 16)
+	else if (b_ow_unalign_byte_offset == true)
 	{
-		vector<uint32_t, BLOCK_W> offsets(output_linear_init_offsets);
-		offsets += byte_offset;
+		// Corner Case 3: This only works for BLOCK_W=2
 		#pragma unroll
 		for(int i = 0; i < BLOCK_OC; i++)
 		{
-			// pick data to store
-			vector<DT_OUT, BLOCK_W> grf_chunk_store = grf_chunk.select<BLOCK_W, BLOCK_OC>(i);                  
-			cm_store<DT_OUT, VectorSize::N1, DataSize::Default, CacheHint::WriteBack, CacheHint::WriteBack>(surface, offsets, grf_chunk_store);
-			offsets += output_nchw_plane_size;
+			vector<DT_OUT, 1> grf_chunk_store = grf_chunk.select<1, 1>(i);                  
+			cm_store<uint32_t, 1>(surface, byte_offset, grf_chunk_store.format<uint32_t>());
+			byte_offset += output_width * output_height * OUTPUT_ELEMENT_SIZE;
 		}
 	}
 	else
 	{
-		vector<uint32_t, BLOCK_OC> offsets;
+		// Default Case BLOCK_W x OB_BLOCK: Most of the incoming write blocks hit this case.
 		#pragma unroll
 		for(int i = 0; i < BLOCK_OC; i++)
 		{
-			offsets[i] = i * output_nchw_plane_size + byte_offset;
-		}
-		
-		#pragma unroll
-		for(int i = 0; i < BLOCK_W; i++)
-		{
-			// pick data to store
-			vector<DT_OUT, BLOCK_OC> grf_chunk_store = grf_chunk.select<BLOCK_OC, 1>(i * BLOCK_OC);                  
-			cm_store<DT_OUT, VectorSize::N1, DataSize::Default, CacheHint::WriteBack, CacheHint::WriteBack>(surface, offsets, grf_chunk_store);
-			offsets += OUTPUT_ELEMENT_SIZE;
+			vector<DT_OUT, BLOCK_W> grf_chunk_store = grf_chunk.select<BLOCK_W, BLOCK_OC>(i);                  
+			cm_store<uint32_t, BLOCK_W/BLOCK_SC>(surface, byte_offset, grf_chunk_store.format<uint32_t>());
+			byte_offset += output_width * output_height * OUTPUT_ELEMENT_SIZE;
 		}
 	}
+#else
+	#pragma unroll
+	for(int i = 0; i < BLOCK_OC; i++)
+	{
+		vector<DT_OUT, BLOCK_W> grf_chunk_store = grf_chunk.select<BLOCK_W, BLOCK_OC>(i);                  
+		cm_store<uint32_t, BLOCK_W/BLOCK_SC>(surface, byte_offset, grf_chunk_store.format<uint32_t>());
+		byte_offset += output_width * output_height * OUTPUT_ELEMENT_SIZE;
+	}
+#endif
 }
 
 extern "C" _GENX_MAIN_ void convolution_nchw_nondpas(
@@ -297,6 +299,6 @@ extern "C" _GENX_MAIN_ void convolution_nchw_nondpas(
     const uint output_h_chunk_offset = h_chunk_id * BLOCK_H * output_width;
     uint32_t output_offset = (output_batch_offset + output_oc_chunk_offset + output_h_chunk_offset + output_w_chunk_offset) * sizeof(DT_OUT);
 	
-	store_output_wc8_as_nchw(surface_output, output_row_0.row(0), output_width, output_height, output_offset, w_chunk_id);
+	store_output_wc8_as_nchw(surface_output, output_row_0.row(0), output_width, output_height, output_offset, w_chunk_id, output_channels);
 	//store_output_wc8_as_nchw(surface_output, output_row_0.row(1), output_width, output_height, output_offset + output_height * output_width * output_channels * sizeof(DT_OUT), w_chunk_id);
 }

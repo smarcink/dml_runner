@@ -989,11 +989,11 @@ private:
             uint32_t filter_channels = 0;
             if (params_.output_layout == DataLayout::eOYXI_o8)
             {
-                filter_channels = (params_.oc + params_.oc % 8);
+                filter_channels = (params_.oc % 8 == 0) ? params_.oc : (params_.oc + (8 - params_.oc % 8));
             }
             else if (params_.output_layout == DataLayout::eOYXI_o16)
             {
-                filter_channels = (params_.oc + params_.oc % 16);
+                filter_channels = (params_.oc % 16 == 0) ? params_.oc : (params_.oc + (16 - params_.oc % 16));
             }
             else
             {
