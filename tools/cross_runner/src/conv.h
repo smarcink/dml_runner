@@ -462,6 +462,7 @@ protected:
         *ptr++ = static_cast<Dt>(params_.act_type);
         *ptr++ = static_cast<Dt>(params_.act_alpha);
         *ptr++ = static_cast<Dt>(params_.act_beta);
+        *ptr++ = static_cast<Dt>(params_.output_layout == DataLayout::eNCHW ? 0 : 1);
     }
     inline bool use_bias() const
     {
@@ -688,8 +689,6 @@ public:
         //add_define("BLOCK_BATCH", cm_params_.block_batch);
 
         //add_define("WEIGHTS_IN_OPTIMAL_FORMAT", cm_params.reorder_weights);
-
-        add_define("OUTPUT_LAYOUT_IS_NHWC", (params_.output_layout == DataLayout::eNHWC ) ? 1 : 0);
 
         // kernel compilation
         const auto dump_asm_str = cm_params_.dump_asm ? " -mdump_asm" : "";
