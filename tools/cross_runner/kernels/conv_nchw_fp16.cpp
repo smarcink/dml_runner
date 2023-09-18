@@ -21,6 +21,9 @@ implied warranties, other than those that are expressly stated in the License.
 #define UNIT_VAL_ONE 1.0f
 #define UNIT_VAL_ZERO 0.0f
 
+#define FLOAT32 0
+#define FLOAT16 1
+
 #define BLOCK_H 1
 #define BLOCK_BATCH 1
 #define BLOCK_OC 8
@@ -41,6 +44,11 @@ implied warranties, other than those that are expressly stated in the License.
 #error [Error_kernel_config_unsupported_block_w] Kernel designed to with with block_oc which is equal to 8 or 16 or 32;
 #endif
 
+#if DT == FLOAT32
+	#define DT_ACCU float
+#else
+	#define DT_ACCU half
+#endif
 
 #define DT_OUT DT_ACCU
 #define DT_IN DT_ACCU
@@ -156,7 +164,7 @@ _GENX_ inline void store_output_wc8_as_nchw(SurfaceIndex surface [[type("buffer_
 	const bool b_oc_unalign_byte_offset = ((output_channels - (pixel_offset % output_channels)) < BLOCK_OC);
 	const bool b_ow_unalign_byte_offset = ((BLOCK_W + (pixel_offset % output_width)) > output_width);
 
-#if DT_ACCU == fp32
+#if DT == FLOAT32
 	if( output_width == 1 && b_oc_unalign_byte_offset == false)
 	{
 		// Corner Case 1: This IF Statement handles incoming 1-D write blocks with channel sizes aligned to BLOCK_OC
@@ -244,23 +252,21 @@ extern "C" _GENX_MAIN_ void convolution_nchw_nondpas(
     const uint32_t input_h_chunk_offset = h_chunk_id * BLOCK_H * stride_h;
 	
 	matrix<DT_ACCU, BLOCK_BATCH, ACCU_REG_SIZE> accu_row_0(0.0f);
-	
-	#pragma unroll
-	for(int kh = 0; kh < KERNEL_SIZE; kh++)
+
+	for(int i = 0; i < INPUT_CHANNELS; i++)
 	{
 		#pragma unroll
-		for(int kw = 0; kw < KERNEL_SIZE; kw++)
-		{			
+		for(int kh = 0; kh < KERNEL_SIZE; kh++)
+		{
+			matrix<DT_ACCU, BLOCK_BATCH, INPUT_REG_SIZE> input_0;
 			#pragma unroll
-			for(int i = 0; i < INPUT_CHANNELS; i++)
+			for(int b = 0; b < BLOCK_BATCH; b++)
 			{
-				matrix<DT_ACCU, BLOCK_BATCH, INPUT_REG_SIZE> input_0;
-				#pragma unroll
-				for(int b = 0; b < BLOCK_BATCH; b++)
-				{
-					input_0.row(b) = load_input_nchw(surface_input, input_width, input_height, input_pad, input_w_chunk_offset, input_h_chunk_offset + kh, input_batch_offset + b * input_width * input_height * INPUT_CHANNELS * sizeof(DT_IN) + (i * input_width * input_height * INPUT_ELEMENT_SIZE));
-				}
-				
+				input_0.row(b) = load_input_nchw(surface_input, input_width, input_height, input_pad, input_w_chunk_offset, input_h_chunk_offset + kh, input_batch_offset + b * input_width * input_height * INPUT_CHANNELS * sizeof(DT_IN) + (i * input_width * input_height * INPUT_ELEMENT_SIZE));
+			}
+			#pragma unroll
+			for(int kw = 0; kw < KERNEL_SIZE; kw++)
+			{
 				matrix_ref<DT_ACCU, BLOCK_BATCH, BLOCK_W * STRIDE_W> input_chunk_0 = input_0.select<BLOCK_BATCH, 1, BLOCK_W * STRIDE_W, 1>(0, kw);
 				vector<DT_ACCU, BLOCK_OC> weights_chunk_ic = load_weights(surface_weights, kw, kh, oc_chunk_id, i);
 		
