@@ -660,15 +660,7 @@ public:
 
             build_options += pre_jit + name + between_name_and_value + value_str + post_jit;
         };
-
-        if (params_.dt == DataType::eFp16)
-        {
-            add_define("DT_ACCU", "half");
-        }
-        else
-        {
-            add_define("DT_ACCU", "float");
-        }
+        add_define("DT", static_cast<uint32_t>(params_.dt));
         //add_define("INPUT_WIDTH", params_.input_shape.w);
         //add_define("INPUT_HEIGHT", params_.input_shape.h);
         add_define("INPUT_CHANNELS", params_.input_shape.c);
