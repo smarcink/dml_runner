@@ -112,9 +112,10 @@ _GENX_ inline DT_ACCU activation_function(uint32_t activation_type, DT_ACCU inpu
 	
 _GENX_ inline vector<DT_ACCU, INPUT_REG_SIZE> load_input_nchw(SurfaceIndex surface [[type("buffer_t")]], uint32_t input_width, uint32_t input_height, uint32_t input_pad, uint32_t w_offset, int32_t h_offset, uint32_t batch_base_offset_bytes)
 {
-	const uint32_t LINEAR_LOAD_SIZE = 16;
+	const uint32_t LINEAR_LOAD_SIZE = 32;
 	const int32_t h_offset_pad = h_offset - int32_t(input_pad);
 	vector<DT_ACCU, INPUT_REG_SIZE> ret(0.0f);
+	vector<DT_ACCU, LINEAR_LOAD_SIZE> load_chunk_accu_dt(0.0f);
 	vector<uint8_t, LINEAR_LOAD_SIZE> predicate(0);
 	vector<int32_t, LINEAR_LOAD_SIZE> offsets;
 	
@@ -136,8 +137,8 @@ _GENX_ inline vector<DT_ACCU, INPUT_REG_SIZE> load_input_nchw(SurfaceIndex surfa
 	vector<uint32_t, LINEAR_LOAD_SIZE> offsets_u32 = offsets;
 	offsets_u32 += batch_base_offset_bytes;
 	
-	vector<DT_IN, LINEAR_LOAD_SIZE> load_chunk = cm_load<DT_IN, VectorSize::N1, DataSize::Default, CacheHint::Default, CacheHint::Default>(surface, offsets_u32);
-	vector<DT_ACCU, LINEAR_LOAD_SIZE> load_chunk_accu_dt = vector<DT_ACCU, LINEAR_LOAD_SIZE>(load_chunk);
+	load_chunk_accu_dt.select<16,1>(0)  = cm_load<DT_IN, VectorSize::N1, DataSize::Default, CacheHint::Default, CacheHint::Default>(surface, offsets_u32.select<16,1>(0));
+	load_chunk_accu_dt.select<16,1>(16) = cm_load<DT_IN, VectorSize::N1, DataSize::Default, CacheHint::Default, CacheHint::Default>(surface, offsets_u32.select<16,1>(16));
 	ret.select<INPUT_REG_W, 1>(0).merge(load_chunk_accu_dt.select<INPUT_REG_W, 1>(), predicate.select<INPUT_REG_W, 1>());
 	return ret;
 }
@@ -188,8 +189,13 @@ _GENX_ inline void store_output_wc8_as_nchw(SurfaceIndex surface [[type("buffer_
 		#pragma unroll
 		for(int i = 0; i < BLOCK_OC; i++)
 		{
-			vector<DT_OUT, 1> grf_chunk_store = grf_chunk.select<1, 1>(i);                  
-			cm_store<uint32_t, 1>(surface, byte_offset, grf_chunk_store.format<uint32_t>());
+			uint32_t byte_offset_local = byte_offset;
+			for(int j = 0; j < output_width % BLOCK_W; j++)
+			{			
+				vector<DT_OUT, 1> grf_chunk_store = grf_chunk.select<1, 1>(i + j * BLOCK_OC);                  
+				cm_store<uint32_t, 1>(surface, byte_offset_local, grf_chunk_store.format<uint32_t>());
+				byte_offset_local += OUTPUT_ELEMENT_SIZE;
+			}
 			byte_offset += output_width * output_height * OUTPUT_ELEMENT_SIZE;
 		}
 	}
