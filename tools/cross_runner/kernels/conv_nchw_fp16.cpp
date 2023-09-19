@@ -221,6 +221,20 @@ _GENX_ inline void store_output_wc8_as_nchw(SurfaceIndex surface [[type("buffer_
 #endif
 }
 
+_GENX_ inline void store_output_wc8_as_nhwc(SurfaceIndex surface [[type("buffer_t")]], vector_ref<DT_OUT, ACCU_REG_SIZE> grf_chunk, uint32_t output_channels, uint32_t byte_offset)
+{
+	const uint32_t BLOCK_SC = MAX_ELEMENT_SIZE / OUTPUT_ELEMENT_SIZE;
+
+	#pragma unroll
+	for (int i = 0; i < BLOCK_W; i++)
+	{
+		// pick data to store
+		vector<DT_OUT, BLOCK_OC> grf_chunk_store = grf_chunk.select<BLOCK_OC, 1>(i * BLOCK_OC);
+		cm_store<uint32_t, BLOCK_OC / BLOCK_SC>(surface, byte_offset, grf_chunk_store.format<uint32_t>());
+		byte_offset += output_channels * OUTPUT_ELEMENT_SIZE;
+	}
+}
+
 extern "C" _GENX_MAIN_ void convolution_nchw_nondpas(
 	SurfaceIndex surface_input [[type("buffer_t")]],
 	SurfaceIndex surface_weights [[type("buffer_t")]],
@@ -242,6 +256,7 @@ extern "C" _GENX_MAIN_ void convolution_nchw_nondpas(
 	const uint32_t activation_type = constants[9];
 	const uint32_t activation_alpha = constants[10];
 	const uint32_t activation_beta = constants[11];
+	const uint32_t output_layout_is_nhwc = constants[12];
 	
 	const uint32_t thg_0 = cm_group_id(0) * cm_local_size(0) + cm_local_id(0);
     const uint32_t thg_1 = cm_group_id(1) * cm_local_size(1) + cm_local_id(1);
@@ -304,13 +319,23 @@ extern "C" _GENX_MAIN_ void convolution_nchw_nondpas(
 	// but if data types are different then this cast accumulator to output type
     //vector<DT_OUT, ACCU_REG_SIZE> output_row_0 = vector<DT_OUT, ACCU_REG_SIZE>(accu_row_0);
     matrix<DT_OUT, BLOCK_BATCH, ACCU_REG_SIZE> output_row_0 = matrix<DT_OUT, BLOCK_BATCH, ACCU_REG_SIZE>(accu_row_0);
-	
+
 	const uint output_batch_offset = batch_id * BLOCK_BATCH * output_height * output_width * output_channels;
-    const uint output_oc_chunk_offset = oc_chunk_id * BLOCK_OC * output_height * output_width;
-    const uint output_w_chunk_offset = w_chunk_id * BLOCK_W;
-    const uint output_h_chunk_offset = h_chunk_id * BLOCK_H * output_width;
-    uint32_t output_offset = (output_batch_offset + output_oc_chunk_offset + output_h_chunk_offset + output_w_chunk_offset) * sizeof(DT_OUT);
-	
-	store_output_wc8_as_nchw(surface_output, output_row_0.row(0), output_width, output_height, output_offset, w_chunk_id, output_channels);
-	//store_output_wc8_as_nchw(surface_output, output_row_0.row(1), output_width, output_height, output_offset + output_height * output_width * output_channels * sizeof(DT_OUT), w_chunk_id);
+	if (output_layout_is_nhwc){
+		// offset_nhwc(n, h, w, c) = n * HWC + h * WC + w * C + c
+		const uint output_h_chunk_offset = h_chunk_id * BLOCK_H * output_width * output_channels;
+		const uint output_w_chunk_offset = w_chunk_id * BLOCK_W * output_channels;
+		const uint output_oc_chunk_offset = oc_chunk_id * BLOCK_OC;
+		uint32_t output_offset = (output_batch_offset + output_h_chunk_offset + output_w_chunk_offset + output_oc_chunk_offset) * sizeof(DT_OUT);
+		store_output_wc8_as_nhwc(surface_output, output_row_0.row(0), output_channels, output_offset);
+	} else {
+		// offset_nchw(n, c, h, w) = n * CHW + c * HW + h * W + w
+		const uint output_oc_chunk_offset = oc_chunk_id * BLOCK_OC * output_height * output_width;
+		const uint output_w_chunk_offset = w_chunk_id * BLOCK_W;
+		const uint output_h_chunk_offset = h_chunk_id * BLOCK_H * output_width;
+		uint32_t output_offset = (output_batch_offset + output_oc_chunk_offset + output_h_chunk_offset + output_w_chunk_offset) * sizeof(DT_OUT);
+		
+		store_output_wc8_as_nchw(surface_output, output_row_0.row(0), output_width, output_height, output_offset, w_chunk_id, output_channels);
+		//store_output_wc8_as_nchw(surface_output, output_row_0.row(1), output_width, output_height, output_offset + output_height * output_width * output_channels * sizeof(DT_OUT), w_chunk_id);
+	}
 }
