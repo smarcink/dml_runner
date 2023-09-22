@@ -97,7 +97,7 @@ public:
             dml_init_binding_table->BindTemporaryResource(&binding_desc);
         }
 
-        if (initialize_binding_properties.PersistentResourceSize > 0 && persistent_buffer_)
+        if (persistent_buffer_)
         {
             // The persistent resource should be bound as the output to the IDMLOperatorInitializer.
             DML_BUFFER_BINDING buffer_binding{ persistent_buffer_.Get(), 0, persistent_buffer_->GetDesc().Width };
@@ -177,7 +177,7 @@ protected:
         if (persistent_resource_size != 0)
         {
             const auto heap_props = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
-            const auto buffder_desc = CD3DX12_RESOURCE_DESC::Buffer(persistent_resource_size);
+            const auto buffder_desc = CD3DX12_RESOURCE_DESC::Buffer(persistent_resource_size, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
             throw_if_failed(d3d12_device_->CreateCommittedResource(
                 &heap_props,
                 D3D12_HEAP_FLAG_NONE,
