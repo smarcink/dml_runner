@@ -26,7 +26,7 @@ implied warranties, other than those that are expressly stated in the License.
 
 #define BLOCK_H 1
 #define BLOCK_BATCH 1
-#define BLOCK_OC 8
+#define BLOCK_OC 16
 
 #if !CM_HAS_LSC
 #error [Error_device_no_lsc] Kernel designed to use lsc. Current device does not support lsc.
@@ -36,23 +36,27 @@ implied warranties, other than those that are expressly stated in the License.
 #error [Error_device_not_supported] Kernel is not designed for this architecutre.
 #endif
 
-#if BLOCK_W > 8
-#error [Error_kernel_config_unsupported_block_w] Kernel designed to with with block_w in range: <1; 7>;
+#if BLOCK_W != 2 && BLOCK_W != 16 && BLOCK_W != 32
+#error [Error_kernel_config_unsupported_block_w] Kernel designed to work with block_w  which is equal to 2 or 16 or 32;
 #endif
 
 #if BLOCK_OC != 8 && BLOCK_OC != 16 && BLOCK_OC != 32
-#error [Error_kernel_config_unsupported_block_w] Kernel designed to with with block_oc which is equal to 8 or 16 or 32;
+#error [Error_kernel_config_unsupported_block_w] Kernel designed to work with block_oc which is equal to 8 or 16 or 32;
 #endif
+
+#define DT_ACCU float
 
 #if DT == FLOAT32
-	#define DT_ACCU float
+#define DT_OUT float
+#define DT_IN float
+#define DT_WEIGHTS float
 #else
-	#define DT_ACCU half
+#define DT_OUT half
+#define DT_IN half
+#define DT_WEIGHTS half
 #endif
 
-#define DT_OUT DT_ACCU
-#define DT_IN DT_ACCU
-#define DT_WEIGHTS DT_ACCU
+
 #define OUTPUT_ELEMENT_SIZE (sizeof(DT_OUT))
 
 #define INPUT_REG_W (BLOCK_W * STRIDE_W + KERNEL_SIZE - 1)
@@ -112,7 +116,7 @@ _GENX_ inline DT_ACCU activation_function(uint32_t activation_type, DT_ACCU inpu
 	
 _GENX_ inline vector<DT_ACCU, INPUT_REG_SIZE> load_input_nchw(SurfaceIndex surface [[type("buffer_t")]], uint32_t input_width, uint32_t input_height, uint32_t input_pad, uint32_t w_offset, int32_t h_offset, uint32_t batch_base_offset_bytes)
 {
-	const uint32_t LINEAR_LOAD_SIZE = 32;
+	const uint32_t LINEAR_LOAD_SIZE = 64;
 	const int32_t h_offset_pad = h_offset - int32_t(input_pad);
 	vector<DT_ACCU, INPUT_REG_SIZE> ret(0.0f);
 	vector<DT_ACCU, LINEAR_LOAD_SIZE> load_chunk_accu_dt(0.0f);
@@ -136,9 +140,11 @@ _GENX_ inline vector<DT_ACCU, INPUT_REG_SIZE> load_input_nchw(SurfaceIndex surfa
 	offsets += h_offset_pad * input_width * INPUT_ELEMENT_SIZE;
 	vector<uint32_t, LINEAR_LOAD_SIZE> offsets_u32 = offsets;
 	offsets_u32 += batch_base_offset_bytes;
-	
+
 	load_chunk_accu_dt.select<16,1>(0)  = cm_load<DT_IN, VectorSize::N1, DataSize::Default, CacheHint::Default, CacheHint::Default>(surface, offsets_u32.select<16,1>(0));
-	load_chunk_accu_dt.select<16,1>(16) = cm_load<DT_IN, VectorSize::N1, DataSize::Default, CacheHint::Default, CacheHint::Default>(surface, offsets_u32.select<16,1>(16));
+	if(INPUT_REG_W > 16) { load_chunk_accu_dt.select<16,1>(16) = cm_load<DT_IN, VectorSize::N1, DataSize::Default, CacheHint::Default, CacheHint::Default>(surface, offsets_u32.select<16,1>(16)); };
+	if(INPUT_REG_W > 32) { load_chunk_accu_dt.select<16,1>(32) = cm_load<DT_IN, VectorSize::N1, DataSize::Default, CacheHint::Default, CacheHint::Default>(surface, offsets_u32.select<16,1>(32)); };
+	if(INPUT_REG_W > 48) { load_chunk_accu_dt.select<16,1>(48) = cm_load<DT_IN, VectorSize::N1, DataSize::Default, CacheHint::Default, CacheHint::Default>(surface, offsets_u32.select<16,1>(48)); };
 	ret.select<INPUT_REG_W, 1>(0).merge(load_chunk_accu_dt.select<INPUT_REG_W, 1>(), predicate.select<INPUT_REG_W, 1>());
 	return ret;
 }
