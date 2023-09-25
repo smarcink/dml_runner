@@ -118,7 +118,7 @@ extern "C" _GENX_MAIN_ void weights_reorder(SurfaceIndex surface_input [[type("b
 	const uint32_t weights_oc_offset = IC * weights_ic_offset;
 	const uint32_t chunks_count = SIMD_SIZE;
 	const uint32_t max_dt_size = sizeof(float)/WEIGHT_TYPE_SIZE;
-	const uint32_t LOAD_SIZE = ((K_SIZE + SIMD_SIZE) >> 3) << 3;
+	const uint32_t LOAD_SIZE = ((K_SIZE + SIMD_SIZE) >> 4) << 4;
     matrix<DT, SIMD_SIZE, K_SIZE> data_input;
 	
 	vector<uint32_t, LOAD_SIZE> offsets(weights_init_linear_offsets);
