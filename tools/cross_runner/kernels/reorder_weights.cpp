@@ -70,6 +70,7 @@ extern "C" _GENX_MAIN_ void weights_reorder(SurfaceIndex surface_input [[type("b
 	vector<uint32_t, 32> constants = cm_load<uint32_t, 32, DataSize::Default, CacheHint::Cached, CacheHint::Cached>(surface_constants, 0);
     const uint32_t IC = constants[7];
 	const uint32_t OC = constants[8];
+	const uint32_t filter_layout_is_nhwc = constants[15];
 	const uint32_t weights_ic_offset = (K_SIZE * K_SIZE * WEIGHT_TYPE_SIZE);
 	
 #if INPUT_LAYOUT == LAYOUT_OIYX && OUTPUT_LAYOUT == LAYOUT_IO_i8_o8_i2
@@ -122,13 +123,30 @@ extern "C" _GENX_MAIN_ void weights_reorder(SurfaceIndex surface_input [[type("b
     matrix<DT, SIMD_SIZE, K_SIZE> data_input;
 	
 	vector<uint32_t, LOAD_SIZE> offsets(weights_init_linear_offsets);
-	offsets += oc * weights_oc_offset + ic * weights_ic_offset + kh * K_SIZE * WEIGHT_TYPE_SIZE;
-	#pragma unroll
-	for(int i = 0; i < chunks_count; i++)
+
+	if (filter_layout_is_nhwc) // nhwc
+    {	
+		offsets *= IC;
+		offsets += oc * weights_oc_offset + ic * WEIGHT_TYPE_SIZE + kh * IC * K_SIZE * WEIGHT_TYPE_SIZE;
+
+		#pragma unroll
+		for(int i = 0; i < chunks_count; i++)
+		{
+			vector<DT, LOAD_SIZE> data_load = cm_load<DT, VectorSize::N1, DataSize::Default, CacheHint::Default, CacheHint::Default>(surface_input, offsets);
+			data_input.select<1, 1, K_SIZE, 1>(i, 0) = data_load.select<K_SIZE, 1>();
+			offsets += K_SIZE * K_SIZE * IC * WEIGHT_TYPE_SIZE;
+		}
+	}
+	else // nchw
 	{
-		vector<DT, LOAD_SIZE> data_load = cm_load<DT, VectorSize::N1, DataSize::Default, CacheHint::Default, CacheHint::Default>(surface_input, offsets);
-		data_input.select<1, 1, K_SIZE, 1>(i, 0) = data_load.select<K_SIZE, 1>();
-		offsets += K_SIZE * K_SIZE * IC * WEIGHT_TYPE_SIZE;
+		offsets += oc * weights_oc_offset + ic * weights_ic_offset + kh * K_SIZE * WEIGHT_TYPE_SIZE;
+		#pragma unroll
+		for(int i = 0; i < chunks_count; i++)
+		{
+			vector<DT, LOAD_SIZE> data_load = cm_load<DT, VectorSize::N1, DataSize::Default, CacheHint::Default, CacheHint::Default>(surface_input, offsets);
+			data_input.select<1, 1, K_SIZE, 1>(i, 0) = data_load.select<K_SIZE, 1>();
+			offsets += K_SIZE * K_SIZE * IC * WEIGHT_TYPE_SIZE;
+		}
 	}
 	
 	uint32_t ouput_offset = (oc * K_SIZE * K_SIZE * IC + ic * SIMD_SIZE + kh * K_SIZE * IC * SIMD_SIZE) * WEIGHT_TYPE_SIZE;
