@@ -463,6 +463,7 @@ protected:
         *ptr++ = static_cast<Dt>(params_.act_alpha);
         *ptr++ = static_cast<Dt>(params_.act_beta);
         *ptr++ = static_cast<Dt>(params_.output_layout == DataLayout::eNCHW ? 0 : 1);
+        *ptr++ = static_cast<Dt>(params_.input_layout == DataLayout::eNCHW ? 0 : 1);
     }
     inline bool use_bias() const
     {
@@ -609,7 +610,7 @@ public:
             wr_params.ic = params_.filter_shape.c;
             wr_params.oc = params_.filter_shape.n;
             wr_params.k_size = params_.filter_shape.w;
-            wr_params.input_layout = params_.input_layout == DataLayout::eNCHW ? DataLayout::eOIYX : DataLayout::eWeightsLayoutStart;
+            wr_params.input_layout = DataLayout::eOIYX;
 
             /*if (params_.dt == DataType::eFp16 && params_.filter_shape.w == 1 && params_.filter_shape.h == 1)
             {
