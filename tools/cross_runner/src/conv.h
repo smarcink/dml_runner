@@ -483,7 +483,7 @@ protected:
         {
             bindings.filter.data = filter_data_.data();
             bindings.filter.dt = params_.dt;
-            bindings.filter.layout = params_.input_layout;
+            bindings.filter.layout = DataLayout::eNCHW;
             bindings.filter.shape = params_.filter_shape;
         }
         if (use_bias())
