@@ -164,18 +164,21 @@ _GENX_ inline vector<DT_ACCU, INPUT_REG_SIZE> load_input_nhwc(SurfaceIndex surfa
 		offsets[i] = (i - int32_t(input_pad)) * INPUT_ELEMENT_SIZE_I32;
 	}
 	
-	offsets *= INPUT_CHANNELS;
-	offsets += h_offset_pad * input_width * INPUT_CHANNELS * INPUT_ELEMENT_SIZE;
-	offsets += w_offset * INPUT_CHANNELS * INPUT_ELEMENT_SIZE;
 	// update predicate mask for left and right padding
-	predicate.merge(1, offsets >= 0 & offsets < (INPUT_CHANNELS * input_height * input_width * INPUT_ELEMENT_SIZE));
+	predicate.merge(1, offsets + (w_offset * INPUT_ELEMENT_SIZE) >= 0 & offsets + (w_offset * INPUT_ELEMENT_SIZE) < (input_width * INPUT_ELEMENT_SIZE));
 	// update predicate mask for top and bottom padding
 	vector<int32_t, LINEAR_LOAD_SIZE> is_not_in_height_range(h_offset_pad < 0 |  h_offset_pad > (input_height - 1));
 	predicate.merge(0, is_not_in_height_range);
 	
+	offsets *= INPUT_CHANNELS;
+	offsets += w_offset * INPUT_CHANNELS * INPUT_ELEMENT_SIZE;
+	offsets += h_offset_pad * input_width * INPUT_CHANNELS * INPUT_ELEMENT_SIZE;
+	
+	
 	vector<uint32_t, LINEAR_LOAD_SIZE> offsets_u32 = offsets;
 	offsets_u32 += batch_base_offset_bytes;
 	
+
 	load_chunk_accu_dt.select<16,1>(0)  = cm_load<DT_IN, VectorSize::N1, DataSize::Default, CacheHint::Default, CacheHint::Default>(surface, offsets_u32.select<16,1>(0));
 	if(INPUT_REG_W > 16) { load_chunk_accu_dt.select<16,1>(16) = cm_load<DT_IN, VectorSize::N1, DataSize::Default, CacheHint::Default, CacheHint::Default>(surface, offsets_u32.select<16,1>(16)); } ;
 	if(INPUT_REG_W > 32) { load_chunk_accu_dt.select<16,1>(32) = cm_load<DT_IN, VectorSize::N1, DataSize::Default, CacheHint::Default, CacheHint::Default>(surface, offsets_u32.select<16,1>(32)); } ;
