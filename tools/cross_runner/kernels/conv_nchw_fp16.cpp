@@ -285,35 +285,49 @@ _GENX_ inline void store_output_wc8_as_nchw(SurfaceIndex surface [[type("buffer_
 #endif
 }
 
-_GENX_ inline void store_output_wc8_as_nhwc(SurfaceIndex surface [[type("buffer_t")]], vector_ref<DT_OUT, ACCU_REG_SIZE> grf_chunk, uint32_t output_channels, uint32_t oc_chunk_offset, uint32_t byte_offset)
+_GENX_ inline void store_output_wc8_as_nhwc(SurfaceIndex surface [[type("buffer_t")]], vector_ref<DT_OUT, ACCU_REG_SIZE> grf_chunk, uint32_t output_width, uint32_t output_channels, uint32_t oc_chunk_offset, uint32_t output_w_chunk_offset, uint32_t byte_offset)
 {
 	//NCHW->NHWC
 	const uint32_t BLOCK_SC = MAX_ELEMENT_SIZE / OUTPUT_ELEMENT_SIZE;
-
+	const uint32_t pixel_offset = (byte_offset/output_channels) / OUTPUT_ELEMENT_SIZE;
+	const uint32_t pixel_offset_per_row = output_width - (pixel_offset % output_width);
+	
+	const bool unaligned_byte_offset = (pixel_offset_per_row < BLOCK_W) ? true : false;
+	const uint32_t store_width = (unaligned_byte_offset == false) ? BLOCK_W : pixel_offset_per_row;
+	const uint32_t oc_block_width = output_channels - oc_chunk_offset;
+	
 #if DT == FLOAT32
-	if(output_channels == 1)
+	if(output_channels == 1 && unaligned_byte_offset == false)
 	{
 		vector<DT_OUT, BLOCK_OC> grf_chunk_store = grf_chunk.select<BLOCK_OC, BLOCK_W>(0);
 		cm_store<uint32_t, BLOCK_OC / BLOCK_SC>(surface, byte_offset, grf_chunk_store.format<uint32_t>());
 	}
+	else if(output_channels == 1 && unaligned_byte_offset == true)
+	{
+		for(int i = 0; i < pixel_offset_per_row; i++)
+		{
+			vector<DT_OUT, 1> grf_chunk_store = grf_chunk.select<1, 1>(i * BLOCK_W);
+			cm_store<uint32_t, 1>(surface, byte_offset, grf_chunk_store.format<uint32_t>());
+			byte_offset += output_channels * OUTPUT_ELEMENT_SIZE;
+		}
+	}
 	else
 	{
-		if(output_channels - oc_chunk_offset < BLOCK_OC)
+		if(oc_block_width < BLOCK_OC)
 		{
-			for(int i = 0; i < BLOCK_W; i++)
+			for(int i = 0; i < store_width; i++)
 			{
-				for(int j = 0; j < output_channels - oc_chunk_offset; j++)
+				for(int j = 0; j < oc_block_width; j++)
 				{
 					vector<DT_OUT, 1> grf_chunk_store = grf_chunk.select<1, 1>(i * BLOCK_W + j);
 					cm_store<uint32_t, 1>(surface, byte_offset + j * OUTPUT_ELEMENT_SIZE, grf_chunk_store.format<uint32_t>());
-					//byte_offset +=  OUTPUT_ELEMENT_SIZE;
 				}
 				byte_offset += output_channels * OUTPUT_ELEMENT_SIZE;
 			}
 		}
 		else
 		{
-			for(int i = 0; i < BLOCK_OC; i++)
+			for(int i = 0; i < store_width; i++)
 			{
 				vector<DT_OUT, BLOCK_OC> grf_chunk_store = grf_chunk.select<BLOCK_OC, 1>(i * BLOCK_W);
 				cm_store<uint32_t, BLOCK_OC  / BLOCK_SC>(surface, byte_offset, grf_chunk_store.format<uint32_t>());
@@ -322,11 +336,26 @@ _GENX_ inline void store_output_wc8_as_nhwc(SurfaceIndex surface [[type("buffer_
 		}
 	}
 #else
-	for(int i = 0; i < BLOCK_OC; i++)
+	if(oc_block_width < BLOCK_OC)
 	{
-		vector<DT_OUT, BLOCK_OC> grf_chunk_store = grf_chunk.select<BLOCK_OC, 1>(i * BLOCK_W);
-		cm_store<uint32_t, BLOCK_OC  / BLOCK_SC>(surface, byte_offset, grf_chunk_store.format<uint32_t>());
-		byte_offset += output_channels * OUTPUT_ELEMENT_SIZE;
+		for(int i = 0; i < BLOCK_W; i++)
+		{
+			for(int j = 0; j < oc_block_width; j+=2)
+			{
+				vector<DT_OUT, 2> grf_chunk_store = grf_chunk.select<2, 1>(i * BLOCK_W + j);
+				cm_store<uint32_t, 1>(surface, byte_offset + j * OUTPUT_ELEMENT_SIZE, grf_chunk_store.format<uint32_t>());
+			}
+			byte_offset += output_channels * OUTPUT_ELEMENT_SIZE;
+		}
+	}
+	else
+	{
+		for(int i = 0; i < BLOCK_OC; i++)
+		{
+			vector<DT_OUT, BLOCK_OC> grf_chunk_store = grf_chunk.select<BLOCK_OC, 1>(i * BLOCK_W);
+			cm_store<uint32_t, BLOCK_OC  / BLOCK_SC>(surface, byte_offset, grf_chunk_store.format<uint32_t>());
+			byte_offset += output_channels * OUTPUT_ELEMENT_SIZE;
+		}
 	}
 #endif
 }
@@ -433,7 +462,7 @@ extern "C" _GENX_MAIN_ void convolution_nchw_nondpas(
 		const uint output_w_chunk_offset = w_chunk_id * BLOCK_W * output_channels;
 		const uint output_oc_chunk_offset = oc_chunk_id * BLOCK_OC;
 		uint32_t output_offset = (output_batch_offset + output_h_chunk_offset + output_w_chunk_offset + output_oc_chunk_offset) * sizeof(DT_OUT);
-		store_output_wc8_as_nhwc(surface_output, output_row_0.row(0), output_channels, output_oc_chunk_offset, output_offset);
+		store_output_wc8_as_nhwc(surface_output, output_row_0.row(0), output_width, output_channels, output_oc_chunk_offset, output_w_chunk_offset, output_offset);
 	}
 	else
 	{
