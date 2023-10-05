@@ -149,7 +149,7 @@ _GENX_ inline vector<DT_ACCU, INPUT_REG_SIZE> load_input_nchw(SurfaceIndex surfa
 	return ret;
 }
 
-_GENX_ inline vector<DT_ACCU, INPUT_REG_SIZE> load_input_nhwc(SurfaceIndex surface [[type("buffer_t")]], uint32_t input_width, uint32_t input_height, uint32_t input_pad, uint32_t w_offset, int32_t h_offset, uint32_t batch_base_offset_bytes)
+_GENX_ inline vector<DT_ACCU, INPUT_REG_SIZE> load_input_nhwc(SurfaceIndex surface [[type("buffer_t")]], uint32_t input_width, uint32_t input_height, uint32_t input_pad, uint32_t w_offset, int32_t h_offset, uint32_t batch_base_offset_bytes, uint32_t input_channels)
 {
 	const uint32_t LINEAR_LOAD_SIZE = 64;
 	const int32_t h_offset_pad = h_offset - int32_t(input_pad);
@@ -163,16 +163,17 @@ _GENX_ inline vector<DT_ACCU, INPUT_REG_SIZE> load_input_nhwc(SurfaceIndex surfa
 	{
 		offsets[i] = (i - int32_t(input_pad)) * INPUT_ELEMENT_SIZE_I32;
 	}
-	
+
 	// update predicate mask for left and right padding
 	predicate.merge(1, offsets + (w_offset * INPUT_ELEMENT_SIZE) >= 0 & offsets + (w_offset * INPUT_ELEMENT_SIZE) < (input_width * INPUT_ELEMENT_SIZE));
+	
 	// update predicate mask for top and bottom padding
 	vector<int32_t, LINEAR_LOAD_SIZE> is_not_in_height_range(h_offset_pad < 0 |  h_offset_pad > (input_height - 1));
 	predicate.merge(0, is_not_in_height_range);
 	
-	offsets *= INPUT_CHANNELS;
-	offsets += w_offset * INPUT_CHANNELS * INPUT_ELEMENT_SIZE;
-	offsets += h_offset_pad * input_width * INPUT_CHANNELS * INPUT_ELEMENT_SIZE;
+	offsets *= input_channels;
+	offsets += w_offset * input_channels * INPUT_ELEMENT_SIZE;
+	offsets += h_offset_pad * input_width * input_channels * INPUT_ELEMENT_SIZE;
 	
 	
 	vector<uint32_t, LINEAR_LOAD_SIZE> offsets_u32 = offsets;
@@ -188,12 +189,12 @@ _GENX_ inline vector<DT_ACCU, INPUT_REG_SIZE> load_input_nhwc(SurfaceIndex surfa
 	return ret;
 }
 
-_GENX_ inline vector<DT_ACCU, BLOCK_OC> load_weights(SurfaceIndex surface [[type("buffer_t")]], uint32_t kw, uint32_t kh, uint32_t oc_chunk, uint32_t input_ch_index)
+_GENX_ inline vector<DT_ACCU, BLOCK_OC> load_weights(SurfaceIndex surface [[type("buffer_t")]], uint32_t kw, uint32_t kh, uint32_t oc_chunk, uint32_t input_ch_index, uint32_t input_channels)
 {
 	//This function requires weights to be in optimal format:  OYXI_o8  or OYXI_o16  (depending on the oc_block)  (oc_block == simd size of the "mad" instructions)
 	
 	vector<DT_ACCU, BLOCK_OC> ret;
-	uint32_t offset = (oc_chunk * KERNEL_SIZE * KERNEL_SIZE + kh * KERNEL_SIZE + kw) * INPUT_CHANNELS * BLOCK_OC * WEIGHT_ELEMENT_SIZE + input_ch_index * BLOCK_OC * WEIGHT_ELEMENT_SIZE;
+	uint32_t offset = (oc_chunk * KERNEL_SIZE * KERNEL_SIZE + kh * KERNEL_SIZE + kw) * input_channels * BLOCK_OC * WEIGHT_ELEMENT_SIZE + input_ch_index * BLOCK_OC * WEIGHT_ELEMENT_SIZE;
 	const uint32_t BLOCK_SC = MAX_ELEMENT_SIZE/WEIGHT_ELEMENT_SIZE;
 	
 	vector<uint32_t, BLOCK_OC/BLOCK_SC> typed_load = cm_load<uint32_t, BLOCK_OC/BLOCK_SC, DataSize::Default, CacheHint::Cached, CacheHint::Cached>(surface, offset);	
@@ -209,7 +210,7 @@ _GENX_ inline void store_output_wc8_as_nchw(SurfaceIndex surface [[type("buffer_
 	const uint32_t pixel_offset = byte_offset / OUTPUT_ELEMENT_SIZE;
 	const bool b_oc_unalign_byte_offset = ((output_channels - (pixel_offset % output_channels)) < BLOCK_OC);
 	const bool b_ow_unalign_byte_offset = ((BLOCK_W + (pixel_offset % output_width)) > output_width);
-
+	
 #if DT == FLOAT32
 	if( output_width == 1 && b_oc_unalign_byte_offset == false)
 	{
@@ -256,31 +257,23 @@ _GENX_ inline void store_output_wc8_as_nchw(SurfaceIndex surface [[type("buffer_
 		}
 	}
 #else
+	vector<uint32_t, BLOCK_W> store_offsets(output_linear_init_offsets);
+	vector<ushort, BLOCK_W> predicate(1);
+	
 	if (b_ow_unalign_byte_offset == true)
 	{
-		// Corner Case 3: This only works for BLOCK_W=2
-		#pragma unroll
-		for(int i = 0; i < BLOCK_OC; i++)
+		for(int i = output_width % BLOCK_W; i < BLOCK_W; i++)
 		{
-			uint32_t byte_offset_local = byte_offset;
-			for(int j = 0; j < output_width % BLOCK_W; j+=2)
-			{			
-				vector<DT_OUT, 2> grf_chunk_store = grf_chunk.select<2, BLOCK_OC>(i + j * BLOCK_OC);                  
-				cm_store<uint32_t, 1>(surface, byte_offset_local, grf_chunk_store.format<uint32_t>());
-				byte_offset_local += 2 * OUTPUT_ELEMENT_SIZE;
-			}
-			byte_offset += output_width * output_height * OUTPUT_ELEMENT_SIZE;
+			predicate.select<1, 1>(i) = 0;
 		}
 	}
-	else
+	store_offsets += byte_offset;
+		
+	#pragma unroll
+	for(int i = 0; i < BLOCK_OC; i++)
 	{
-		#pragma unroll
-		for(int i = 0; i < BLOCK_OC; i++)
-		{
-			vector<DT_OUT, BLOCK_W> grf_chunk_store = grf_chunk.select<BLOCK_W, BLOCK_OC>(i);                  
-			cm_store<uint32_t, BLOCK_W/BLOCK_SC>(surface, byte_offset, grf_chunk_store.format<uint32_t>());
-			byte_offset += output_width * output_height * OUTPUT_ELEMENT_SIZE;
-		}
+		cm_store<DT_OUT, VectorSize::N1, DataSize::Default, CacheHint::WriteBack, CacheHint::WriteBack>(surface, store_offsets, grf_chunk.select<BLOCK_W, BLOCK_OC>(i), predicate);
+		store_offsets += output_width * output_height * OUTPUT_ELEMENT_SIZE;
 	}
 #endif
 }
@@ -336,26 +329,23 @@ _GENX_ inline void store_output_wc8_as_nhwc(SurfaceIndex surface [[type("buffer_
 		}
 	}
 #else
+	vector<uint32_t, BLOCK_OC> store_offsets(output_linear_init_offsets);
+	vector<ushort, BLOCK_OC> predicate(1);
+	
 	if(oc_block_width < BLOCK_OC)
 	{
-		for(int i = 0; i < BLOCK_W; i++)
+		for(int i = oc_block_width % BLOCK_OC; i < BLOCK_OC; i++)
 		{
-			for(int j = 0; j < oc_block_width; j+=2)
-			{
-				vector<DT_OUT, 2> grf_chunk_store = grf_chunk.select<2, 1>(i * BLOCK_W + j);
-				cm_store<uint32_t, 1>(surface, byte_offset + j * OUTPUT_ELEMENT_SIZE, grf_chunk_store.format<uint32_t>());
-			}
-			byte_offset += output_channels * OUTPUT_ELEMENT_SIZE;
+			predicate.select<1, 1>(i) = 0;
 		}
 	}
-	else
+	
+	store_offsets += byte_offset;
+	
+	for(int i = 0; i < store_width; i++)
 	{
-		for(int i = 0; i < BLOCK_OC; i++)
-		{
-			vector<DT_OUT, BLOCK_OC> grf_chunk_store = grf_chunk.select<BLOCK_OC, 1>(i * BLOCK_W);
-			cm_store<uint32_t, BLOCK_OC  / BLOCK_SC>(surface, byte_offset, grf_chunk_store.format<uint32_t>());
-			byte_offset += output_channels * OUTPUT_ELEMENT_SIZE;
-		}
+		cm_store<DT_OUT, VectorSize::N1, DataSize::Default, CacheHint::WriteBack, CacheHint::WriteBack>(surface, store_offsets, grf_chunk.select<BLOCK_OC, 1>(i * BLOCK_W), predicate);
+		store_offsets += output_channels * OUTPUT_ELEMENT_SIZE;
 	}
 #endif
 }
@@ -383,6 +373,7 @@ extern "C" _GENX_MAIN_ void convolution_nchw_nondpas(
 	const uint32_t activation_beta = constants[11];
 	const uint32_t output_layout_is_nhwc = constants[12];
 	const uint32_t input_layout_is_nhwc = constants[13];
+	const uint32_t input_channels = constants[14];
 	
 	const uint32_t thg_0 = cm_group_id(0) * cm_local_size(0) + cm_local_id(0);
     const uint32_t thg_1 = cm_group_id(1) * cm_local_size(1) + cm_local_id(1);
@@ -393,13 +384,13 @@ extern "C" _GENX_MAIN_ void convolution_nchw_nondpas(
 	const uint32_t thread_per_full_oc = (output_channels + BLOCK_OC - 1)/ BLOCK_OC;
 	const uint32_t batch_id = thg_2 / thread_per_full_oc;
 	const uint32_t oc_chunk_id = thg_2 % thread_per_full_oc;
-    const uint32_t input_batch_offset = batch_id * BLOCK_BATCH * input_width * input_height * INPUT_CHANNELS * sizeof(DT_IN);
+    const uint32_t input_batch_offset = batch_id * BLOCK_BATCH * input_width * input_height * input_channels * sizeof(DT_IN);
     const uint32_t input_w_chunk_offset = w_chunk_id * BLOCK_W * STRIDE_W;
     const uint32_t input_h_chunk_offset = h_chunk_id * BLOCK_H * stride_h;
-	
+
 	matrix<DT_ACCU, BLOCK_BATCH, ACCU_REG_SIZE> accu_row_0(0.0f);
 
-	for(int i = 0; i < INPUT_CHANNELS; i++)
+	for(int i = 0; i < input_channels; i++)
 	{		
 		#pragma unroll
 		for(int kh = 0; kh < KERNEL_SIZE; kh++)
@@ -411,11 +402,11 @@ extern "C" _GENX_MAIN_ void convolution_nchw_nondpas(
 			{
 				if (!input_layout_is_nhwc)
 				{
-					input_0.row(b) = load_input_nchw(surface_input, input_width, input_height, input_pad, input_w_chunk_offset, input_h_chunk_offset + kh, input_batch_offset + b * input_width * input_height * INPUT_CHANNELS * sizeof(DT_IN) + (i * input_width * input_height * INPUT_ELEMENT_SIZE));
+					input_0.row(b) = load_input_nchw(surface_input, input_width, input_height, input_pad, input_w_chunk_offset, input_h_chunk_offset + kh, input_batch_offset + b * input_width * input_height * input_channels * sizeof(DT_IN) + (i * input_width * input_height * INPUT_ELEMENT_SIZE));
 				}
 				else
 				{
-					input_0.row(b) = load_input_nhwc(surface_input, input_width, input_height, input_pad, input_w_chunk_offset, input_h_chunk_offset + kh, input_batch_offset + b * input_width * input_height * INPUT_CHANNELS * sizeof(DT_IN) + (i * INPUT_ELEMENT_SIZE));
+					input_0.row(b) = load_input_nhwc(surface_input, input_width, input_height, input_pad, input_w_chunk_offset, input_h_chunk_offset + kh, input_batch_offset + b * input_width * input_height * input_channels * sizeof(DT_IN) + (i * INPUT_ELEMENT_SIZE), input_channels);
 				}
 			}
 			
@@ -423,7 +414,7 @@ extern "C" _GENX_MAIN_ void convolution_nchw_nondpas(
 			for(int kw = 0; kw < KERNEL_SIZE; kw++)
 			{				
 				matrix_ref<DT_ACCU, BLOCK_BATCH, BLOCK_W * STRIDE_W> input_chunk_0 = input_0.select<BLOCK_BATCH, 1, BLOCK_W * STRIDE_W, 1>(0, kw);
-				vector<DT_ACCU, BLOCK_OC> weights_chunk_ic = load_weights(surface_weights, kw, kh, oc_chunk_id, i);
+				vector<DT_ACCU, BLOCK_OC> weights_chunk_ic = load_weights(surface_weights, kw, kh, oc_chunk_id, i, input_channels);
 		
 				#pragma unroll
 				for(int b = 0; b < BLOCK_BATCH; b++)
@@ -449,6 +440,7 @@ extern "C" _GENX_MAIN_ void convolution_nchw_nondpas(
 			accu_row_0.select<1, 1, 1, 1>(b, bw) = activation_function(activation_type, activation_input, (float)activation_alpha, (float)activation_beta);
         }
     }
+
 	// if the DT_OUT == DT_ACCU then compiler will not do anything here
 	// but if data types are different then this cast accumulator to output type
     //vector<DT_OUT, ACCU_REG_SIZE> output_row_0 = vector<DT_OUT, ACCU_REG_SIZE>(accu_row_0);
