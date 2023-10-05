@@ -464,6 +464,7 @@ protected:
         *ptr++ = static_cast<Dt>(params_.act_beta);
         *ptr++ = static_cast<Dt>(params_.output_layout == DataLayout::eNCHW ? 0 : 1);
         *ptr++ = static_cast<Dt>(params_.input_layout == DataLayout::eNCHW ? 0 : 1);
+        *ptr++ = static_cast<Dt>(params_.input_shape.c);
     }
     inline bool use_bias() const
     {
@@ -669,7 +670,7 @@ public:
         add_define("DT", static_cast<uint32_t>(params_.dt));
         //add_define("INPUT_WIDTH", params_.input_shape.w);
         //add_define("INPUT_HEIGHT", params_.input_shape.h);
-        add_define("INPUT_CHANNELS", params_.input_shape.c);
+        //add_define("INPUT_CHANNELS", params_.input_shape.c);
 
         //add_define("OUTPUT_WIDTH", output_shape_.w);
         //add_define("OUTPUT_HEIGHT", output_shape_.h);
