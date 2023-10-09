@@ -191,7 +191,6 @@ public:
         {
             input_bindings.push_back({ DML_BINDING_TYPE_NONE, nullptr});
         }
-        input_bindings.push_back({ DML_BINDING_TYPE_BUFFER, &constant_buffer_binding });
         DML_BUFFER_BINDING output_buffer_binding{ resource_out, 0, resource_out->GetDesc().Width };
         DML_BINDING_DESC output_binding_desc{ DML_BINDING_TYPE_BUFFER, &output_buffer_binding };
 
