@@ -249,6 +249,7 @@ public:
         DataType dt;
         DataLayout input_layout;
         DataLayout output_layout = DataLayout::eNCHW;
+        DataLayout filter_layout = DataLayout::eNCHW;
         TensorShape input_shape;
         TensorShape filter_shape;
         std::uint32_t in_pad;
@@ -266,6 +267,7 @@ public:
             add_data_type_cli_option(opts, "--data_type", params.dt)->required();
             add_data_layout_cli_option(opts, "--input_layout", params.input_layout)->required();
             add_data_layout_cli_option(opts, "--output_layout", params.output_layout);
+            add_data_layout_cli_option(opts, "--filter_layout", params.filter_layout);
             opts->add_option("--input_shape", params.input_shape, "speciify list: <n, ic, h, w")->required();
             opts->add_option("--filter_shape", params.filter_shape, "speciify list: <oc, ic, kh, kw")->required();
             opts->add_option("--in_pad", params.in_pad)->required();
@@ -464,6 +466,7 @@ protected:
         *ptr++ = static_cast<Dt>(params_.output_layout == DataLayout::eNCHW ? 0 : 1);
         *ptr++ = static_cast<Dt>(params_.input_layout == DataLayout::eNCHW ? 0 : 1);
         *ptr++ = static_cast<Dt>(params_.input_shape.c);
+        *ptr++ = static_cast<Dt>(params_.filter_layout == DataLayout::eNCHW ? 0 : 1);
     }
     inline bool use_bias() const
     {
@@ -483,7 +486,7 @@ protected:
         {
             bindings.filter.data = filter_data_.data();
             bindings.filter.dt = params_.dt;
-            bindings.filter.layout = DataLayout::eNCHW;
+            bindings.filter.layout = params_.filter_layout;
             bindings.filter.shape = params_.filter_shape;
         }
         if (use_bias())
