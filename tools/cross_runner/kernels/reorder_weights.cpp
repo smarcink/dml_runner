@@ -125,28 +125,21 @@ extern "C" _GENX_MAIN_ void weights_reorder(SurfaceIndex surface_input [[type("b
 	vector<uint32_t, LOAD_SIZE> offsets(weights_init_linear_offsets);
 
 	if (filter_layout_is_nhwc) // nhwc
-    {	
+	{	
 		offsets *= IC;
 		offsets += oc * weights_oc_offset + ic * WEIGHT_TYPE_SIZE + kh * IC * K_SIZE * WEIGHT_TYPE_SIZE;
-
-		#pragma unroll
-		for(int i = 0; i < chunks_count; i++)
-		{
-			vector<DT, LOAD_SIZE> data_load = cm_load<DT, VectorSize::N1, DataSize::Default, CacheHint::Default, CacheHint::Default>(surface_input, offsets);
-			data_input.select<1, 1, K_SIZE, 1>(i, 0) = data_load.select<K_SIZE, 1>();
-			offsets += K_SIZE * K_SIZE * IC * WEIGHT_TYPE_SIZE;
-		}
 	}
 	else // nchw
 	{
 		offsets += oc * weights_oc_offset + ic * weights_ic_offset + kh * K_SIZE * WEIGHT_TYPE_SIZE;
-		#pragma unroll
-		for(int i = 0; i < chunks_count; i++)
-		{
-			vector<DT, LOAD_SIZE> data_load = cm_load<DT, VectorSize::N1, DataSize::Default, CacheHint::Default, CacheHint::Default>(surface_input, offsets);
-			data_input.select<1, 1, K_SIZE, 1>(i, 0) = data_load.select<K_SIZE, 1>();
-			offsets += K_SIZE * K_SIZE * IC * WEIGHT_TYPE_SIZE;
-		}
+	}
+
+	#pragma unroll
+	for(int i = 0; i < chunks_count; i++)
+	{
+		vector<DT, LOAD_SIZE> data_load = cm_load<DT, VectorSize::N1, DataSize::Default, CacheHint::Default, CacheHint::Default>(surface_input, offsets);
+		data_input.select<1, 1, K_SIZE, 1>(i, 0) = data_load.select<K_SIZE, 1>();
+		offsets += K_SIZE * K_SIZE * IC * WEIGHT_TYPE_SIZE;
 	}
 	
 	uint32_t ouput_offset = (oc * K_SIZE * K_SIZE * IC + ic * SIMD_SIZE + kh * K_SIZE * IC * SIMD_SIZE) * WEIGHT_TYPE_SIZE;
