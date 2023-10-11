@@ -19,6 +19,9 @@
 #include <string>
 #include <utility>
 
+#define NGEN_NO_OP_NAMES 1
+#include <ngen_opencl.hpp>
+
 template<typename TimeType>
 inline void print_performance_stats(const std::vector<TimeType>& timings)
 {
@@ -71,6 +74,89 @@ struct CliOptions
     GemmCmDispatcher::cm_params_t gemm_cm_params{};
     
     gpu_op::MemoryBandwidthDispatcher::create_params_t memory_bw_params{};
+};
+
+
+template <ngen::HW hw>
+class VectorScaleKernelGenerator : public ngen::ELFCodeGenerator<hw>
+{
+protected:
+    NGEN_FORWARD_ELF(hw);
+
+public:
+    VectorScaleKernelGenerator() : ngen::ELFCodeGenerator<hw>()
+    {
+        using namespace ngen;
+
+        // Define kernel interface for OpenCL.
+        newArgument("buffer", ExternalArgumentType::GlobalPtr, GlobalAccessType::Stateless);
+        newArgument("alpha", ngen::DataType::f);
+        requireLocalID(1);
+        requireLocalSize();
+        requireSIMD((GRF::bytes(hw) == 64) ? 16 : 8);
+        externalName("vector_scale");
+
+        finalizeInterface();
+
+        auto bufferSurface = Surface(getArgumentSurfaceIfExists("buffer"));     // Surface # for buffer.
+        auto bufferPtr = getArgument("buffer");                                 // A64 pointer for buffer.
+        auto alpha = getArgument("alpha");
+
+        auto localSize = getLocalSize(0).uw();
+        auto localID = getLocalID(0);               // Vector of local IDs.
+        auto groupID = r0.ud(1);                    // Thread group (a.k.a. workgroup) IDs are in r0.ud(1) (X) r0.ud(6) (Y) r0.ud(7) (Z)
+
+        // Local variables.
+        auto globalID = r12.ud(0);
+        auto header = r13;
+        auto data = r14;
+        auto temp = r15;
+
+        // Decide on load/store messages.
+        bool useLSC = (hw >= HW::XeHPC);
+
+        // All instructions use W (NoMask) by default.
+        setDefaultNoMask();
+
+        // Enable automatic SWSB for Gen12.
+        setDefaultAutoSWSB();
+
+        // Prologue for ATS+.
+        prologue();
+
+        // Enable IEEE denormals.
+        or_(1 | Switch, cr0[0], cr0[0], 0x4C0);
+
+        // Calculate global ID = (group ID) * (local size) + (local ID for lane 0).
+        mul(1, globalID, groupID, localSize);
+        add(1, globalID, globalID, localID[0]);
+
+        // Do 32 byte (2 OWord) block read at offset (global ID) * sizeof(float).
+        if (!useLSC) {
+            shr<uint32_t>(1, header[2], globalID, 2);
+            load(8, data, block_oword(2), bufferSurface, header);
+        }
+        else {
+            shl(1, globalID, globalID, 2);
+            addc(1, header.ud(0), bufferPtr.ud(0), globalID);
+            mov(1, temp.ud(0), acc0.ud(0));
+            add(1, header.ud(1), bufferPtr.ud(1), temp.ud(0));
+            load(1, data, D32 | V8T, A64, header);
+        }
+
+        // Scale data.
+        mul<float>(8, data, data, alpha);
+
+        // Store updated data.
+        if (!useLSC)
+            store(8, block_oword(2), bufferSurface, header, data);
+        else
+            store(1, D32 | V8T, A64, header, data);
+
+        // End thread. Must move r0 to one of r112-r127, then call threadend.
+        mov<uint32_t>(8, r127, r0);
+        threadend(r127);
+    }
 };
 
 int main()
@@ -171,6 +257,21 @@ int main()
         // The command recorder is a stateless object that records Dispatches into an existing Direct3D 12 command list.
         ComPtr<IDMLCommandRecorder> dml_command_recorder;
         throw_if_failed(dml_device->CreateCommandRecorder(IID_PPV_ARGS(dml_command_recorder.ReleaseAndGetAddressOf())), "create dml command recorder");
+
+
+
+
+
+
+        // ngen experiments
+        //const auto kernel = VectorScaleKernelGenerator<ngen::HW::XeHPG>(ngen::Product{ ngen::ProductFamily::MTL, 0 });
+        auto kernel = VectorScaleKernelGenerator<ngen::HW::XeHPG>();
+
+        const auto zebin_elf_binary = kernel.getBinary();
+        const auto binary_arch = kernel.getBinaryArch(zebin_elf_binary);
+        auto hw = ngen::HW::Unknown;
+        auto product = ngen::Product{};
+        kernel.getBinaryHWInfo(zebin_elf_binary, hw, product);
 
         std::unique_ptr<NodeDispatcher> node;
         if (opts.node_type == NodeType::eGemmDml)

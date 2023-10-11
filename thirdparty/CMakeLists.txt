@@ -41,3 +41,29 @@ set_property(TARGET dml PROPERTY IMPORTED_IMPLIB "${CMAKE_CURRENT_SOURCE_DIR}/dm
 
 #cli
 add_subdirectory(CLI11)
+
+#ngen
+set(NGEN_PATH "libraries.gpu.ngen")
+set(NGEN_SOURCES 
+    ${NGEN_PATH}/ngen.hpp
+    ${NGEN_PATH}/ngen_asm.hpp
+    ${NGEN_PATH}/ngen_auto_swsb.hpp
+    ${NGEN_PATH}/ngen_compiler_fix.hpp
+    ${NGEN_PATH}/ngen_config.hpp
+    ${NGEN_PATH}/ngen_core.hpp
+    ${NGEN_PATH}/ngen_elf.hpp
+    ${NGEN_PATH}/ngen_gen8.hpp
+    ${NGEN_PATH}/ngen_gen12.hpp
+    ${NGEN_PATH}/ngen_interface.hpp
+    ${NGEN_PATH}/ngen_level_zero.hpp
+    ${NGEN_PATH}/ngen_opencl.hpp
+    ${NGEN_PATH}/ngen_pseudo.hpp
+    ${NGEN_PATH}/ngen_register_allocator.cpp
+    ${NGEN_PATH}/ngen_register_allocator.hpp
+    ${NGEN_PATH}/ngen_register_decl.hpp
+    ${NGEN_PATH}/ngen_registers.hpp
+    ${NGEN_PATH}/ngen_utils.hpp
+)  
+
+add_library(ngen INTERFACE ${NGEN_SOURCES})
+target_include_directories(ngen INTERFACE ${NGEN_PATH})

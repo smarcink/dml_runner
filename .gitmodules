@@ -7,3 +7,6 @@
 [submodule "thirdparty/libraries.performance.math.onednn"]
 	path = thirdparty/libraries.performance.math.onednn
 	url = https://github.com/intel-innersource/libraries.performance.math.onednn.git
+[submodule "thirdparty/libraries.gpu.ngen"]
+	path = thirdparty/libraries.gpu.ngen
+	url = https://github.com/intel-innersource/libraries.gpu.ngen.git
