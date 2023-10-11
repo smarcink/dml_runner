@@ -9,6 +9,7 @@ set(TARGET_SOURCES
     ${SOURCES_DIR}/layers_utils.h
     ${SOURCES_DIR}/dnnl_utils.h
     ${SOURCES_DIR}/gemm.h
+    ${SOURCES_DIR}/gemm.cpp
     ${SOURCES_DIR}/conv.h
     ${SOURCES_DIR}/conv.cpp
     ${SOURCES_DIR}/softmax.h
@@ -17,6 +18,8 @@ set(TARGET_SOURCES
     ${SOURCES_DIR}/mvn.cpp
 	${SOURCES_DIR}/mha.h
     ${SOURCES_DIR}/memory_bandwidth.h
+    ${SOURCES_DIR}/iumd_d3d12_impl.h
+    ${SOURCES_DIR}/iumd_d3d12_impl.cpp
 )
 
 add_executable(${TARGET_NAME} ${TARGET_SOURCES})

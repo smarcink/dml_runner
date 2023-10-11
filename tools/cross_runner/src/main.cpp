@@ -68,10 +68,11 @@ struct CliOptions
 
     // specific for implementation
     ConvolutionCmDispatcher::conv_cm_params_t conv_cm_params{};
+    ConvolutionUmdD3d12Dispatcher::conv_umdd3d12_params_t conv_umdd3d12_params{};
     MvnCmDispatcher::mvn_cm_params_t mvn_cm_params{};
     SoftmaxCmDispatcher::softmax_cm_params_t softmax_cm_params{};
     GemmCmDispatcher::cm_params_t gemm_cm_params{};
-    
+
     gpu_op::MemoryBandwidthDispatcher::create_params_t memory_bw_params{};
 };
 
@@ -89,12 +90,14 @@ int main()
     CliOptions opts;
     CLI::App dml_runner_app{ "App to microbenchmark and developer dml kernels.", "DirectML runner." };
     dml_runner_app.add_option("--type", opts.node_type, "Name of the type of layer to run.")
-        ->required()->check(CLI::IsMember({ NodeType::eConvDml, NodeType::eConvCm, NodeType::eGemmDml, NodeType::eGemmCm, NodeType::eSoftmaxDml, NodeType::eSoftmaxCm, NodeType::eMvnDml, NodeType::eMvnCm,  NodeType::eMhaDml, NodeType::eMemoryBandwidth }))->
+
         transform(CLI::Transformer(std::map<std::string, NodeType>{
             { "conv_dml", NodeType::eConvDml },
             { "conv_cm", NodeType::eConvCm },
+            { "conv_umd_d3d12", NodeType::eConvUmdD3d12 },
             { "gemm_dml", NodeType::eGemmDml },
             { "gemm_cm", NodeType::eGemmCm },
+            { "gemm_umd_d3d12", NodeType::eGemmUmdD3d12 },
             { "softmax_dml", NodeType::eSoftmaxDml },
             { "softmax_cm", NodeType::eSoftmaxCm },
             { "mvn_dml", NodeType::eMvnDml },
@@ -121,6 +124,8 @@ int main()
     // specific for implementation
     auto conv_cm_option_groups = dml_runner_app.add_subcommand("conv_cm_opts", "Options for convolution layer with CM implementation.");
     ConvolutionCmDispatcher::conv_cm_params_t::add_cli_options(conv_cm_option_groups, opts.conv_cm_params);
+    auto conv_umdd3d12_option_groups = dml_runner_app.add_subcommand("conv_umdd3d12_opts", "Options for convolution layer with UMD D3D12 implementation.");
+    ConvolutionUmdD3d12Dispatcher::conv_umdd3d12_params_t::add_cli_options(conv_umdd3d12_option_groups, opts.conv_umdd3d12_params);
     auto mvn_cm_option_groups = dml_runner_app.add_subcommand("mvn_cm_opts", "Options for mvn layer with CM implementation.");
     MvnCmDispatcher::mvn_cm_params_t::add_cli_options(mvn_cm_option_groups, opts.mvn_cm_params);
     auto softmax_cm_option_groups = dml_runner_app.add_subcommand("softmax_cm_opts", "Options for softmax layer with CM implementation.");
@@ -194,6 +199,11 @@ int main()
             node = std::make_unique<GemmCmDispatcher>(std::move(opts.gemm_opts), std::move(opts.gemm_cm_params),
                 intel_extension_d3d12, d3d12_device.Get(), dml_device.Get(), dml_command_recorder.Get(), command_list.Get());
         }
+        else if (opts.node_type == NodeType::eGemmUmdD3d12)
+        {
+            node = std::make_unique<GemmUmdD3d12Dispatcher>(std::move(opts.gemm_opts),
+                intel_extension_d3d12, d3d12_device.Get(), dml_device.Get(), dml_command_recorder.Get(), command_list.Get());
+        }
         else if (opts.node_type == NodeType::eConvDml)
         {
             node = std::make_unique<ConvolutionDirectMLDispatcher>(std::move(opts.conv_opts),
@@ -202,6 +212,11 @@ int main()
         else if (opts.node_type == NodeType::eConvCm)
         {
             node = std::make_unique<ConvolutionCmDispatcher>(std::move(opts.conv_opts), std::move(opts.conv_cm_params),
+                intel_extension_d3d12, d3d12_device.Get(), command_list.Get());
+        }
+        else if (opts.node_type == NodeType::eConvUmdD3d12)
+        {
+            node = std::make_unique<ConvolutionUmdD3d12Dispatcher>(std::move(opts.conv_opts), std::move(opts.conv_umdd3d12_params),
                 intel_extension_d3d12, d3d12_device.Get(), command_list.Get());
         }
         else if (opts.node_type == NodeType::eSoftmaxDml)
@@ -245,7 +260,6 @@ int main()
         auto descriptor_heap = create_descriptor_heap(d3d12_device.Get(), descriptors_count);
         ID3D12DescriptorHeap* d3d12_descriptor_heaps[] = { descriptor_heap.Get() };
         command_list->SetDescriptorHeaps(1, d3d12_descriptor_heaps);
-
 
         // initalize
         node->initialize(command_list.Get(), descriptor_heap->GetCPUDescriptorHandleForHeapStart(), descriptor_heap->GetGPUDescriptorHandleForHeapStart());
@@ -308,10 +322,20 @@ int main()
 
         print_performance_stats(timings);
     }
+    catch (dnnl::error e)
+    {
+        std::cerr << std::format("DNNL exception caught: {} \n", e.what());
+        return -1;
+    }
     catch (std::exception e)
     {
-        std::cerr << std::format("Exception caught: {} \n", e.what());
+        std::cerr << std::format("STD exception caught: {} \n", e.what());
         return -1; 
+    }
+    catch (...)
+    {
+        std::cerr << std::format("Unknwon exception caught.");
+        return -1;
     }
     return 0;
 }

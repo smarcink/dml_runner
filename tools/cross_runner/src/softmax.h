@@ -90,10 +90,10 @@ private:
 
 }  // namespace gpu_op
 
-namespace cpu_op
+namespace dnnl_softmax_op
 {
 std::vector<std::byte> softmax(std::uint32_t axis, const std::byte* in_data, const TensorShape& in_out_shape, DataType in_out_datatype, DataLayout in_out_layout);
-}  // namespace cpu_op
+}  // namespace dnnl_op
 
 
 class SoftmaxBaseDispatcher : public NodeDispatcher
@@ -182,7 +182,7 @@ public:
         std::memcpy(data_out.data(), readback_mapped_ptr, data_out.size());
         readback_buffer->Unmap(0, nullptr);
 
-        const auto dnnl_untyped_result = cpu_op::softmax(params_.axis, input_data_.data(), params_.shape, params_.dt, params_.layout);
+        const auto dnnl_untyped_result = dnnl_softmax_op::softmax(params_.axis, input_data_.data(), params_.shape, params_.dt, params_.layout);
 
         if (params_.dt == DataType::eFp32)
         {
@@ -238,8 +238,6 @@ public:
 private:
     gpu_op::Softmax softmax_;
 };
-
-
 
 class SoftmaxCmDispatcher : public SoftmaxBaseDispatcher
 {

@@ -1,8 +1,10 @@
 #include "mvn.h"
 #include "dnnl_utils.h"
 
-std::vector<std::byte> cpu_op::mvn(const TensorShape& in_out_shape, DataLayout in_out_layout, DataType in_out_datatype, const std::byte* input_data, const std::byte* scale_data, const std::byte* bias_data, const float epsilon)
+std::vector<std::byte> dnnl_mvn_op::mvn(const TensorShape& in_out_shape, DataLayout in_out_layout, DataType in_out_datatype, const std::byte* input_data, const std::byte* scale_data, const std::byte* bias_data, const float epsilon)
 {
+    using namespace dnnl_utils;
+
     /*
     *   This code seems to be broken. ToDo: fix it.
     */

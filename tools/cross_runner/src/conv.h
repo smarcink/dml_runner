@@ -3,6 +3,44 @@
 #include <random>
 #include "dml_base_node.h"
 
+#include "dnnl_utils.h"
+
+#include "iumd_d3d12_impl.h"
+#include <dnnl_iumd.h>
+#include <dnnl.hpp>
+#include <dnnl_iumd.hpp>
+#include "oneapi/dnnl/dnnl.hpp"
+
+namespace dnnl_conv_op
+{
+struct bindings_t
+{
+    dnnl_utils::binding_t input;
+    dnnl_utils::binding_t filter;
+    dnnl_utils::binding_t bias;
+};
+
+struct opts_t
+{
+    std::uint32_t inp_pad;
+    std::uint32_t out_pad;
+    TensorShape stride;
+    TensorShape output_shape;
+    DataType out_dt = DataType::eCount;
+    DataType accumulator_dt = DataType::eCount;
+    std::uint32_t activation_type;
+    float activation_alpha;
+    float activation_beta;
+    DataLayout out_layout = DataLayout::eCount;
+    bool force_winograd = false;
+
+    bool dump_weights = false;
+    bool dump_scratchpad = false;
+};
+std::vector<std::byte> convolution(const bindings_t& bindings, opts_t opts);
+}
+
+
 namespace gpu_op
 {
 class Convolution : public DirectMlBaseNode
@@ -211,40 +249,6 @@ private:
 };
 }
 
-namespace cpu_op
-{
-
-struct binding_t
-{
-    const std::byte* data = nullptr;
-    DataType dt = DataType::eCount;
-    DataLayout layout = DataLayout::eCount;
-    TensorShape shape;
-};
-
-struct bindings_t
-{
-    binding_t input;
-    binding_t filter;
-    binding_t bias;
-};
-
-struct opts_t
-{
-    std::uint32_t inp_pad;
-    std::uint32_t out_pad;
-    TensorShape stride;
-    TensorShape output_shape;
-    DataType out_dt = DataType::eCount;
-    std::uint32_t activation_type;
-    float activation_alpha;
-    float activation_beta;
-    DataLayout out_layout = DataLayout::eCount;
-};
-std::vector<std::byte> convolution(const bindings_t& bindings, opts_t opts);
-}
-
-
 class ConvolutionBaseDispatcher : public NodeDispatcher
 {
 public:
@@ -265,6 +269,9 @@ public:
         bool no_bias = false;
         bool allow_fp16_computations = false;
         bool managaed_weights = false; // ToDo: pass it to DML class so its actually beigned used
+        bool algo_winograd = false;
+
+        bool dump_weights = false;
 
         inline static void add_cli_options(CLI::App* opts, create_params_t& params)
         {
@@ -282,6 +289,9 @@ public:
             opts->add_option("--activation_type", params.act_type);
             opts->add_option("--activation_alpha", params.act_alpha);
             opts->add_option("--activation_beta", params.act_beta);
+            opts->add_flag("--algo_winograd", params.algo_winograd);
+
+            opts->add_flag("--dump_weights", params.dump_weights);
         }
     };
 
@@ -479,7 +489,7 @@ protected:
 
     std::vector<std::byte> get_dnnl_result() const
     {
-        cpu_op::bindings_t bindings{};
+        dnnl_conv_op::bindings_t bindings{};
         {
             bindings.input.data = input_data_.data();
             bindings.input.dt = params_.dt;
@@ -501,7 +511,7 @@ protected:
             bindings.bias.shape = TensorShape(params_.filter_shape.n, 1u, 1u, 1u);
         }
 
-        cpu_op::opts_t opts{};
+        dnnl_conv_op::opts_t opts{};
         opts.output_shape = get_output_shape();
         opts.inp_pad = params_.in_pad;
         opts.out_pad = params_.out_pad;
@@ -511,7 +521,22 @@ protected:
         opts.activation_type = params_.act_type;
         opts.activation_alpha = params_.act_alpha;
         opts.activation_beta = params_.act_beta;
-        return cpu_op::convolution(bindings, opts);
+        opts.force_winograd = params_.algo_winograd;
+        opts.dump_weights = dump_weights();
+        opts.dump_scratchpad = dump_weights();
+        opts.accumulator_dt = (params_.allow_fp16_computations && params_.dt == DataType::eFp16) ? DataType::eFp16 : DataType::eFp32;
+        return dnnl_conv_op::convolution(bindings, opts);
+    }
+
+protected:
+    virtual bool dump_weights() const
+    {
+        return params_.dump_weights;
+    }
+
+    virtual bool dump_scratchpad() const
+    {
+        return params_.dump_weights;
     }
 
 protected:
@@ -565,6 +590,356 @@ public:
 private:
     gpu_op::Convolution conv_;
     IDMLCommandRecorder* dml_cmd_recorder_;
+};
+
+class ConvolutionUmdD3d12Dispatcher : public ConvolutionBaseDispatcher
+{
+public:
+    struct conv_umdd3d12_params_t
+    {
+        inline static void add_cli_options(CLI::App* opts, conv_umdd3d12_params_t& params)
+        {
+        }
+    };
+
+public:
+    ConvolutionUmdD3d12Dispatcher(create_params_t&& params, conv_umdd3d12_params_t&& umdd3d12_params, IntelExtension& intc_ext, ID3D12Device* d3d12_device, ID3D12GraphicsCommandList* cmd_list)
+        : ConvolutionBaseDispatcher(std::move(params), d3d12_device, cmd_list)
+        , device_(d3d12_device, intc_ext.get_info())
+        , umdd3d12_params_(std::move(umdd3d12_params))
+        , dnnl_engine_(dnnl::iumd_interop::make_engine(&device_))
+    {      
+        using namespace dnnl_utils;
+        const dnnl::memory::dims pad{ params.in_pad, params.in_pad };
+        const dnnl::memory::dims stride{ params.stride.h, params.stride.w };
+
+        const dnnl::primitive_attr attr = [](dnnl::algorithm act, float alpha, float beta, bool allow_half_computation)
+        {
+            // create a post-op with relu
+            dnnl::post_ops ops;
+            dnnl::primitive_attr attr;
+
+            // sanity check
+            assert(attr.get_scratchpad_mode() == dnnl::scratchpad_mode::library);
+            // set scratchpad mode to user provided
+            attr.set_scratchpad_mode(dnnl::scratchpad_mode::user);
+
+            if (allow_half_computation)
+            {
+                attr.set_accumulation_mode(dnnl::accumulation_mode::f16);
+            }
+
+
+            if (act != dnnl::algorithm::undef)
+            {
+                ops.append_eltwise(act, alpha, beta);
+                // create an attribute and set the corresponding post op
+                attr.set_post_ops(ops);
+            }
+
+            return attr;
+        }(static_cast<dnnl::algorithm>(params.act_type), params.act_alpha, params.act_beta, params_.allow_fp16_computations&& params_.dt == DataType::eFp16);
+
+        input_memory_desc_ = to_dnnl_mem_desc(params_.input_shape, params_.input_layout, params_.dt);
+        output_memory_desc_ = to_dnnl_mem_desc(get_output_shape(), params_.output_layout, params_.dt);
+
+        if (!params_.no_bias)
+        {
+            bias_memory_desc_.emplace(to_dnnl_mem_desc(TensorShape{ params_.filter_shape.n, 0, 0, 0}, DataLayout::eO, params_.dt));
+        }
+        
+        const auto conv_desc = dnnl::convolution_forward::primitive_desc(
+            dnnl_engine_,
+            dnnl::prop_kind::forward_inference,
+            params_.algo_winograd ? dnnl::algorithm::convolution_winograd : dnnl::algorithm::convolution_direct,
+            input_memory_desc_,
+            dnnl_utils::to_dnnl_mem_desc(params_.filter_shape, DataLayout::eWeightsLayoutStart, params_.dt),  // DataLayout::eWeightsLayoutStart  to allow oneDNNL to reorder the weights
+            bias_memory_desc_ ? bias_memory_desc_.value() : dnnl::memory::desc{},
+            output_memory_desc_,
+            stride,
+            pad,
+            pad,
+            attr
+        );
+        std::cout << "dnnl-umd kernel impl: " << conv_desc.impl_info_str() << std::endl;
+
+        filter_memory_desc_ = conv_desc.query_md(dnnl::query::weights_md);
+
+        const auto persistent_resource_size = [&]()
+        {
+            auto ret = filter_memory_desc_.get_size();
+            if (use_bias())
+            {
+                ret += bias_memory_desc_->get_size();
+            }
+            return ret;
+        }();
+        if (persistent_resource_size != 0)
+        {
+            const auto heap_props = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
+            const auto buffder_desc = CD3DX12_RESOURCE_DESC::Buffer(persistent_resource_size, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+            throw_if_failed(d3d12_device_->CreateCommittedResource(
+                &heap_props,
+                D3D12_HEAP_FLAG_NONE,
+                &buffder_desc,
+                D3D12_RESOURCE_STATE_COMMON,
+                nullptr, IID_PPV_ARGS(persistent_buffer_.ReleaseAndGetAddressOf())), "create buffer resource");
+        }
+
+        assert(conv_desc.query_s64(dnnl::query::memory_consumption_s64) == 0);  // we provide scratchpad, so sanity check that primitive does not require any "hidden" memory
+        scratchpad_memory_desc_.emplace(conv_desc.query_md(dnnl::query::scratchpad_md));
+        const auto temporary_resoruce_size = scratchpad_memory_desc_->get_size();
+        if (temporary_resoruce_size != 0)
+        {          
+            const auto heap_props = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
+            const auto buffder_desc = CD3DX12_RESOURCE_DESC::Buffer(temporary_resoruce_size, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+            throw_if_failed(d3d12_device_->CreateCommittedResource(
+                &heap_props,
+                D3D12_HEAP_FLAG_NONE,
+                &buffder_desc,
+                D3D12_RESOURCE_STATE_COMMON,
+                nullptr, IID_PPV_ARGS(temporary_buffer_.ReleaseAndGetAddressOf())), "create buffer resource");
+        }
+
+        // create convolution primitive
+        convolution_ = dnnl::convolution_forward(conv_desc);
+
+        // compile weights reorder kernel and create reorder primitive
+        // ToDo: check if reorder needs scratchpad memory??
+        dnnl::reorder::primitive_desc reorder_desc(dnnl_engine_, to_dnnl_mem_desc(params_.filter_shape, params_.filter_layout, params_.dt), dnnl_engine_, filter_memory_desc_);
+        reorder_weights_ = dnnl::reorder(reorder_desc);
+
+        if (use_bias())
+        {
+            assert(bias_memory_desc_.has_value());
+            // mimic copy shader from metacommand
+            dnnl::reorder::primitive_desc reorder_desc(dnnl_engine_, *bias_memory_desc_, dnnl_engine_, *bias_memory_desc_);
+            reorder_bias_ = dnnl::reorder(reorder_desc);
+        }
+    }
+
+    std::uint32_t get_total_descriptor_count()override
+    {
+        // input, output, weights, bias
+        std::uint32_t ret = 3;
+        if (bias_memory_desc_.has_value())
+        {
+            ret++;
+        }
+        if (persistent_buffer_)
+        {
+            ret++;
+        }
+        if (temporary_buffer_)
+        {
+            ret++;
+        }
+        return ret;
+    }
+
+    void initialize(ID3D12GraphicsCommandList* cmd_list, D3D12_CPU_DESCRIPTOR_HANDLE cpu_handle, D3D12_GPU_DESCRIPTOR_HANDLE gpu_handle) override
+    {
+        ID3D12GraphicsCommandList4* cmd_list4 = nullptr;
+        throw_if_failed(cmd_list->QueryInterface(&cmd_list4), "cant cast d3d12 device to ID3D12Device5");
+        iumd::custom_metacommand::UmdD3d12CommandList cmd(cmd_list4);
+        dnnl::stream stream = dnnl::iumd_interop::make_stream(dnnl_engine_, &cmd);
+
+        base_cpu_handle_ = CD3DX12_CPU_DESCRIPTOR_HANDLE{ cpu_handle };
+        base_gpu_handle_ = CD3DX12_GPU_DESCRIPTOR_HANDLE{ gpu_handle };
+
+        if (!reorder_weights_ && !reorder_bias_)
+        {
+            // early exit, as no reordering needed
+            return;
+        }
+
+        std::vector<std::pair<DescType, ID3D12Resource*>> resources_list;
+        resources_list.reserve(2);
+        resources_list.push_back({ DescType::eUav, filter_buffer_.Get() });
+        resources_list.push_back({ DescType::eUav, persistent_buffer_.Get() });
+        if (use_bias())
+        {
+            resources_list.push_back({ DescType::eUav, bias_buffer_.Get() });
+        }
+        const auto gpu_handles = create_resource_views_and_handles(d3d12_device_, resources_list, base_cpu_handle_, base_gpu_handle_);
+
+        // weights reorder
+        if (reorder_weights_)
+        { 
+            auto umd_filter_input_mem = iumd::custom_metacommand::UmdD3d12Memory(gpu_handles[0]);
+            auto umd_filter_reorder_mem = iumd::custom_metacommand::UmdD3d12Memory(gpu_handles[1]);
+
+            dnnl::memory filer_input_memory = create_dnnl_memory(dnnl_utils::to_dnnl_mem_desc(params_.filter_shape, params_.filter_layout, params_.dt), umd_filter_input_mem);
+            dnnl::memory filer_reorder_memory = create_dnnl_memory(filter_memory_desc_, umd_filter_reorder_mem);
+
+            std::unordered_map<int, dnnl::memory> args;
+            args.insert({ DNNL_ARG_SRC, filer_input_memory });
+            args.insert({ DNNL_ARG_DST, filer_reorder_memory });
+
+            reorder_weights_.execute(stream, args);
+        }
+
+        if (use_bias() && reorder_bias_)
+        {
+            const auto persitent_resoruce_base_offset = filter_memory_desc_.get_size();
+
+            auto umd_bias_input_mem = iumd::custom_metacommand::UmdD3d12Memory(gpu_handles[2]);   // bias input
+            auto umd_bias_reorder_mem = iumd::custom_metacommand::UmdD3d12Memory(gpu_handles[1]); // persitent output
+            const auto bias_desc = dnnl_utils::to_dnnl_mem_desc(TensorShape{ params_.filter_shape.n, 1, 1, 1 }, DataLayout::eNCHW, params_.dt);
+            // this is just a copy from user provided bias to metacommand manged persitent resource 
+            dnnl::memory bias_input_memory = create_dnnl_memory(bias_desc, umd_bias_input_mem);
+            dnnl::memory bias_reorder_memory = create_dnnl_memory(bias_desc, umd_bias_reorder_mem, persitent_resoruce_base_offset);
+
+            std::unordered_map<int, dnnl::memory> args;
+            args.insert({ DNNL_ARG_SRC, bias_input_memory });
+            args.insert({ DNNL_ARG_DST, bias_reorder_memory });
+
+            reorder_bias_.execute(stream, args);
+        }
+
+    }
+
+    void execute(ID3D12GraphicsCommandList* cmd_list) override
+    {
+        std::vector<std::pair<DescType, ID3D12Resource*>> resources_list;
+        resources_list.reserve(get_total_descriptor_count());
+        resources_list.push_back({ DescType::eUav, input_buffer_.Get() });
+        resources_list.push_back({ DescType::eUav, reorder_weights_ ? persistent_buffer_.Get() : filter_buffer_.Get() });
+        resources_list.push_back({ DescType::eUav, output_buffer_.Get() });
+        if (use_bias() && bias_buffer_ && !reorder_bias_)
+        {
+            resources_list.push_back({ DescType::eUav,  bias_buffer_.Get() });
+        }
+        if (temporary_buffer_)
+        {
+            resources_list.push_back({ DescType::eUav, temporary_buffer_.Get() });
+        }
+        const auto gpu_handles = create_resource_views_and_handles(d3d12_device_, resources_list, base_cpu_handle_, base_gpu_handle_);
+
+        std::size_t res_idx = 0;
+        auto umd_input_memory = iumd::custom_metacommand::UmdD3d12Memory(gpu_handles[res_idx++]);
+        auto umd_filter_memory = iumd::custom_metacommand::UmdD3d12Memory(gpu_handles[res_idx++]);
+        auto umd_output_memory = iumd::custom_metacommand::UmdD3d12Memory(gpu_handles[res_idx++]);
+        auto umd_bias_memory = iumd::custom_metacommand::UmdD3d12Memory(); // use_bias() ? umd::custom_metacommand::UmdD3d12Memory(gpu_handles[res_idx++]) :
+        if (use_bias() && persistent_buffer_ && reorder_bias_)
+        {
+            // persitent resources shader with filter memory;
+            umd_bias_memory = umd_filter_memory;
+        }
+        else if (use_bias() && bias_buffer_ && !reorder_bias_)
+        {
+            umd_bias_memory = iumd::custom_metacommand::UmdD3d12Memory(gpu_handles[res_idx++]);
+        }
+        auto umd_scratchpad_memory = temporary_buffer_ ? iumd::custom_metacommand::UmdD3d12Memory(gpu_handles[res_idx++]) : iumd::custom_metacommand::UmdD3d12Memory();
+
+        // stream is created in execute(...), because in MetaCommand cmd list object can be different from execute-to-execute
+        ID3D12GraphicsCommandList4* cmd_list4 = nullptr;
+        throw_if_failed(cmd_list->QueryInterface(&cmd_list4), "cant cast d3d12 device to ID3D12Device5");
+        iumd::custom_metacommand::UmdD3d12CommandList cmd(cmd_list4);
+        dnnl::stream stream = dnnl::iumd_interop::make_stream(dnnl_engine_, &cmd);
+
+        // memory resources are created in execute(...), because in MetaCommand these objects can be different from execute-to-execute
+        dnnl::memory input_memory = create_dnnl_memory(input_memory_desc_, umd_input_memory);
+        dnnl::memory filter_memory = create_dnnl_memory(filter_memory_desc_, umd_filter_memory);
+        std::optional<dnnl::memory> bias_memory;
+        if (use_bias())
+        {
+            bias_memory.emplace(create_dnnl_memory(bias_memory_desc_.value(), umd_bias_memory, filter_memory_desc_.get_size()));
+        }
+        std::optional<dnnl::memory> scratchpad_memory;
+        if (scratchpad_memory_desc_)
+        {
+            scratchpad_memory.emplace(create_dnnl_memory(scratchpad_memory_desc_.value(), umd_scratchpad_memory));
+        }
+        dnnl::memory output_memory = create_dnnl_memory(output_memory_desc_, umd_output_memory);
+
+        std::unordered_map<int, dnnl::memory> args;
+        args.insert( { DNNL_ARG_SRC, input_memory });
+        args.insert( { DNNL_ARG_WEIGHTS, filter_memory });
+        args.insert( { DNNL_ARG_DST, output_memory} );
+        if (use_bias())
+        {
+            args.insert({ DNNL_ARG_BIAS, bias_memory.value()});
+        }
+        if (scratchpad_memory_desc_)
+        {
+            args.insert({ DNNL_ARG_SCRATCHPAD, scratchpad_memory.value() });
+        }
+        convolution_.execute(stream, args);
+        //stream.wait();
+    }
+
+private:
+    dnnl::memory create_dnnl_memory(const auto& desc, auto& umd_mem, std::size_t offset = 0)
+    {
+        return dnnl::iumd_interop::make_memory(desc, dnnl_engine_, &umd_mem, offset);
+    };
+
+    ConformanceResult validate_conformance(ID3D12CommandQueue* command_queue,
+        ID3D12CommandAllocator* command_allocator, ID3D12GraphicsCommandList* command_list) override
+    {
+        auto dump_buffer_to_file = [&](const auto& buffer, const auto& file_name)
+        {
+            if (!buffer)
+            {
+                return;
+            }
+            const auto bytes_width = buffer->GetDesc().Width;
+            // readback data and validate
+            auto readback_buffer = create_buffer(d3d12_device_, bytes_width, D3D12_HEAP_TYPE_READBACK, D3D12_RESOURCE_STATE_COPY_DEST);
+            auto readback_output_barrirer = CD3DX12_RESOURCE_BARRIER::Transition(buffer.Get(),
+                D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
+            command_list->ResourceBarrier(1, &readback_output_barrirer);
+            command_list->CopyResource(readback_buffer.Get(), persistent_buffer_.Get());
+            close_execute_reset_wait(d3d12_device_, command_queue, command_allocator, command_list);
+
+            std::vector<std::byte> data_out(bytes_width);
+            std::byte* readback_mapped_ptr = nullptr;
+            readback_buffer->Map(0, nullptr, reinterpret_cast<void**>(&readback_mapped_ptr));
+            std::memcpy(data_out.data(), readback_mapped_ptr, data_out.size());
+            readback_buffer->Unmap(0, nullptr);
+
+            std::ofstream fout(file_name, std::ios::out | std::ios::binary);
+            fout.write((char*)data_out.data(), data_out.size());
+            fout.close();
+        };
+
+        if (dump_weights())
+        {
+            dump_buffer_to_file(persistent_buffer_, "umd_weights_data.dat");
+        }
+
+        const bool dump_scratchpads_data = true;
+        if (dump_scratchpad())
+        {
+            dump_buffer_to_file(temporary_buffer_, "umd_scratchpad_data.dat");
+        }
+
+        const auto ret = ConvolutionBaseDispatcher::validate_conformance(command_queue, command_allocator, command_list);
+        return ret;
+    }
+
+private:
+    iumd::custom_metacommand::UmdD3d12Device device_;
+    conv_umdd3d12_params_t umdd3d12_params_;
+    dnnl::engine dnnl_engine_;
+
+    dnnl::convolution_forward convolution_;
+    dnnl::reorder reorder_weights_;
+    dnnl::reorder reorder_bias_;  // metacommand copy bias data to persistent buffer
+
+    dnnl::memory::desc input_memory_desc_;
+    dnnl::memory::desc filter_memory_desc_;
+    std::optional<dnnl::memory::desc> bias_memory_desc_;
+    std::optional<dnnl::memory::desc> scratchpad_memory_desc_;
+    dnnl::memory::desc output_memory_desc_;
+
+
+    ComPtr<ID3D12Resource> temporary_buffer_;
+    ComPtr<ID3D12Resource> persistent_buffer_;
+
+    CD3DX12_CPU_DESCRIPTOR_HANDLE base_cpu_handle_;
+    CD3DX12_GPU_DESCRIPTOR_HANDLE base_gpu_handle_;
 };
 
 class ConvolutionCmDispatcher : public ConvolutionBaseDispatcher

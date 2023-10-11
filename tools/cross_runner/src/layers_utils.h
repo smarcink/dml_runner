@@ -119,6 +119,7 @@ enum class DataLayout
 {
     eNCHW = 0,
     eNHWC = 1,
+    eCHW,      // 3d dims for GEMMS
     eW,
 
 
@@ -127,6 +128,7 @@ enum class DataLayout
 
     // weights layouts
     eWeightsLayoutStart = 1000,
+    eO, // for bias
     eOIYX,          // nchw and oiyx layouts are the same format, this is just to express it with proper name
     eIO_i8_o8_i2,  // layout for 1x1 fp16 CM simd8 dpas kernel
 
@@ -145,6 +147,7 @@ inline std::string data_layout_name(DataLayout l)
     {
     case DataLayout::eNCHW: return "NCHW";
     case DataLayout::eNHWC: return "NHWC";
+    case DataLayout::eCHW:  return "CHW";
     case DataLayout::eW:    return "W";
     case DataLayout::eOIYX: return "OIYX";
     case DataLayout::eIO_i8_o8_i2: return "IO_i8_o8_i2";
@@ -165,6 +168,8 @@ inline std::uint8_t data_layout_dimensions_count(DataLayout l)
     case DataLayout::eNCHW:
     case DataLayout::eNHWC:
         return 4;
+    case DataLayout::eCHW:
+        return 3;
     case DataLayout::eW:
         return 1;
     default:
@@ -205,8 +210,10 @@ enum class NodeType
 {
     eGemmDml,
     eGemmCm,
+    eGemmUmdD3d12,
     eConvDml,
     eConvCm,
+    eConvUmdD3d12,
     eSoftmaxDml,
     eSoftmaxCm,
     eMvnDml,
@@ -223,6 +230,17 @@ inline void randomize_linear_container_float(std::mt19937& gen, std::uniform_rea
     for (auto i = 0; i < container.size() / sizeof(Dt); i++)
     {
         ptr[i] = static_cast<Dt>(dist(gen));
+    }
+}
+
+
+inline void fill_with_constant_linear_container_float(std::span<std::byte> container, float value)
+{
+    using Dt = float;
+    auto* ptr = reinterpret_cast<Dt*>(container.data());
+    for (auto i = 0; i < container.size() / sizeof(Dt); i++)
+    {
+        ptr[i] = value;
     }
 }
 
@@ -256,9 +274,9 @@ inline auto add_data_type_cli_option(CLI::App* opts, std::string_view opt_name, 
 
 inline auto add_data_layout_cli_option(CLI::App* opts, std::string_view opt_name, DataLayout& layout)
 {
-    return opts->add_option(opt_name.data(), layout)->check(CLI::IsMember({DataLayout::eNCHW, DataLayout::eNHWC, DataLayout::eW }))
+    return opts->add_option(opt_name.data(), layout)->check(CLI::IsMember({DataLayout::eNCHW, DataLayout::eNHWC, DataLayout::eW, DataLayout::eCHW }))
         ->transform(CLI::Transformer(std::map<std::string, DataLayout>{
-            {"nchw", DataLayout::eNCHW}, { "nhwc", DataLayout::eNHWC }, { "w", DataLayout::eW },
+            {"nchw", DataLayout::eNCHW}, { "nhwc", DataLayout::eNHWC }, { "w", DataLayout::eW }, { "chw", DataLayout::eCHW },
     }, CLI::ignore_case, CLI::ignore_underscore));
 }
 
