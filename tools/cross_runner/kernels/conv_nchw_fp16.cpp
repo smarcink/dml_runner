@@ -27,21 +27,18 @@ implied warranties, other than those that are expressly stated in the License.
 #define BLOCK_H 1
 #define BLOCK_BATCH 1
 #define BLOCK_OC 16
+#define BLOCK_W 16
 
 #if !CM_HAS_LSC
 #error [Error_device_no_lsc] Kernel designed to use lsc. Current device does not support lsc.
 #endif
 
-#if(CM_GENX >= 1280)
-#error [Error_device_not_supported] Kernel is not designed for this architecutre.
+#if BLOCK_W != 16
+#error [Error_kernel_config_unsupported_block_w] Kernel designed to work with block_w=16;
 #endif
 
-#if BLOCK_W != 2 && BLOCK_W != 16 && BLOCK_W != 32
-#error [Error_kernel_config_unsupported_block_w] Kernel designed to work with block_w  which is equal to 2 or 16 or 32;
-#endif
-
-#if BLOCK_OC != 8 && BLOCK_OC != 16 && BLOCK_OC != 32
-#error [Error_kernel_config_unsupported_block_w] Kernel designed to work with block_oc which is equal to 8 or 16 or 32;
+#if BLOCK_OC != 16
+#error [Error_kernel_config_unsupported_block_w] Kernel designed to work with block_oc=16;
 #endif
 
 #define DT_ACCU float
@@ -69,9 +66,10 @@ implied warranties, other than those that are expressly stated in the License.
 
 #define INPUT_ELEMENT_SIZE_I32 int32_t(INPUT_ELEMENT_SIZE)
 
-#define ACTIVATION_LOGISTIC 	41
-#define ACTIVATION_RELU		  	32
-#define ACTIVATION_LEAKY_RELU 	33
+#define ACTIVATION_LOGISTIC 	  41
+#define ACTIVATION_RELU		  	  32
+#define ACTIVATION_HYPERBOLIC_TAN 33
+#define ACTIVATION_LEAKY_RELU 	  39
 #define MATH_E 2.718281828459045235360287471352f
 
 static const uint32_t output_linear_init_offsets[] = {
@@ -108,6 +106,10 @@ _GENX_ inline DT_ACCU activation_function(uint32_t activation_type, DT_ACCU inpu
 	{
 		return (input >= UNIT_VAL_ZERO) ? input : m * input;
 	}
+	else if(activation_type == ACTIVATION_HYPERBOLIC_TAN)
+	{
+		return cmtl::cm_tanh(input);
+	}
 	else
 	{
 		return input;
@@ -124,7 +126,7 @@ _GENX_ inline vector<DT_ACCU, BLOCK_OC> load_bias(SurfaceIndex surface [[type("b
 
 _GENX_ inline vector<DT_ACCU, INPUT_REG_SIZE> load_input_nchw(SurfaceIndex surface [[type("buffer_t")]], uint32_t input_width, uint32_t input_height, uint32_t input_pad, uint32_t w_offset, int32_t h_offset, uint32_t batch_base_offset_bytes)
 {
-	const uint32_t LINEAR_LOAD_SIZE = 64;
+	const uint32_t LINEAR_LOAD_SIZE = INPUT_REG_W + (16 - (INPUT_REG_W % 16));
 	const int32_t h_offset_pad = h_offset - int32_t(input_pad);
 	vector<DT_ACCU, INPUT_REG_SIZE> ret(0.0f);
 	vector<DT_ACCU, LINEAR_LOAD_SIZE> load_chunk_accu_dt(0.0f);
@@ -149,17 +151,38 @@ _GENX_ inline vector<DT_ACCU, INPUT_REG_SIZE> load_input_nchw(SurfaceIndex surfa
 	vector<uint32_t, LINEAR_LOAD_SIZE> offsets_u32 = offsets;
 	offsets_u32 += batch_base_offset_bytes;
 
-	load_chunk_accu_dt.select<16,1>(0)  = cm_load<DT_IN, VectorSize::N1, DataSize::Default, CacheHint::Default, CacheHint::Default>(surface, offsets_u32.select<16,1>(0));
-	if(INPUT_REG_W > 16) { load_chunk_accu_dt.select<16,1>(16) = cm_load<DT_IN, VectorSize::N1, DataSize::Default, CacheHint::Default, CacheHint::Default>(surface, offsets_u32.select<16,1>(16)); };
-	if(INPUT_REG_W > 32) { load_chunk_accu_dt.select<16,1>(32) = cm_load<DT_IN, VectorSize::N1, DataSize::Default, CacheHint::Default, CacheHint::Default>(surface, offsets_u32.select<16,1>(32)); };
-	if(INPUT_REG_W > 48) { load_chunk_accu_dt.select<16,1>(48) = cm_load<DT_IN, VectorSize::N1, DataSize::Default, CacheHint::Default, CacheHint::Default>(surface, offsets_u32.select<16,1>(48)); };
+	load_chunk_accu_dt.select<16,1>(0)  = cm_load<DT_IN, VectorSize::N1, DataSize::Default, CacheHint::Default, CacheHint::Default>(surface, offsets_u32.select<16,1>(0));	
+#if INPUT_REG_W > 16
+	load_chunk_accu_dt.select<16,1>(16) = cm_load<DT_IN, VectorSize::N1, DataSize::Default, CacheHint::Default, CacheHint::Default>(surface, offsets_u32.select<16,1>(16));
+#endif
+#if INPUT_REG_W > 32
+	load_chunk_accu_dt.select<16,1>(32) = cm_load<DT_IN, VectorSize::N1, DataSize::Default, CacheHint::Default, CacheHint::Default>(surface, offsets_u32.select<16,1>(32));
+#endif
+#if INPUT_REG_W > 48
+	load_chunk_accu_dt.select<16,1>(48) = cm_load<DT_IN, VectorSize::N1, DataSize::Default, CacheHint::Default, CacheHint::Default>(surface, offsets_u32.select<16,1>(48));
+#endif
+#if INPUT_REG_W > 64
+	load_chunk_accu_dt.select<16,1>(64) = cm_load<DT_IN, VectorSize::N1, DataSize::Default, CacheHint::Default, CacheHint::Default>(surface, offsets_u32.select<16,1>(64));
+#endif
+#if INPUT_REG_W > 80
+	load_chunk_accu_dt.select<16,1>(80) = cm_load<DT_IN, VectorSize::N1, DataSize::Default, CacheHint::Default, CacheHint::Default>(surface, offsets_u32.select<16,1>(80));
+#endif
+#if INPUT_REG_W > 96
+	load_chunk_accu_dt.select<16,1>(96) = cm_load<DT_IN, VectorSize::N1, DataSize::Default, CacheHint::Default, CacheHint::Default>(surface, offsets_u32.select<16,1>(96));
+#endif
+#if INPUT_REG_W > 112
+	load_chunk_accu_dt.select<16,1>(112) = cm_load<DT_IN, VectorSize::N1, DataSize::Default, CacheHint::Default, CacheHint::Default>(surface, offsets_u32.select<16,1>(112));
+#endif
+#if INPUT_REG_W > 128
+	load_chunk_accu_dt.select<16,1>(128) = cm_load<DT_IN, VectorSize::N1, DataSize::Default, CacheHint::Default, CacheHint::Default>(surface, offsets_u32.select<16,1>(128));
+#endif
 	ret.select<INPUT_REG_W, 1>(0).merge(load_chunk_accu_dt.select<INPUT_REG_W, 1>(), predicate.select<INPUT_REG_W, 1>());
 	return ret;
 }
 
 _GENX_ inline vector<DT_ACCU, INPUT_REG_SIZE> load_input_nhwc(SurfaceIndex surface [[type("buffer_t")]], uint32_t input_width, uint32_t input_height, uint32_t input_pad, uint32_t w_offset, int32_t h_offset, uint32_t batch_base_offset_bytes, uint32_t input_channels)
 {
-	const uint32_t LINEAR_LOAD_SIZE = 64;
+	const uint32_t LINEAR_LOAD_SIZE = INPUT_REG_W + (16 - (INPUT_REG_W % 16));
 	const int32_t h_offset_pad = h_offset - int32_t(input_pad);
 	vector<DT_ACCU, INPUT_REG_SIZE> ret(0.0f);
 	vector<DT_ACCU, LINEAR_LOAD_SIZE> load_chunk_accu_dt(0.0f);
@@ -187,12 +210,31 @@ _GENX_ inline vector<DT_ACCU, INPUT_REG_SIZE> load_input_nhwc(SurfaceIndex surfa
 	vector<uint32_t, LINEAR_LOAD_SIZE> offsets_u32 = offsets;
 	offsets_u32 += batch_base_offset_bytes;
 	
-
 	load_chunk_accu_dt.select<16,1>(0)  = cm_load<DT_IN, VectorSize::N1, DataSize::Default, CacheHint::Default, CacheHint::Default>(surface, offsets_u32.select<16,1>(0));
-	if(INPUT_REG_W > 16) { load_chunk_accu_dt.select<16,1>(16) = cm_load<DT_IN, VectorSize::N1, DataSize::Default, CacheHint::Default, CacheHint::Default>(surface, offsets_u32.select<16,1>(16)); } ;
-	if(INPUT_REG_W > 32) { load_chunk_accu_dt.select<16,1>(32) = cm_load<DT_IN, VectorSize::N1, DataSize::Default, CacheHint::Default, CacheHint::Default>(surface, offsets_u32.select<16,1>(32)); } ;
-	if(INPUT_REG_W > 48) { load_chunk_accu_dt.select<16,1>(48) = cm_load<DT_IN, VectorSize::N1, DataSize::Default, CacheHint::Default, CacheHint::Default>(surface, offsets_u32.select<16,1>(48)); } ;
-	
+#if INPUT_REG_W > 16
+	load_chunk_accu_dt.select<16,1>(16) = cm_load<DT_IN, VectorSize::N1, DataSize::Default, CacheHint::Default, CacheHint::Default>(surface, offsets_u32.select<16,1>(16));
+#endif
+#if INPUT_REG_W > 32
+	load_chunk_accu_dt.select<16,1>(32) = cm_load<DT_IN, VectorSize::N1, DataSize::Default, CacheHint::Default, CacheHint::Default>(surface, offsets_u32.select<16,1>(32));
+#endif
+#if INPUT_REG_W > 48
+	load_chunk_accu_dt.select<16,1>(48) = cm_load<DT_IN, VectorSize::N1, DataSize::Default, CacheHint::Default, CacheHint::Default>(surface, offsets_u32.select<16,1>(48));
+#endif
+#if INPUT_REG_W > 64
+	load_chunk_accu_dt.select<16,1>(64) = cm_load<DT_IN, VectorSize::N1, DataSize::Default, CacheHint::Default, CacheHint::Default>(surface, offsets_u32.select<16,1>(64));
+#endif
+#if INPUT_REG_W > 80
+	load_chunk_accu_dt.select<16,1>(80) = cm_load<DT_IN, VectorSize::N1, DataSize::Default, CacheHint::Default, CacheHint::Default>(surface, offsets_u32.select<16,1>(80));
+#endif
+#if INPUT_REG_W > 96
+	load_chunk_accu_dt.select<16,1>(96) = cm_load<DT_IN, VectorSize::N1, DataSize::Default, CacheHint::Default, CacheHint::Default>(surface, offsets_u32.select<16,1>(96));
+#endif
+#if INPUT_REG_W > 112
+	load_chunk_accu_dt.select<16,1>(112) = cm_load<DT_IN, VectorSize::N1, DataSize::Default, CacheHint::Default, CacheHint::Default>(surface, offsets_u32.select<16,1>(112));
+#endif
+#if INPUT_REG_W > 128
+	load_chunk_accu_dt.select<16,1>(128) = cm_load<DT_IN, VectorSize::N1, DataSize::Default, CacheHint::Default, CacheHint::Default>(surface, offsets_u32.select<16,1>(128));
+#endif
 	ret.select<INPUT_REG_W, 1>(0).merge(load_chunk_accu_dt.select<INPUT_REG_W, 1>(), predicate.select<INPUT_REG_W, 1>());
 	return ret;
 }
