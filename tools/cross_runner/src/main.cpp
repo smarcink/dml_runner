@@ -87,10 +87,11 @@ int main()
     CliOptions opts;
     CLI::App dml_runner_app{ "App to microbenchmark and developer dml kernels.", "DirectML runner." };
     dml_runner_app.add_option("--type", opts.node_type, "Name of the type of layer to run.")
-        ->required()->check(CLI::IsMember({ NodeType::eConvDml, NodeType::eConvCm, NodeType::eGemmDml, NodeType::eGemmCm, NodeType::eSoftmaxDml, NodeType::eSoftmaxCm, NodeType::eMvnDml, NodeType::eMvnCm, NodeType::eMemoryBandwidth }))->
+        ->required()->check(CLI::IsMember({ NodeType::eConvDml, NodeType::eConvCm, NodeType::eConvUmdD3d12, NodeType::eGemmDml, NodeType::eGemmCm, NodeType::eSoftmaxDml, NodeType::eSoftmaxCm, NodeType::eMvnDml, NodeType::eMvnCm, NodeType::eMemoryBandwidth }))->
         transform(CLI::Transformer(std::map<std::string, NodeType>{
             { "conv_dml", NodeType::eConvDml },
             { "conv_cm", NodeType::eConvCm },
+            { "conv_umd_d3d12", NodeType::eConvUmdD3d12 },
             { "gemm_dml", NodeType::eGemmDml },
             { "gemm_cm", NodeType::eGemmCm },
             { "softmax_dml", NodeType::eSoftmaxDml },
@@ -191,6 +192,11 @@ int main()
         else if (opts.node_type == NodeType::eConvCm)
         {
             node = std::make_unique<ConvolutionCmDispatcher>(std::move(opts.conv_opts), std::move(opts.conv_cm_params),
+                intel_extension_d3d12, d3d12_device.Get(), command_list.Get());
+        }
+        else if (opts.node_type == NodeType::eConvUmdD3d12)
+        {
+            node = std::make_unique<ConvolutionUmdD3d12Dispatcher>(std::move(opts.conv_opts),
                 intel_extension_d3d12, d3d12_device.Get(), command_list.Get());
         }
         else if (opts.node_type == NodeType::eSoftmaxDml)

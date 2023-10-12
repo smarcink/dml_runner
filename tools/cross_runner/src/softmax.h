@@ -235,8 +235,6 @@ private:
     gpu_op::Softmax softmax_;
 };
 
-
-
 class SoftmaxCmDispatcher : public SoftmaxBaseDispatcher
 {
 public:

@@ -3,6 +3,10 @@
 #include <random>
 #include "dml_base_node.h"
 
+#include "iumd_d3d12_impl.h"
+#include <dnnl_iumd.h>
+#include "oneapi/dnnl/dnnl.hpp"
+
 namespace gpu_op
 {
 class Convolution : public DirectMlBaseNode
@@ -561,6 +565,95 @@ public:
 private:
     gpu_op::Convolution conv_;
     IDMLCommandRecorder* dml_cmd_recorder_;
+};
+
+class ConvolutionUmdD3d12Dispatcher : public ConvolutionBaseDispatcher
+{
+public:
+    ConvolutionUmdD3d12Dispatcher(create_params_t&& params, IntelExtension& intc_ext, ID3D12Device* d3d12_device, ID3D12GraphicsCommandList* cmd_list)
+        : ConvolutionBaseDispatcher(std::move(params), d3d12_device, cmd_list)
+        , device_(d3d12_device)
+    {
+        {
+            dnnl_engine_t c_engine;
+            dnnl::error::wrap_c_api(dnnl_iumd_interop_engine_create(&c_engine, &device_), "could not create an engine");
+            dnnl_engine_ = dnnl::engine(c_engine);
+            const auto engine_kind = dnnl_engine_.get_kind();
+            std::cout << "engine kind: " << (std::uint32_t)engine_kind << std::endl;
+            std::cout << "engine kind: " << (std::uint32_t)engine_kind << std::endl;
+        }
+
+        const dnnl::memory::dims pad{ params.in_pad, params.in_pad };
+        const dnnl::memory::dims stride{ params.stride.h, params.stride.w };
+
+        const dnnl::primitive_attr attr = [](dnnl::algorithm act, float alpha, float beta)
+        {
+            // create a post-op with relu
+            dnnl::post_ops ops;
+            dnnl::primitive_attr attr;
+
+            if (act != dnnl::algorithm::undef)
+            {
+                ops.append_eltwise(act, alpha, beta);
+                // create an attribute and set the corresponding post op
+                attr.set_post_ops(ops);
+            }
+            return attr;
+        }(static_cast<dnnl::algorithm>(params.act_type), params.act_alpha, params.act_beta);
+
+        const auto conv_desc = dnnl::convolution_forward::primitive_desc(
+            dnnl_engine_,
+            dnnl::prop_kind::forward_inference,
+            dnnl::algorithm::convolution_direct,
+            input_memory_desc_,
+            filter_memory_desc_,
+            bias_memory_desc_ ? bias_memory_desc_.value() : dnnl::memory::desc{},
+            output_memory_desc_,
+            stride,
+            pad,
+            pad,
+            attr
+        );
+
+        convolution_ = dnnl::convolution_forward(conv_desc);
+    }
+
+    std::uint32_t get_total_descriptor_count()override
+    {
+        return 100u;
+    }
+
+    void initialize(ID3D12GraphicsCommandList* cmd_list, D3D12_CPU_DESCRIPTOR_HANDLE cpu_handle, D3D12_GPU_DESCRIPTOR_HANDLE gpu_handle) override
+    {
+    }
+
+    void execute(ID3D12GraphicsCommandList* cmd_list) override
+    {
+        UmdD3d12CommandList cmd(cmd_list);
+        dnnl::stream stream;
+        {
+            dnnl_stream_t c_stream;
+            dnnl::error::wrap_c_api(dnnl_iumd_interop_stream_create(&c_stream, dnnl_engine_.get(), &cmd), "could not create a stream");
+            stream = dnnl::stream(c_stream);
+        }
+
+        dnnl::memory input_memory;
+        dnnl::memory filter_memory;
+        std::optional<dnnl::memory> bias_memory;
+        dnnl::memory output_memory;
+    }
+
+private:
+    UmdD3d12Device device_;
+    dnnl::engine dnnl_engine_;
+
+    dnnl::convolution_forward convolution_;
+
+    dnnl::memory::desc input_memory_desc_;
+    dnnl::memory::desc filter_memory_desc_;
+    std::optional<dnnl::memory::desc> bias_memory_desc_;
+    dnnl::memory::desc output_memory_desc_;
+
 };
 
 class ConvolutionCmDispatcher : public ConvolutionBaseDispatcher

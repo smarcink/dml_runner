@@ -207,6 +207,7 @@ enum class NodeType
     eGemmCm,
     eConvDml,
     eConvCm,
+    eConvUmdD3d12,
     eSoftmaxDml,
     eSoftmaxCm,
     eMvnDml,
