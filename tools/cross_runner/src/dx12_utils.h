@@ -59,6 +59,14 @@ inline void initalize_d3d12(ComPtr<ID3D12Device>& d3D12_device, ComPtr<ID3D12Com
         throw_if_failed(dxgi_factory->EnumAdapters(adapterIndex, dxgiAdapter.GetAddressOf()), "enum adapters");
         ++adapterIndex;
 
+        DXGI_ADAPTER_DESC desc{};
+        throw_if_failed(dxgiAdapter->GetDesc(&desc), "get adapter desc");
+        if (desc.VendorId != 0x8086) // intel
+        {
+            hr = S_FALSE;
+            continue;
+        }
+
         hr = ::D3D12CreateDevice(
             dxgiAdapter.Get(),
             D3D_FEATURE_LEVEL_12_0,
@@ -109,7 +117,6 @@ public:
             //Next, use returned value for supported_ext_version_count to allocate space for the supported extensions
             std::vector<INTCExtensionVersion> supported_ext_versions(supported_ext_version_count);
             const INTCExtensionVersion required_version = { 1,2,0 }; //version 1.2.0
-            INTCExtensionInfo intc_extension_info = {};
 
             throw_if_failed(INTC_D3D12_GetSupportedVersions(d3d12_device, supported_ext_versions.data(), &supported_ext_version_count),
                 "Intel Plugin Extension ERROR: GetSupportedVersions");
@@ -120,12 +127,12 @@ public:
                     (supported_ext_versions[i].APIVersion >= required_version.APIVersion) &&
                     (supported_ext_versions[i].Revision >= required_version.Revision))
                 {
-                    intc_extension_info.RequestedExtensionVersion = supported_ext_versions[i];
+                    intc_extension_info_.RequestedExtensionVersion = supported_ext_versions[i];
                     break;
                 }
             }
 
-            throw_if_failed(INTC_D3D12_CreateDeviceExtensionContext(d3d12_device, &ext_ctx_, &intc_extension_info, nullptr),
+            throw_if_failed(INTC_D3D12_CreateDeviceExtensionContext(d3d12_device, &ext_ctx_, &intc_extension_info_, nullptr),
                 "Intel Plugin Extension ERROR: CreateExtensionContext failed");
 
         }
@@ -158,6 +165,7 @@ public:
     }
 
     INTCExtensionContext* get() { return ext_ctx_; }
+    INTCExtensionInfo get_info() { return intc_extension_info_; }
 
     ComPtr<ID3D12PipelineState> create_pipeline(const CD3DX12_SHADER_BYTECODE& shader_byte_code, std::string_view build_opts, ID3D12RootSignature* root_signature, INTC_D3D12_SHADER_INPUT_TYPE lang)
     {
@@ -188,6 +196,7 @@ public:
 
 private:
     INTCExtensionContext* ext_ctx_{nullptr};
+    INTCExtensionInfo intc_extension_info_ = {};
 };
 
 inline ComPtr<IDMLDevice> create_dml_device(ID3D12Device* d3d12_device)

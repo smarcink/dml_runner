@@ -572,7 +572,7 @@ class ConvolutionUmdD3d12Dispatcher : public ConvolutionBaseDispatcher
 public:
     ConvolutionUmdD3d12Dispatcher(create_params_t&& params, IntelExtension& intc_ext, ID3D12Device* d3d12_device, ID3D12GraphicsCommandList* cmd_list)
         : ConvolutionBaseDispatcher(std::move(params), d3d12_device, cmd_list)
-        , device_(d3d12_device)
+        , device_(d3d12_device, intc_ext.get_info())
     {
         {
             dnnl_engine_t c_engine;
