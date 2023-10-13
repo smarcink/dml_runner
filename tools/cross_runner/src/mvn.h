@@ -147,10 +147,13 @@ public:
         input_bindings.push_back({ DML_BINDING_TYPE_BUFFER, &bias_buffer_binding });
 
         assert(resource_out);
+        std::vector<DML_BINDING_DESC> output_bindings;
+        output_bindings.reserve(1);
         DML_BUFFER_BINDING output_buffer_binding{ resource_out, 0, resource_out->GetDesc().Width };
         DML_BINDING_DESC output_binding_desc{ DML_BINDING_TYPE_BUFFER, &output_buffer_binding };
+        output_bindings.push_back({ DML_BINDING_TYPE_BUFFER, &output_buffer_binding });
 
-        record_execute_impl(dml_cmd_recorder, cmd_list, input_bindings, output_binding_desc);
+        record_execute_impl(dml_cmd_recorder, cmd_list, input_bindings, output_bindings);
     }
 
 private:
