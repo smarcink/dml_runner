@@ -191,7 +191,6 @@ public:
         {
             input_bindings.push_back({ DML_BINDING_TYPE_NONE, nullptr});
         }
-        input_bindings.push_back({ DML_BINDING_TYPE_BUFFER, &constant_buffer_binding });
 
         std::vector<DML_BINDING_DESC> output_bindings;
         output_bindings.reserve(1);
@@ -254,6 +253,7 @@ public:
         DataType dt;
         DataLayout input_layout;
         DataLayout output_layout = DataLayout::eNCHW;
+        DataLayout filter_layout = DataLayout::eNCHW;
         TensorShape input_shape;
         TensorShape filter_shape;
         std::uint32_t in_pad;
@@ -271,6 +271,7 @@ public:
             add_data_type_cli_option(opts, "--data_type", params.dt)->required();
             add_data_layout_cli_option(opts, "--input_layout", params.input_layout)->required();
             add_data_layout_cli_option(opts, "--output_layout", params.output_layout);
+            add_data_layout_cli_option(opts, "--filter_layout", params.filter_layout);
             opts->add_option("--input_shape", params.input_shape, "speciify list: <n, ic, h, w")->required();
             opts->add_option("--filter_shape", params.filter_shape, "speciify list: <oc, ic, kh, kw")->required();
             opts->add_option("--in_pad", params.in_pad)->required();
@@ -468,6 +469,8 @@ protected:
         *ptr++ = static_cast<Dt>(params_.act_beta);
         *ptr++ = static_cast<Dt>(params_.output_layout == DataLayout::eNCHW ? 0 : 1);
         *ptr++ = static_cast<Dt>(params_.input_layout == DataLayout::eNCHW ? 0 : 1);
+        *ptr++ = static_cast<Dt>(params_.input_shape.c);
+        *ptr++ = static_cast<Dt>(params_.filter_layout == DataLayout::eNCHW ? 0 : 1);
     }
     inline bool use_bias() const
     {
@@ -487,7 +490,7 @@ protected:
         {
             bindings.filter.data = filter_data_.data();
             bindings.filter.dt = params_.dt;
-            bindings.filter.layout = DataLayout::eNCHW;
+            bindings.filter.layout = params_.filter_layout;
             bindings.filter.shape = params_.filter_shape;
         }
         if (use_bias())
@@ -573,7 +576,7 @@ public:
         bool large_grf;
         bool print_reg_usage;
         std::array<std::uint32_t, 3> lws{ 1u, 1u, 1u };
-        std::uint32_t block_w = 8;
+        std::uint32_t block_w = 16;
         const std::uint32_t block_h = 1;  //ToDo: make configurable if needed
         std::uint32_t block_oc = 16;
         std::uint32_t block_batch = 1;  // block batch
@@ -586,7 +589,7 @@ public:
             opts->add_flag("--dump_asm", params.dump_asm)->default_val(false);
             opts->add_flag("--large_grf", params.large_grf)->default_val(false);
             opts->add_flag("--print_reg_usage", params.print_reg_usage)->default_val(false);
-            opts->add_option("--block_w", params.block_w);
+            opts->add_option("--block_w", params.block_w)->default_val(16);
             opts->add_option("--block_oc", params.block_oc)->default_val(16);
             opts->add_option("--block_batch", params.block_batch)->default_val(1);
             opts->add_option("--slice_ic", params.slice_ic, "How many HW threads cooperate to compute final output. Setting to 1 is equal to having this feature disabled. It increases thread group size (lws) in X dimension.")->default_val(1);
@@ -673,7 +676,7 @@ public:
         add_define("DT", static_cast<uint32_t>(params_.dt));
         //add_define("INPUT_WIDTH", params_.input_shape.w);
         //add_define("INPUT_HEIGHT", params_.input_shape.h);
-        add_define("INPUT_CHANNELS", params_.input_shape.c);
+        //add_define("INPUT_CHANNELS", params_.input_shape.c);
 
         //add_define("OUTPUT_WIDTH", output_shape_.w);
         //add_define("OUTPUT_HEIGHT", output_shape_.h);
@@ -688,7 +691,7 @@ public:
         //add_define("STRIDE_H", params_.stride.h);
 
         //add_define("SLICE_IC", cm_params_.slice_ic);
-        add_define("BLOCK_W", cm_params_.block_w);
+        //add_define("BLOCK_W", cm_params_.block_w);
         //add_define("BLOCK_H", cm_params_.block_h);
         //add_define("BLOCK_OC", cm_params_.block_oc);
         //add_define("BLOCK_BATCH", cm_params_.block_batch);
