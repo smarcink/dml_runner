@@ -8,11 +8,11 @@
 enum class MhaType
 {  
     // qkv
-    MhaType_QK_QKV = 1,
+    MhaType_QKV = 1,
 };
 namespace gpu_op
 {
-    class Mha : public DirectMlBaseNode // support  g_mha_qk_qkv_gemm_dpas_CM
+    class Mha : public DirectMlBaseNode 
     {
     public:
         Mha(MhaType mha_type, const DML_TENSOR_DATA_TYPE data_type, const dml::TensorPolicy& tensor_policy,
@@ -21,7 +21,7 @@ namespace gpu_op
             IDMLDevice* dml_device, ID3D12Device* d3d12_device, bool disable_mc = false)
             :DirectMlBaseNode(dml_device, d3d12_device)
         {
-            if (mha_type == MhaType::MhaType_QK_QKV)  // todo: move some codes out as general code for other mha types
+            if (mha_type == MhaType::MhaType_QKV)  // todo: move some codes out as general code for other mha types
             {
 
                 const dml::TensorDimensions input_dims{ shape_a.n, shape_a.c, shape_a.d, shape_a.h, shape_a.w};
@@ -52,14 +52,13 @@ namespace gpu_op
                     tensor_out_desc_.DimensionCount = static_cast<std::uint32_t>(output_dims.size());
                     tensor_out_desc_.Sizes = output_dims.data();
 
-                    // output_tensor_properites = output_tensor_policy.Get(tensor_out_desc_.DataType, tensor_out_desc_.Flags, output_dims);
-                    tensor_out_desc_.Strides = nullptr; //output_tensor_properites.strides.has_value() ? output_tensor_properites.strides->data() : nullptr;
+                    tensor_out_desc_.Strides = nullptr; 
                     tensor_out_desc_.TotalTensorSizeInBytes = DMLCalcBufferTensorSize(
                         tensor_out_desc_.DataType,
                         tensor_out_desc_.DimensionCount,
                         tensor_out_desc_.Sizes,
-                        tensor_out_desc_.Strides);  //output_tensor_properites.totalTensorSizeInBytes;
-                    tensor_out_desc_.GuaranteedBaseOffsetAlignment = 0; //output_tensor_properites.guaranteedBaseOffsetAlignment;
+                        tensor_out_desc_.Strides);
+                    tensor_out_desc_.GuaranteedBaseOffsetAlignment = 0; 
                 }
 
                 DML_TENSOR_DESC output_desc{};
@@ -102,6 +101,8 @@ namespace gpu_op
                     IID_PPV_ARGS(dml_op_executor_.ReleaseAndGetAddressOf())), "create Multihead Attention compiled operator");
 
                 create_operator_impl();
+            }else{
+                assert(false && "Unsupported MHA type!");
             }
         }
 
@@ -203,9 +204,9 @@ class MhaBaseDispatcher: public NodeDispatcher
                 opts->add_option("--shape_a", params.shape_a)->required();
 
                 opts->add_option("--mha_type", params.type, "Name of the type of MHA to run.")
-                    ->check(CLI::IsMember({ MhaType::MhaType_QK_QKV }))->
+                    ->check(CLI::IsMember({ MhaType::MhaType_QKV }))->
                     transform(CLI::Transformer(std::map<std::string, MhaType>{
-                        { "qk_qkv", MhaType::MhaType_QK_QKV },
+                        { "qkv", MhaType::MhaType_QKV },
 
                 }, CLI::ignore_case))->required();
             }
@@ -222,7 +223,7 @@ class MhaBaseDispatcher: public NodeDispatcher
         input_data_a_.resize(params_.shape_a.get_elements_count() * get_data_type_bytes_width(params_.dt));
         input_data_b_.resize(params_.shape_b.get_elements_count() * get_data_type_bytes_width(params_.dt));
         input_data_c_.resize(params_.shape_c.get_elements_count() * get_data_type_bytes_width(params_.dt));
-        if (params_.type == MhaType::MhaType_QK_QKV)
+        if (params_.type == MhaType::MhaType_QKV)
         {
             assert(params_.shape_a.get_dims_count() == 5);
             assert(params_.shape_b.get_dims_count() == 0);
@@ -233,13 +234,6 @@ class MhaBaseDispatcher: public NodeDispatcher
         {
             assert(false && "Not supported MHA type!");
         }
-
-        // const auto B = get_batch();
-        // const auto C = get_channels();
-        // const auto M = get_M();
-        // const auto K = get_K();
-        // const auto N = get_N();
-        // std::cout << std::format("Running [B, C, M, K, N]: [{}, {}, {}, {}, {}]\n", B, C, M, K, N);
 
         // randomize data
         std::mt19937 random_generator(42); // static, create it once!
@@ -406,12 +400,10 @@ class MhaBaseDispatcher: public NodeDispatcher
 
     }
     protected:
-    //Todo: the order is hard coded, may need to redefine
     TensorShape get_shape_output() const
     {
         TensorShape ret{};
         ret.n = get_batch();
-        ret.c = get_channels();
         ret.h = get_M();
         ret.w = get_N();
         return ret;
@@ -422,31 +414,12 @@ class MhaBaseDispatcher: public NodeDispatcher
         return params_.shape_a.n;
     }
 
-    std::uint32_t get_channels() const
-    {
-        if (params_.type == MhaType::MhaType_QK_QKV)
-        {
-            return params_.shape_a.d;
-        }
-   
-        assert(false && "Not supported");
-    }
 
     std::uint32_t get_M() const
     {
-        if (params_.type == MhaType::MhaType_QK_QKV)
+        if (params_.type == MhaType::MhaType_QKV)
         {
             return params_.shape_a.c;
-        }
-        assert(false && "Not supported");
-        return 0;
-    }
-
-    std::uint32_t get_K() const
-    {
-         if (params_.type == MhaType::MhaType_QK_QKV)
-        {
-            return params_.shape_a.w;
         }
         assert(false && "Not supported");
         return 0;
@@ -455,7 +428,7 @@ class MhaBaseDispatcher: public NodeDispatcher
     std::uint32_t get_N() const
     {
  
-         if (params_.type == MhaType::MhaType_QK_QKV)
+         if (params_.type == MhaType::MhaType_QKV)
         {
             return params_.shape_a.d * params_.shape_a.w;
         }
