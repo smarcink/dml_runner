@@ -17,6 +17,7 @@ set(TARGET_SOURCES
     ${SOURCES_DIR}/mvn.cpp
     ${SOURCES_DIR}/memory_bandwidth.h
     ${SOURCES_DIR}/iumd_d3d12_impl.h
+    ${SOURCES_DIR}/iumd_d3d12_impl.cpp
 )
 
 add_executable(${TARGET_NAME} ${TARGET_SOURCES})

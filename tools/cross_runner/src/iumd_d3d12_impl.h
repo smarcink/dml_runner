@@ -1,11 +1,47 @@
 #pragma once
 
+#include "dx12_utils.h"
 
 #include <oneapi/dnnl/iumd/iumd.h>
 
 #include <d3d12.h>
+#include <dxgi1_6.h>
 #define INTC_IGDEXT_D3D12
 #include <igdext.h>
+
+#include <cassert>
+#include <string>
+
+//////////////////////////////////////////////////////////////////////////
+// Custom Metacommand
+// {9C365CB6-AF13-49B6-BA9C-4B74E10FCDE1}
+static constexpr GUID GUID_CUSTOM =
+{ 0x9c365cb6, 0xaf13, 0x49b6,{ 0xba, 0x9c, 0x4b, 0x74, 0xe1, 0xf, 0xcd, 0xe1 } };
+
+//////////////////////////////////////////////////////////////////////////
+struct META_COMMAND_CREATE_CUSTOM_DESC
+{
+    UINT64 ShaderSourceCode;
+    UINT64 ShaderSourceCodeSize;
+    UINT64 BuildOptionString;
+    UINT64 BuildOptionStringSize;
+    UINT64 DispatchThreadGroup[3];
+    UINT64 ResourceCount;
+    UINT64 RuntimeConstants;
+    UINT64 RuntimeConstantsCount;
+};
+
+//////////////////////////////////////////////////////////////////////////
+struct META_COMMAND_INITIALIZE_CUSTOM_DESC
+{
+    D3D12_GPU_DESCRIPTOR_HANDLE Resources[10];
+};
+
+//////////////////////////////////////////////////////////////////////////
+struct META_COMMAND_EXECUTE_CUSTOM_DESC
+{
+    D3D12_GPU_DESCRIPTOR_HANDLE Resources[10];
+};
 
 class UmdD3d12Memory : public IUMDMemory
 {
@@ -13,46 +49,49 @@ public:
 
 };
 
+class UmdD3d12PipelineStateObject : public IUMDPipelineStateObject
+{
+public:
+    UmdD3d12PipelineStateObject(class UmdD3d12Device* device, const char* kernel_name,
+        const char* code_string, const char* build_options,
+        UMD_SHADER_LANGUAGE language);
+
+private:
+    UmdD3d12Device* device_ = nullptr;
+    ComPtr<ID3D12MetaCommand> mc_ = nullptr;
+};
+
 class UmdD3d12Device : public IUMDDevice
 {
 public:
-    UmdD3d12Device(ID3D12Device* device, INTCExtensionInfo extension_info)
-        : impl_(device)
+    UmdD3d12Device(ID3D12Device* device, INTCExtensionInfo extension_info);
+
+    std::unique_ptr<IUMDPipelineStateObject>
+        create_pipeline_state_object(const char* kernel_name,
+            const char* code_string, const char* build_options,
+            UMD_SHADER_LANGUAGE language) override
     {
-        assert(device);
-        ComPtr<IDXGIFactory4> dxgi_factory;
-        throw_if_failed(CreateDXGIFactory1(IID_PPV_ARGS(dxgi_factory.ReleaseAndGetAddressOf())), "dxgi factory");
-        dxgi_factory->EnumAdapterByLuid(device->GetAdapterLuid(), IID_PPV_ARGS(&adapter_));
-
-
-        D3D12_FEATURE_DATA_D3D12_OPTIONS1 options1{};
-        if (SUCCEEDED(device->CheckFeatureSupport(
-            D3D12_FEATURE_D3D12_OPTIONS1, &options1, sizeof(options1)))) {
-            //exec_size = options1.WaveLaneCountMin; // i.e.: 8 for DG2, 16 for ELG
-        }
-
-        sku_.eu_count = extension_info.IntelDeviceInfo.EUCount;
-        sku_.igfx = [](const auto name)
-        {
-            if (name == L"Tigerlake")
-            {
-                return UMD_IGFX_TIGERLAKE_LP;
-            }
-            else if (name == L"Meteorlake")
-            {
-                return UMD_IGFX_METEORLAKE;
-            }
-            else if (name == L"DG2")
-            {
-                return UMD_IGFX_DG2;
-            }
-            return UMD_IGFX_UNKNOWN;
-        }(extension_info.IntelDeviceInfo.GTGenerationName);
+        return std::unique_ptr<IUMDPipelineStateObject>(new UmdD3d12PipelineStateObject(this, kernel_name, code_string, build_options, language));
     }
+
+    std::uint32_t get_eu_count() const override
+    {
+        return sku_.eu_count;
+    };
+
+    std::uint32_t get_max_wg_size() const override
+    {
+        return sku_.threads_per_eu * sku_.eu_per_dss * sku_.max_simd_size;
+    };
 
     UMD_IGFX get_umd_igfx() const override
     {
         return sku_.igfx;
+    }
+
+    const char* get_name() const override
+    {
+        return sku_.name.c_str();
     }
 
     bool can_use_systolic() const override
@@ -70,6 +109,47 @@ public:
         return desc.VendorId;
     }
 
+    bool do_support_extension(UMD_EXTENSIONS ext) const
+    {
+        if (ext & UMD_EXTENSIONS_SUBGROUP)
+        {
+            return true;
+        }
+        else if (ext & UMD_EXTENSIONS_FP16)
+        {
+            return true;
+        }
+        else if (ext & UMD_EXTENSIONS_FP64)
+        {
+            return false;  //ToDo: check this
+        }
+        else if (ext & UMD_EXTENSIONS_DP4A)
+        {
+            return sku_.igfx >= UMD_IGFX_TIGERLAKE_LP;
+        }
+        else if (ext & UMD_EXTENSIONS_DPAS)
+        {
+            return sku_.igfx >= UMD_IGFX_DG2;
+        }
+        else if (ext & UMD_EXTENSIONS_SDPAS)
+        {
+            return sku_.igfx == UMD_IGFX_DG2;
+        }
+        else if (ext & UMD_EXTENSIONS_VARIABLE_THREAD_PER_EU)
+        {
+            return false;
+        }
+        else if (ext & UMD_EXTENSIONS_GLOBAL_FLOAT_ATOMICS)
+        {
+            return false;
+        }
+        assert(false);
+        return false;
+    }
+
+    const ID3D12Device* get_d3d12_device() const { return impl_; }
+    ID3D12Device* get_d3d12_device() { return impl_; }
+
 private:
     DXGI_ADAPTER_DESC get_adapter_desc() const
     {
@@ -81,7 +161,11 @@ private:
 private:
     struct SKU
     {
+        std::string name = "";
         std::uint32_t eu_count = 0;
+        std::uint32_t threads_per_eu = 0;
+        std::uint32_t eu_per_dss = 0;
+        std::uint32_t max_simd_size = 0;
         UMD_IGFX igfx = UMD_IGFX_UNKNOWN;
     };
 

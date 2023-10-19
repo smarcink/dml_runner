@@ -5,6 +5,7 @@
 
 #include "iumd_d3d12_impl.h"
 #include <dnnl_iumd.h>
+#include <dnnl.hpp>
 #include "oneapi/dnnl/dnnl.hpp"
 
 namespace gpu_op
@@ -600,6 +601,35 @@ public:
             }
             return attr;
         }(static_cast<dnnl::algorithm>(params.act_type), params.act_alpha, params.act_beta);
+
+        auto to_dnnl_mem_desc = [](const TensorShape& shape, const DataLayout& l, const DataType& t)
+        {
+            const dnnl::memory::dims dims{ shape.n, shape.c, shape.h, shape.w };
+
+            dnnl::memory::format_tag fmt = dnnl::memory::format_tag::undef;
+            switch (l)
+            {
+            case DataLayout::eNCHW: fmt = dnnl::memory::format_tag::nchw; break;
+            case DataLayout::eNHWC: fmt = dnnl::memory::format_tag::nhwc; break;
+            };
+
+            dnnl::memory::data_type dt;
+            switch (t)
+            {
+            case DataType::eFp32: dt = dnnl::memory::data_type::f32; break;
+            case DataType::eFp16: dt = dnnl::memory::data_type::f16; break;
+            }
+            return dnnl::memory::desc{ dims, dt, fmt};
+        };
+
+        input_memory_desc_ = to_dnnl_mem_desc(params_.input_shape, params_.input_layout, params_.dt);
+        filter_memory_desc_ = to_dnnl_mem_desc(params_.filter_shape, params_.filter_layout, params_.dt);
+        output_memory_desc_ = to_dnnl_mem_desc(get_output_shape(), params_.output_layout, params_.dt);
+
+        if (!params_.no_bias)
+        {
+            bias_memory_desc_.emplace(to_dnnl_mem_desc(TensorShape{ params_.filter_shape.n, 1, 1, 1 }, DataLayout::eNCHW, params_.dt));
+        }
 
         const auto conv_desc = dnnl::convolution_forward::primitive_desc(
             dnnl_engine_,
