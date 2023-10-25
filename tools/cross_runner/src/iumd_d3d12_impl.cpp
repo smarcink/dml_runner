@@ -60,9 +60,61 @@ UmdD3d12PipelineStateObject::UmdD3d12PipelineStateObject(UmdD3d12Device* device,
     create_desc.ShaderSourceCodeSize = std::strlen(code_string);
     create_desc.BuildOptionString = reinterpret_cast<UINT64>(build_options);
     create_desc.BuildOptionStringSize = std::strlen(build_options);
+    switch (language)
+    {
+    case UMD_SHADER_LANGUAGE_OCL:
+        create_desc.ShaderLanguage = META_COMMAND_CUSTOM_SHADER_LANGUAGE_OCL;
+        break;
+    default:
+        create_desc.ShaderLanguage = META_COMMAND_CUSTOM_SHADER_LANGUAGE_NONE;
+        
+    }
+    assert(create_desc.ShaderLanguage != META_COMMAND_CUSTOM_SHADER_LANGUAGE_NONE);
 
     throw_if_failed(dev5->CreateMetaCommand(GUID_CUSTOM, 0, &create_desc, sizeof(create_desc), IID_PPV_ARGS(mc_.ReleaseAndGetAddressOf())), "cant create custom metacommand");
 
     //D3D12_FEATURE_DATA_QUERY_META_COMMAND query{};
     //dev5->CheckFeatureSupport(D3D12_FEATURE_QUERY_META_COMMAND, &query, sizeof(query));
+}
+
+bool UmdD3d12PipelineStateObject::set_kernel_arg(std::size_t index, const IUMDMemory* memory)
+{
+    auto typed_mem = memory ? dynamic_cast<const UmdD3d12Memory*>(memory) : nullptr;
+    resources[index] = typed_mem;
+    return true;
+}
+
+bool UmdD3d12PipelineStateObject::execute(ID3D12GraphicsCommandList4* cmd_list, const std::array<std::size_t, 3>& gws, const std::array<std::size_t, 3>& lws)
+{
+    assert(gws.size() == lws.size());
+
+    META_COMMAND_EXECUTE_CUSTOM_DESC exec_desc{};
+    for (std::size_t i = 0; i < gws.size(); i++)
+    {
+        if (gws[i] == 0 || lws[i] == 0)
+        {
+            return false;
+        }
+        exec_desc.DispatchThreadGroup[i] = gws[i] / lws[i];
+    }
+
+    for (const auto& [idx, mem] : resources)
+    {
+        if (idx >= std::size(exec_desc.Resources))
+        {
+            assert(!"Please extend number of supported resources for custom metacommand!");
+            return false;
+        }
+        exec_desc.Resources[idx] = mem ? mem->get_gpu_descriptor_handle() : D3D12_GPU_DESCRIPTOR_HANDLE{};
+        exec_desc.ResourceCount++;
+    }
+
+    cmd_list->ExecuteMetaCommand(mc_.Get(), &exec_desc, sizeof(exec_desc));
+    return true;
+}
+
+bool UmdD3d12CommandList::dispatch(IUMDPipelineStateObject* pso, const std::array<std::size_t, 3>& gws, const std::array<std::size_t, 3>& lws)
+{
+    auto typed_pso = dynamic_cast<UmdD3d12PipelineStateObject*>(pso);
+    return typed_pso->execute(impl_, gws, lws);
 }

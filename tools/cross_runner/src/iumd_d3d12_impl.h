@@ -19,16 +19,20 @@ static constexpr GUID GUID_CUSTOM =
 { 0x9c365cb6, 0xaf13, 0x49b6,{ 0xba, 0x9c, 0x4b, 0x74, 0xe1, 0xf, 0xcd, 0xe1 } };
 
 //////////////////////////////////////////////////////////////////////////
+enum META_COMMAND_CUSTOM_SHADER_LANGUAGE : UINT64
+{
+    META_COMMAND_CUSTOM_SHADER_LANGUAGE_NONE = 0,
+    META_COMMAND_CUSTOM_SHADER_LANGUAGE_OCL
+};
+
+//////////////////////////////////////////////////////////////////////////
 struct META_COMMAND_CREATE_CUSTOM_DESC
 {
     UINT64 ShaderSourceCode;
     UINT64 ShaderSourceCodeSize;
     UINT64 BuildOptionString;
     UINT64 BuildOptionStringSize;
-    UINT64 DispatchThreadGroup[3];
-    UINT64 ResourceCount;
-    UINT64 RuntimeConstants;
-    UINT64 RuntimeConstantsCount;
+    META_COMMAND_CUSTOM_SHADER_LANGUAGE ShaderLanguage;
 };
 
 //////////////////////////////////////////////////////////////////////////
@@ -41,12 +45,28 @@ struct META_COMMAND_INITIALIZE_CUSTOM_DESC
 struct META_COMMAND_EXECUTE_CUSTOM_DESC
 {
     D3D12_GPU_DESCRIPTOR_HANDLE Resources[10];
+
+    UINT64 ResourceCount;
+    UINT64 RuntimeConstants;
+    UINT64 RuntimeConstantsCount;
+
+    UINT64 DispatchThreadGroup[3];
 };
 
 class UmdD3d12Memory : public IUMDMemory
 {
 public:
+    UmdD3d12Memory() = default;
+    UmdD3d12Memory(D3D12_GPU_DESCRIPTOR_HANDLE handle)
+        : handle_(handle)
+    {
 
+    }
+
+    D3D12_GPU_DESCRIPTOR_HANDLE get_gpu_descriptor_handle() const { return handle_; }
+
+private:
+    D3D12_GPU_DESCRIPTOR_HANDLE handle_;
 };
 
 class UmdD3d12PipelineStateObject : public IUMDPipelineStateObject
@@ -56,9 +76,14 @@ public:
         const char* code_string, const char* build_options,
         UMD_SHADER_LANGUAGE language);
 
+    bool set_kernel_arg(std::size_t index, const IUMDMemory* memory) override;
+
+    bool execute(ID3D12GraphicsCommandList4* cmd_list, const std::array<std::size_t, 3>& gws, const std::array<std::size_t, 3>& lws);
+
 private:
     UmdD3d12Device* device_ = nullptr;
     ComPtr<ID3D12MetaCommand> mc_ = nullptr;
+    std::unordered_map<std::size_t, const UmdD3d12Memory*> resources;
 };
 
 class UmdD3d12Device : public IUMDDevice
@@ -66,12 +91,13 @@ class UmdD3d12Device : public IUMDDevice
 public:
     UmdD3d12Device(ID3D12Device* device, INTCExtensionInfo extension_info);
 
-    std::unique_ptr<IUMDPipelineStateObject>
+    IUMDPipelineStateObject*
         create_pipeline_state_object(const char* kernel_name,
             const char* code_string, const char* build_options,
             UMD_SHADER_LANGUAGE language) override
     {
-        return std::unique_ptr<IUMDPipelineStateObject>(new UmdD3d12PipelineStateObject(this, kernel_name, code_string, build_options, language));
+        auto ret = new UmdD3d12PipelineStateObject(this, kernel_name, code_string, build_options, language);
+        return ret;
     }
 
     std::uint32_t get_eu_count() const override
@@ -179,12 +205,15 @@ private:
 class UmdD3d12CommandList : public IUMDCommandList
 {
 public:
-    UmdD3d12CommandList(ID3D12CommandList* cmd_list) 
+    UmdD3d12CommandList(ID3D12GraphicsCommandList4* cmd_list)
         : impl_(cmd_list)
     {}
-    bool supports_out_of_order() const { return true; }
+
+    bool dispatch(IUMDPipelineStateObject* pso, const std::array<std::size_t, 3>& gws, const std::array<std::size_t, 3>& lws) override;
+
+    bool supports_out_of_order() const { return false; }
     bool supports_profiling() const { return false; }
 
 private:
-    ID3D12CommandList* impl_;
+    ID3D12GraphicsCommandList4* impl_;
 };

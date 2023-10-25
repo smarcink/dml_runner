@@ -6,6 +6,7 @@
 #include "iumd_d3d12_impl.h"
 #include <dnnl_iumd.h>
 #include <dnnl.hpp>
+#include <dnnl_iumd.hpp>
 #include "oneapi/dnnl/dnnl.hpp"
 
 namespace gpu_op
@@ -574,16 +575,8 @@ public:
     ConvolutionUmdD3d12Dispatcher(create_params_t&& params, IntelExtension& intc_ext, ID3D12Device* d3d12_device, ID3D12GraphicsCommandList* cmd_list)
         : ConvolutionBaseDispatcher(std::move(params), d3d12_device, cmd_list)
         , device_(d3d12_device, intc_ext.get_info())
-    {
-        {
-            dnnl_engine_t c_engine;
-            dnnl::error::wrap_c_api(dnnl_iumd_interop_engine_create(&c_engine, &device_), "could not create an engine");
-            dnnl_engine_ = dnnl::engine(c_engine);
-            const auto engine_kind = dnnl_engine_.get_kind();
-            std::cout << "engine kind: " << (std::uint32_t)engine_kind << std::endl;
-            std::cout << "engine kind: " << (std::uint32_t)engine_kind << std::endl;
-        }
-
+        , dnnl_engine_(dnnl::iumd_interop::make_engine(&device_))
+    {      
         const dnnl::memory::dims pad{ params.in_pad, params.in_pad };
         const dnnl::memory::dims stride{ params.stride.h, params.stride.w };
 
@@ -655,22 +648,66 @@ public:
 
     void initialize(ID3D12GraphicsCommandList* cmd_list, D3D12_CPU_DESCRIPTOR_HANDLE cpu_handle, D3D12_GPU_DESCRIPTOR_HANDLE gpu_handle) override
     {
+        const auto desc_heap_incrs_size = d3d12_device_->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+        // i.e. add weights reorder
+        base_cpu_handle_ = CD3DX12_CPU_DESCRIPTOR_HANDLE{ cpu_handle };
+        base_gpu_handle_ = CD3DX12_GPU_DESCRIPTOR_HANDLE{ gpu_handle };
     }
 
     void execute(ID3D12GraphicsCommandList* cmd_list) override
     {
-        UmdD3d12CommandList cmd(cmd_list);
-        dnnl::stream stream;
+        std::vector<std::pair<DescType, ID3D12Resource*>> resources_list;
+        resources_list.reserve(get_total_descriptor_count());
+        resources_list.push_back({ DescType::eUav, input_buffer_.Get() });
+        resources_list.push_back({ DescType::eUav, filter_buffer_.Get() });
+        resources_list.push_back({ DescType::eUav, output_buffer_.Get() });
+        if (use_bias())
         {
-            dnnl_stream_t c_stream;
-            dnnl::error::wrap_c_api(dnnl_iumd_interop_stream_create(&c_stream, dnnl_engine_.get(), &cmd), "could not create a stream");
-            stream = dnnl::stream(c_stream);
+            resources_list.push_back({ DescType::eUav, bias_buffer_.Get() });
+        }
+        const auto gpu_handles = create_resource_views_and_handles(d3d12_device_, resources_list, base_cpu_handle_, base_gpu_handle_);
+
+        umd_input_memory_ = UmdD3d12Memory(gpu_handles[0]);
+        umd_filter_memory_ = UmdD3d12Memory(gpu_handles[1]);
+        umd_output_memory_ = UmdD3d12Memory(gpu_handles[2]);
+        if (use_bias())
+        {
+            umd_bias_memory_.emplace(UmdD3d12Memory(gpu_handles[3]));
+        }
+        // stream is created in execute(...), because in MetaCommand cmd list object can be different from execute-to-execute
+
+        ID3D12GraphicsCommandList4* cmd_list4 = nullptr;
+        throw_if_failed(cmd_list->QueryInterface(&cmd_list4), "cant cast d3d12 device to ID3D12Device5");
+        UmdD3d12CommandList cmd(cmd_list4);
+        dnnl::stream stream = dnnl::iumd_interop::make_stream(dnnl_engine_, &cmd);
+
+        // memory resources are created in execute(...), because in MetaCommand these objects can be different from execute-to-execute
+        auto create_dnnl_memory = [&](const auto& desc, auto& umd_mem)
+        {
+            return dnnl::iumd_interop::make_memory(desc, dnnl_engine_, &umd_mem);
+        };
+
+        dnnl::memory input_memory = create_dnnl_memory(input_memory_desc_, umd_input_memory_);
+        dnnl::memory filter_memory = create_dnnl_memory(filter_memory_desc_, umd_filter_memory_);
+        std::optional<dnnl::memory> bias_memory;
+        if (use_bias())
+        {
+            bias_memory.emplace(create_dnnl_memory(bias_memory_desc_.value(), umd_bias_memory_.value()));
+        }
+        dnnl::memory output_memory = create_dnnl_memory(output_memory_desc_, umd_output_memory_);
+
+        std::unordered_map<int, dnnl::memory> args;
+        args.insert( { DNNL_ARG_SRC, input_memory });
+        args.insert( { DNNL_ARG_WEIGHTS, filter_memory });
+        args.insert( { DNNL_ARG_DST, output_memory} );
+
+        if (use_bias())
+        {
+            args.insert({ DNNL_ARG_BIAS, bias_memory.value()});
         }
 
-        dnnl::memory input_memory;
-        dnnl::memory filter_memory;
-        std::optional<dnnl::memory> bias_memory;
-        dnnl::memory output_memory;
+        convolution_.execute(stream, args);
+        //stream.wait();
     }
 
 private:
@@ -684,6 +721,13 @@ private:
     std::optional<dnnl::memory::desc> bias_memory_desc_;
     dnnl::memory::desc output_memory_desc_;
 
+    UmdD3d12Memory umd_input_memory_;
+    UmdD3d12Memory umd_filter_memory_;
+    UmdD3d12Memory umd_output_memory_;
+    std::optional<UmdD3d12Memory> umd_bias_memory_;
+
+    CD3DX12_CPU_DESCRIPTOR_HANDLE base_cpu_handle_;
+    CD3DX12_GPU_DESCRIPTOR_HANDLE base_gpu_handle_;
 };
 
 class ConvolutionCmDispatcher : public ConvolutionBaseDispatcher

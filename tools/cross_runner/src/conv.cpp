@@ -93,6 +93,7 @@ std::vector<std::byte> cpu_op::convolution(const bindings_t& bindings, opts_t op
         input_memory.get_desc(), filter_memory.get_desc(), bindings.bias.data ? bias_memory.get_desc() : dnnl::memory::desc{}, output_memory.get_desc(), stride, pad, pad, attr);
 
     const auto guery_impl_str = conv_desc.impl_info_str();
+    std::cout << "ref query impl: " << guery_impl_str << std::endl;
 
     dnnl::convolution_forward convolution(conv_desc);
     convolution.execute(stream, { { DNNL_ARG_SRC, input_memory }, {DNNL_ARG_WEIGHTS, filter_memory}, {DNNL_ARG_BIAS, bias_memory}, {DNNL_ARG_DST, output_memory} });

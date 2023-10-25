@@ -298,10 +298,20 @@ int main()
 
         print_performance_stats(timings);
     }
+    catch (dnnl::error e)
+    {
+        std::cerr << std::format("DNNL exception caught: {} \n", e.what());
+        return -1;
+    }
     catch (std::exception e)
     {
-        std::cerr << std::format("Exception caught: {} \n", e.what());
+        std::cerr << std::format("STD exception caught: {} \n", e.what());
         return -1; 
+    }
+    catch (...)
+    {
+        std::cerr << std::format("Unknwon exception caught.");
+        return -1;
     }
     return 0;
 }
