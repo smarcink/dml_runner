@@ -616,6 +616,7 @@ public:
             pad,
             attr
         );
+        convolution_ = dnnl::convolution_forward(conv_desc);
         filter_memory_desc_ = conv_desc.query_md(dnnl::query::weights_md);
         const auto persistent_resource_size = filter_memory_desc_.get_size();
         const auto temporary_resoruce_size = conv_desc.query_s64(dnnl::query::memory_consumption_s64);
@@ -631,9 +632,11 @@ public:
                 &buffder_desc,
                 D3D12_RESOURCE_STATE_COMMON,
                 nullptr, IID_PPV_ARGS(persistent_buffer_.ReleaseAndGetAddressOf())), "create buffer resource");
-        }
 
-        convolution_ = dnnl::convolution_forward(conv_desc);
+            // now we can compile weights reorder
+            dnnl::reorder::primitive_desc reorder_desc(dnnl_engine_, to_dnnl_mem_desc(params_.filter_shape, params_.filter_layout, params_.dt), dnnl_engine_, filter_memory_desc_);
+            reorder_weights_ = dnnl::reorder(reorder_desc);
+        }
     }
 
     std::uint32_t get_total_descriptor_count()override
@@ -652,7 +655,7 @@ public:
         base_gpu_handle_ = CD3DX12_GPU_DESCRIPTOR_HANDLE{ gpu_handle };
 
         // weights reorder
-        if (persistent_buffer_)
+        if (reorder_weights_)
         {
             std::vector<std::pair<DescType, ID3D12Resource*>> resources_list;
             resources_list.reserve(2);
@@ -666,14 +669,11 @@ public:
             dnnl::memory filer_input_memory = create_dnnl_memory(to_dnnl_mem_desc(params_.filter_shape, params_.filter_layout, params_.dt), umd_filter_input_mem);
             dnnl::memory filer_reorder_memory = create_dnnl_memory(filter_memory_desc_, umd_filter_reorder_mem);
 
-            dnnl::reorder::primitive_desc reorder_desc(filer_input_memory, filer_reorder_memory);
-            auto reorder = dnnl::reorder(reorder_desc);
-
             std::unordered_map<int, dnnl::memory> args;
             args.insert({ DNNL_ARG_SRC, filer_input_memory });
             args.insert({ DNNL_ARG_DST, filer_reorder_memory });
 
-            reorder.execute(stream, args);
+            reorder_weights_.execute(stream, args);
         }
     }
 
@@ -682,7 +682,7 @@ public:
         std::vector<std::pair<DescType, ID3D12Resource*>> resources_list;
         resources_list.reserve(get_total_descriptor_count());
         resources_list.push_back({ DescType::eUav, input_buffer_.Get() });
-        resources_list.push_back({ DescType::eUav, persistent_buffer_ ? persistent_buffer_.Get() : filter_buffer_.Get() });
+        resources_list.push_back({ DescType::eUav, reorder_weights_ ? persistent_buffer_.Get() : filter_buffer_.Get() });
         resources_list.push_back({ DescType::eUav, output_buffer_.Get() });
         if (use_bias())
         {
@@ -690,15 +690,12 @@ public:
         }
         const auto gpu_handles = create_resource_views_and_handles(d3d12_device_, resources_list, base_cpu_handle_, base_gpu_handle_);
 
-        umd_input_memory_ = UmdD3d12Memory(gpu_handles[0]);
-        umd_filter_memory_ = UmdD3d12Memory(gpu_handles[1]);
-        umd_output_memory_ = UmdD3d12Memory(gpu_handles[2]);
-        if (use_bias())
-        {
-            umd_bias_memory_.emplace(UmdD3d12Memory(gpu_handles[3]));
-        }
-        // stream is created in execute(...), because in MetaCommand cmd list object can be different from execute-to-execute
+        auto umd_input_memory_ = UmdD3d12Memory(gpu_handles[0]);
+        auto umd_filter_memory_ = UmdD3d12Memory(gpu_handles[1]);
+        auto umd_output_memory_ = UmdD3d12Memory(gpu_handles[2]);
+        auto umd_bias_memory_ = use_bias() ? UmdD3d12Memory(gpu_handles[3]) : UmdD3d12Memory();
 
+        // stream is created in execute(...), because in MetaCommand cmd list object can be different from execute-to-execute
         ID3D12GraphicsCommandList4* cmd_list4 = nullptr;
         throw_if_failed(cmd_list->QueryInterface(&cmd_list4), "cant cast d3d12 device to ID3D12Device5");
         UmdD3d12CommandList cmd(cmd_list4);
@@ -710,7 +707,7 @@ public:
         std::optional<dnnl::memory> bias_memory;
         if (use_bias())
         {
-            bias_memory.emplace(create_dnnl_memory(bias_memory_desc_.value(), umd_bias_memory_.value()));
+            bias_memory.emplace(create_dnnl_memory(bias_memory_desc_.value(), umd_bias_memory_));
         }
         dnnl::memory output_memory = create_dnnl_memory(output_memory_desc_, umd_output_memory_);
 
@@ -760,21 +757,19 @@ private:
     dnnl::engine dnnl_engine_;
 
     dnnl::convolution_forward convolution_;
+    dnnl::reorder reorder_weights_;
 
     dnnl::memory::desc input_memory_desc_;
     dnnl::memory::desc filter_memory_desc_;
     std::optional<dnnl::memory::desc> bias_memory_desc_;
     dnnl::memory::desc output_memory_desc_;
 
-    UmdD3d12Memory umd_input_memory_;
-    UmdD3d12Memory umd_filter_memory_;
-    UmdD3d12Memory umd_output_memory_;
-    std::optional<UmdD3d12Memory> umd_bias_memory_;
+    //UmdD3d12Memory umd_input_memory_;
+    //UmdD3d12Memory umd_filter_memory_;
+    //UmdD3d12Memory umd_output_memory_;
+    //std::optional<UmdD3d12Memory> umd_bias_memory_;
 
     ComPtr<ID3D12Resource> persistent_buffer_;
-    std::optional<UmdD3d12Memory> umd_persistent_memory_;
-    std::optional<UmdD3d12Memory> umd_temporary_memory_;
-
     CD3DX12_CPU_DESCRIPTOR_HANDLE base_cpu_handle_;
     CD3DX12_GPU_DESCRIPTOR_HANDLE base_gpu_handle_;
 };
