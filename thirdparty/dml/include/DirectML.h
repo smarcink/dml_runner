@@ -21,7 +21,9 @@
 #ifndef DML_TARGET_VERSION
 
 #if !defined(NTDDI_VERSION) || defined(DML_TARGET_VERSION_USE_LATEST) // Use the latest if using redist or no Windows target set.
-#define DML_TARGET_VERSION 0x5200
+#define DML_TARGET_VERSION 0x6100
+#elif defined(NTDDI_WIN10_ZN) && NTDDI_VERSION >= NTDDI_WIN10_ZN
+#define DML_TARGET_VERSION 0x6000
 #elif defined(NTDDI_WIN10_NI) && NTDDI_VERSION >= NTDDI_WIN10_NI
 #define DML_TARGET_VERSION 0x5000
 #elif defined(NTDDI_WIN10_CO) && NTDDI_VERSION >= NTDDI_WIN10_CO
@@ -316,6 +318,10 @@ enum DML_OPERATOR_TYPE
     DML_OPERATOR_RESAMPLE_GRAD1,
     DML_OPERATOR_DIAGONAL_MATRIX1,
 #endif // DML_TARGET_VERSION >= 0x5100
+
+#if DML_TARGET_VERSION >= 0x6100
+    DML_OPERATOR_MULTIHEAD_ATTENTION,
+#endif // DML_TARGET_VERSION >= 0x6100
 };
 
 // ===================================================================================================================
@@ -445,6 +451,19 @@ enum DML_RANDOM_GENERATOR_TYPE
 };
 
 #endif // DML_TARGET_VERSION >= 0x3000
+
+#if DML_TARGET_VERSION >= 0x6100
+
+enum DML_MULTIHEAD_ATTENTION_MASK_TYPE
+{
+    DML_MULTIHEAD_ATTENTION_MASK_TYPE_NONE,
+    DML_MULTIHEAD_ATTENTION_MASK_TYPE_KEY_SEQUENCE_LENGTH,
+    DML_MULTIHEAD_ATTENTION_MASK_TYPE_KEY_SEQUENCE_END_START,
+    DML_MULTIHEAD_ATTENTION_MASK_TYPE_KEY_QUERY_SEQUENCE_LENGTH_START_END,
+    DML_MULTIHEAD_ATTENTION_MASK_TYPE_BOOLEAN,
+};
+
+#endif // DML_TARGET_VERSION >= 0x6100
 
 // ===================================================================================================================
 //   Operator descriptions
@@ -1932,6 +1951,32 @@ struct DML_DIAGONAL_MATRIX1_OPERATOR_DESC
 
 #endif // DML_TARGET_VERSION >= 0x5100
 
+#if DML_TARGET_VERSION >= 0x6100
+
+struct DML_MULTIHEAD_ATTENTION_OPERATOR_DESC
+{
+    _Maybenull_ const DML_TENSOR_DESC* QueryTensor;
+    _Maybenull_ const DML_TENSOR_DESC* KeyTensor;
+    _Maybenull_ const DML_TENSOR_DESC* ValueTensor;
+    _Maybenull_ const DML_TENSOR_DESC* StackedQueryKeyTensor;
+    _Maybenull_ const DML_TENSOR_DESC* StackedKeyValueTensor;
+    _Maybenull_ const DML_TENSOR_DESC* StackedQueryKeyValueTensor;
+    _Maybenull_ const DML_TENSOR_DESC* BiasTensor;
+    _Maybenull_ const DML_TENSOR_DESC* MaskTensor;
+    _Maybenull_ const DML_TENSOR_DESC* RelativePositionBiasTensor;
+    _Maybenull_ const DML_TENSOR_DESC* PastKeyTensor;
+    _Maybenull_ const DML_TENSOR_DESC* PastValueTensor;
+    const DML_TENSOR_DESC* OutputTensor;
+    _Maybenull_ const DML_TENSOR_DESC* OutputPresentKeyTensor;
+    _Maybenull_ const DML_TENSOR_DESC* OutputPresentValueTensor;
+    FLOAT Scale;
+    FLOAT MaskFilterValue;
+    UINT HeadCount;
+    DML_MULTIHEAD_ATTENTION_MASK_TYPE MaskType;
+};
+
+#endif // DML_TARGET_VERSION >= 0x6100
+
 // ===================================================================================================================
 //   DML feature support queries
 // ===================================================================================================================
@@ -1950,6 +1995,8 @@ enum DML_FEATURE_LEVEL
     DML_FEATURE_LEVEL_5_0 = 0x5000,
     DML_FEATURE_LEVEL_5_1 = 0x5100,
     DML_FEATURE_LEVEL_5_2 = 0x5200,
+    DML_FEATURE_LEVEL_6_0 = 0x6000,
+    DML_FEATURE_LEVEL_6_1 = 0x6100,
 };
 
 #endif // DML_TARGET_VERSION >= 0x2000

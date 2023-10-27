@@ -211,6 +211,7 @@ enum class NodeType
     eSoftmaxCm,
     eMvnDml,
     eMvnCm,
+    eMhaDml,
     eMemoryBandwidth,
     eCount
 };

@@ -188,7 +188,7 @@ protected:
     }
 
     virtual void record_execute_impl(IDMLCommandRecorder* dml_cmd_recorder, ID3D12GraphicsCommandList* cmd_list, 
-        const std::vector<DML_BINDING_DESC>& input_bindings, DML_BINDING_DESC& output_binding)
+        const std::vector<DML_BINDING_DESC>& input_bindings, const std::vector<DML_BINDING_DESC>& output_bindings)
     {
         const auto execute_binding_properties = dml_op_executor_->GetBindingProperties();
         if (execute_binding_properties.TemporaryResourceSize > 0 && temporary_buffer_)
@@ -207,7 +207,7 @@ protected:
         }
 
         dml_exec_binding_table->BindInputs(static_cast<std::uint32_t>(input_bindings.size()), input_bindings.data());
-        dml_exec_binding_table->BindOutputs(1u, &output_binding);
+        dml_exec_binding_table->BindOutputs(static_cast<std::uint32_t>(output_bindings.size()), output_bindings.data());
 
         dml_cmd_recorder->RecordDispatch(cmd_list, dml_op_executor_.Get(), dml_exec_binding_table.Get());
     }

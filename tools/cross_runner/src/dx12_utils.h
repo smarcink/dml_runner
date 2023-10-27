@@ -6,7 +6,6 @@
 #include <dxgi1_4.h>
 #include <d3d12.h>
 #include <wrl/client.h>
-#define DML_TARGET_VERSION_USE_LATEST
 #include <DirectML.h>
 #include "DirectMLX.h"
 #include "d3dx12.h"
