@@ -595,41 +595,20 @@ public:
             return attr;
         }(static_cast<dnnl::algorithm>(params.act_type), params.act_alpha, params.act_beta);
 
-        auto to_dnnl_mem_desc = [](const TensorShape& shape, const DataLayout& l, const DataType& t)
-        {
-            const dnnl::memory::dims dims{ shape.n, shape.c, shape.h, shape.w };
-
-            dnnl::memory::format_tag fmt = dnnl::memory::format_tag::undef;
-            switch (l)
-            {
-            case DataLayout::eNCHW: fmt = dnnl::memory::format_tag::nchw; break;
-            case DataLayout::eNHWC: fmt = dnnl::memory::format_tag::nhwc; break;
-            };
-
-            dnnl::memory::data_type dt;
-            switch (t)
-            {
-            case DataType::eFp32: dt = dnnl::memory::data_type::f32; break;
-            case DataType::eFp16: dt = dnnl::memory::data_type::f16; break;
-            }
-            return dnnl::memory::desc{ dims, dt, fmt};
-        };
-
         input_memory_desc_ = to_dnnl_mem_desc(params_.input_shape, params_.input_layout, params_.dt);
-        filter_memory_desc_ = to_dnnl_mem_desc(params_.filter_shape, params_.filter_layout, params_.dt);
         output_memory_desc_ = to_dnnl_mem_desc(get_output_shape(), params_.output_layout, params_.dt);
 
         if (!params_.no_bias)
         {
             bias_memory_desc_.emplace(to_dnnl_mem_desc(TensorShape{ params_.filter_shape.n, 1, 1, 1 }, DataLayout::eNCHW, params_.dt));
         }
-
         const auto conv_desc = dnnl::convolution_forward::primitive_desc(
             dnnl_engine_,
             dnnl::prop_kind::forward_inference,
             dnnl::algorithm::convolution_direct,
+            //dnnl::algorithm::convolution_winograd,
             input_memory_desc_,
-            filter_memory_desc_,
+            to_dnnl_mem_desc(params_.filter_shape, DataLayout::eWeightsLayoutStart, params_.dt),  // DataLayout::eWeightsLayoutStart  to allow oneDNNL to reorder the weights
             bias_memory_desc_ ? bias_memory_desc_.value() : dnnl::memory::desc{},
             output_memory_desc_,
             stride,
@@ -637,6 +616,22 @@ public:
             pad,
             attr
         );
+        filter_memory_desc_ = conv_desc.query_md(dnnl::query::weights_md);
+        const auto persistent_resource_size = filter_memory_desc_.get_size();
+        const auto temporary_resoruce_size = conv_desc.query_s64(dnnl::query::memory_consumption_s64);
+        assert(temporary_resoruce_size == 0 && "Not implemeneted yet!");
+
+        if (persistent_resource_size != 0)
+        {
+            const auto heap_props = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
+            const auto buffder_desc = CD3DX12_RESOURCE_DESC::Buffer(persistent_resource_size, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+            throw_if_failed(d3d12_device_->CreateCommittedResource(
+                &heap_props,
+                D3D12_HEAP_FLAG_NONE,
+                &buffder_desc,
+                D3D12_RESOURCE_STATE_COMMON,
+                nullptr, IID_PPV_ARGS(persistent_buffer_.ReleaseAndGetAddressOf())), "create buffer resource");
+        }
 
         convolution_ = dnnl::convolution_forward(conv_desc);
     }
@@ -648,10 +643,38 @@ public:
 
     void initialize(ID3D12GraphicsCommandList* cmd_list, D3D12_CPU_DESCRIPTOR_HANDLE cpu_handle, D3D12_GPU_DESCRIPTOR_HANDLE gpu_handle) override
     {
-        const auto desc_heap_incrs_size = d3d12_device_->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
-        // i.e. add weights reorder
+        ID3D12GraphicsCommandList4* cmd_list4 = nullptr;
+        throw_if_failed(cmd_list->QueryInterface(&cmd_list4), "cant cast d3d12 device to ID3D12Device5");
+        UmdD3d12CommandList cmd(cmd_list4);
+        dnnl::stream stream = dnnl::iumd_interop::make_stream(dnnl_engine_, &cmd);
+
         base_cpu_handle_ = CD3DX12_CPU_DESCRIPTOR_HANDLE{ cpu_handle };
         base_gpu_handle_ = CD3DX12_GPU_DESCRIPTOR_HANDLE{ gpu_handle };
+
+        // weights reorder
+        if (persistent_buffer_)
+        {
+            std::vector<std::pair<DescType, ID3D12Resource*>> resources_list;
+            resources_list.reserve(2);
+            resources_list.push_back({ DescType::eUav, filter_buffer_.Get() });
+            resources_list.push_back({ DescType::eUav, persistent_buffer_.Get() });
+            const auto gpu_handles = create_resource_views_and_handles(d3d12_device_, resources_list, base_cpu_handle_, base_gpu_handle_);
+
+            auto umd_filter_input_mem = UmdD3d12Memory(gpu_handles[0]);
+            auto umd_filter_reorder_mem = UmdD3d12Memory(gpu_handles[1]);
+
+            dnnl::memory filer_input_memory = create_dnnl_memory(to_dnnl_mem_desc(params_.filter_shape, params_.filter_layout, params_.dt), umd_filter_input_mem);
+            dnnl::memory filer_reorder_memory = create_dnnl_memory(filter_memory_desc_, umd_filter_reorder_mem);
+
+            dnnl::reorder::primitive_desc reorder_desc(filer_input_memory, filer_reorder_memory);
+            auto reorder = dnnl::reorder(reorder_desc);
+
+            std::unordered_map<int, dnnl::memory> args;
+            args.insert({ DNNL_ARG_SRC, filer_input_memory });
+            args.insert({ DNNL_ARG_DST, filer_reorder_memory });
+
+            reorder.execute(stream, args);
+        }
     }
 
     void execute(ID3D12GraphicsCommandList* cmd_list) override
@@ -659,7 +682,7 @@ public:
         std::vector<std::pair<DescType, ID3D12Resource*>> resources_list;
         resources_list.reserve(get_total_descriptor_count());
         resources_list.push_back({ DescType::eUav, input_buffer_.Get() });
-        resources_list.push_back({ DescType::eUav, filter_buffer_.Get() });
+        resources_list.push_back({ DescType::eUav, persistent_buffer_ ? persistent_buffer_.Get() : filter_buffer_.Get() });
         resources_list.push_back({ DescType::eUav, output_buffer_.Get() });
         if (use_bias())
         {
@@ -682,11 +705,6 @@ public:
         dnnl::stream stream = dnnl::iumd_interop::make_stream(dnnl_engine_, &cmd);
 
         // memory resources are created in execute(...), because in MetaCommand these objects can be different from execute-to-execute
-        auto create_dnnl_memory = [&](const auto& desc, auto& umd_mem)
-        {
-            return dnnl::iumd_interop::make_memory(desc, dnnl_engine_, &umd_mem);
-        };
-
         dnnl::memory input_memory = create_dnnl_memory(input_memory_desc_, umd_input_memory_);
         dnnl::memory filter_memory = create_dnnl_memory(filter_memory_desc_, umd_filter_memory_);
         std::optional<dnnl::memory> bias_memory;
@@ -711,6 +729,33 @@ public:
     }
 
 private:
+    dnnl::memory::desc to_dnnl_mem_desc(const TensorShape& shape, const DataLayout& l, const DataType& t)
+    {
+        const dnnl::memory::dims dims{ shape.n, shape.c, shape.h, shape.w };
+
+        dnnl::memory::format_tag fmt = dnnl::memory::format_tag::undef;
+        switch (l)
+        {
+        case DataLayout::eNCHW: fmt = dnnl::memory::format_tag::nchw; break;
+        case DataLayout::eNHWC: fmt = dnnl::memory::format_tag::nhwc; break;
+        case DataLayout::eWeightsLayoutStart: fmt = dnnl::memory::format_tag::any; break;
+        };
+
+        dnnl::memory::data_type dt;
+        switch (t)
+        {
+        case DataType::eFp32: dt = dnnl::memory::data_type::f32; break;
+        case DataType::eFp16: dt = dnnl::memory::data_type::f16; break;
+        }
+        return dnnl::memory::desc{ dims, dt, fmt };
+    };
+
+    dnnl::memory create_dnnl_memory(const auto& desc, auto& umd_mem)
+    {
+        return dnnl::iumd_interop::make_memory(desc, dnnl_engine_, &umd_mem);
+    };
+
+private:
     UmdD3d12Device device_;
     dnnl::engine dnnl_engine_;
 
@@ -725,6 +770,10 @@ private:
     UmdD3d12Memory umd_filter_memory_;
     UmdD3d12Memory umd_output_memory_;
     std::optional<UmdD3d12Memory> umd_bias_memory_;
+
+    ComPtr<ID3D12Resource> persistent_buffer_;
+    std::optional<UmdD3d12Memory> umd_persistent_memory_;
+    std::optional<UmdD3d12Memory> umd_temporary_memory_;
 
     CD3DX12_CPU_DESCRIPTOR_HANDLE base_cpu_handle_;
     CD3DX12_GPU_DESCRIPTOR_HANDLE base_gpu_handle_;
