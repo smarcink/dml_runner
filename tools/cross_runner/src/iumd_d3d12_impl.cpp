@@ -110,6 +110,12 @@ bool UmdD3d12PipelineStateObject::execute(ID3D12GraphicsCommandList4* cmd_list, 
     }
 
     cmd_list->ExecuteMetaCommand(mc_.Get(), &exec_desc, sizeof(exec_desc));
+
+    D3D12_RESOURCE_BARRIER barrier{};
+    barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
+    barrier.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;
+    barrier.UAV.pResource = nullptr;
+    cmd_list->ResourceBarrier(1, &barrier);
     return true;
 }
 

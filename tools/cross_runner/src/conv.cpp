@@ -89,7 +89,9 @@ std::vector<std::byte> cpu_op::convolution(const bindings_t& bindings, opts_t op
     const dnnl::memory::dims stride{ opts.stride.h, opts.stride.w };
     const dnnl::primitive_attr attr = CreateEltwisePostOps(static_cast<dnnl::algorithm>(opts.activation_type), opts.activation_alpha, opts.activation_beta);
     const dnnl::convolution_forward::primitive_desc conv_desc(engine,
-        dnnl::prop_kind::forward_inference, dnnl::algorithm::convolution_direct,
+        dnnl::prop_kind::forward_inference, 
+        //dnnl::algorithm::convolution_winograd,
+        dnnl::algorithm::convolution_direct,
         input_memory.get_desc(), filter_memory.get_desc(), bindings.bias.data ? bias_memory.get_desc() : dnnl::memory::desc{}, output_memory.get_desc(), stride, pad, pad, attr);
 
     const auto guery_impl_str = conv_desc.impl_info_str();

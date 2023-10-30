@@ -572,9 +572,21 @@ private:
 class ConvolutionUmdD3d12Dispatcher : public ConvolutionBaseDispatcher
 {
 public:
-    ConvolutionUmdD3d12Dispatcher(create_params_t&& params, IntelExtension& intc_ext, ID3D12Device* d3d12_device, ID3D12GraphicsCommandList* cmd_list)
+    struct conv_umdd3d12_params_t
+    {
+        bool algo_winograd = false;
+
+        inline static void add_cli_options(CLI::App* opts, conv_umdd3d12_params_t& params)
+        {
+            opts->add_flag("--algo_winograd", params.algo_winograd)->default_val(false);
+        }
+    };
+
+public:
+    ConvolutionUmdD3d12Dispatcher(create_params_t&& params, conv_umdd3d12_params_t&& umdd3d12_params, IntelExtension& intc_ext, ID3D12Device* d3d12_device, ID3D12GraphicsCommandList* cmd_list)
         : ConvolutionBaseDispatcher(std::move(params), d3d12_device, cmd_list)
         , device_(d3d12_device, intc_ext.get_info())
+        , umdd3d12_params_(std::move(umdd3d12_params))
         , dnnl_engine_(dnnl::iumd_interop::make_engine(&device_))
     {      
         const dnnl::memory::dims pad{ params.in_pad, params.in_pad };
@@ -586,12 +598,18 @@ public:
             dnnl::post_ops ops;
             dnnl::primitive_attr attr;
 
+            // sanity check
+            assert(attr.get_scratchpad_mode() == dnnl::scratchpad_mode::library);
+            // set scratchpad mode to user provided
+            attr.set_scratchpad_mode(dnnl::scratchpad_mode::user);
+
             if (act != dnnl::algorithm::undef)
             {
                 ops.append_eltwise(act, alpha, beta);
                 // create an attribute and set the corresponding post op
                 attr.set_post_ops(ops);
             }
+
             return attr;
         }(static_cast<dnnl::algorithm>(params.act_type), params.act_alpha, params.act_beta);
 
@@ -602,11 +620,11 @@ public:
         {
             bias_memory_desc_.emplace(to_dnnl_mem_desc(TensorShape{ params_.filter_shape.n, 1, 1, 1 }, DataLayout::eNCHW, params_.dt));
         }
+        
         const auto conv_desc = dnnl::convolution_forward::primitive_desc(
             dnnl_engine_,
             dnnl::prop_kind::forward_inference,
-            dnnl::algorithm::convolution_direct,
-            //dnnl::algorithm::convolution_winograd,
+            umdd3d12_params_.algo_winograd ? dnnl::algorithm::convolution_winograd : dnnl::algorithm::convolution_direct,
             input_memory_desc_,
             to_dnnl_mem_desc(params_.filter_shape, DataLayout::eWeightsLayoutStart, params_.dt),  // DataLayout::eWeightsLayoutStart  to allow oneDNNL to reorder the weights
             bias_memory_desc_ ? bias_memory_desc_.value() : dnnl::memory::desc{},
@@ -616,12 +634,10 @@ public:
             pad,
             attr
         );
-        convolution_ = dnnl::convolution_forward(conv_desc);
-        filter_memory_desc_ = conv_desc.query_md(dnnl::query::weights_md);
-        const auto persistent_resource_size = filter_memory_desc_.get_size();
-        const auto temporary_resoruce_size = conv_desc.query_s64(dnnl::query::memory_consumption_s64);
-        assert(temporary_resoruce_size == 0 && "Not implemeneted yet!");
 
+        filter_memory_desc_ = conv_desc.query_md(dnnl::query::weights_md);
+
+        const auto persistent_resource_size = filter_memory_desc_.get_size();
         if (persistent_resource_size != 0)
         {
             const auto heap_props = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
@@ -632,16 +648,45 @@ public:
                 &buffder_desc,
                 D3D12_RESOURCE_STATE_COMMON,
                 nullptr, IID_PPV_ARGS(persistent_buffer_.ReleaseAndGetAddressOf())), "create buffer resource");
-
-            // now we can compile weights reorder
-            dnnl::reorder::primitive_desc reorder_desc(dnnl_engine_, to_dnnl_mem_desc(params_.filter_shape, params_.filter_layout, params_.dt), dnnl_engine_, filter_memory_desc_);
-            reorder_weights_ = dnnl::reorder(reorder_desc);
         }
+
+        assert(conv_desc.query_s64(dnnl::query::memory_consumption_s64) == 0);  // we provide scratchpad, so sanity check that primitive does not require any "hidden" memory
+        scratchpad_memory_desc_.emplace(conv_desc.query_md(dnnl::query::scratchpad_md));
+        const auto temporary_resoruce_size = scratchpad_memory_desc_->get_size();
+        if (temporary_resoruce_size != 0)
+        {          
+            const auto heap_props = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
+            const auto buffder_desc = CD3DX12_RESOURCE_DESC::Buffer(temporary_resoruce_size, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+            throw_if_failed(d3d12_device_->CreateCommittedResource(
+                &heap_props,
+                D3D12_HEAP_FLAG_NONE,
+                &buffder_desc,
+                D3D12_RESOURCE_STATE_COMMON,
+                nullptr, IID_PPV_ARGS(temporary_buffer_.ReleaseAndGetAddressOf())), "create buffer resource");
+        }
+
+        // create convolution primitive
+        convolution_ = dnnl::convolution_forward(conv_desc);
+
+        // compile weights reorder kernel and create reorder primitive
+        // ToDo: check if reorder needs scratchpad memory??
+        dnnl::reorder::primitive_desc reorder_desc(dnnl_engine_, to_dnnl_mem_desc(params_.filter_shape, params_.filter_layout, params_.dt), dnnl_engine_, filter_memory_desc_);
+        reorder_weights_ = dnnl::reorder(reorder_desc);
     }
 
     std::uint32_t get_total_descriptor_count()override
     {
-        return 100u;
+        // input, output, weights
+        std::uint32_t ret = 3;
+        if (persistent_buffer_)
+        {
+            ret++;
+        }
+        if (temporary_buffer_)
+        {
+            ret++;
+        }
+        return ret;
     }
 
     void initialize(ID3D12GraphicsCommandList* cmd_list, D3D12_CPU_DESCRIPTOR_HANDLE cpu_handle, D3D12_GPU_DESCRIPTOR_HANDLE gpu_handle) override
@@ -688,12 +733,18 @@ public:
         {
             resources_list.push_back({ DescType::eUav, bias_buffer_.Get() });
         }
+        if (temporary_buffer_)
+        {
+            resources_list.push_back({ DescType::eUav, temporary_buffer_.Get() });
+        }
         const auto gpu_handles = create_resource_views_and_handles(d3d12_device_, resources_list, base_cpu_handle_, base_gpu_handle_);
 
-        auto umd_input_memory_ = UmdD3d12Memory(gpu_handles[0]);
-        auto umd_filter_memory_ = UmdD3d12Memory(gpu_handles[1]);
-        auto umd_output_memory_ = UmdD3d12Memory(gpu_handles[2]);
-        auto umd_bias_memory_ = use_bias() ? UmdD3d12Memory(gpu_handles[3]) : UmdD3d12Memory();
+        std::size_t res_idx = 0;
+        auto umd_input_memory_ = UmdD3d12Memory(gpu_handles[res_idx++]);
+        auto umd_filter_memory_ = UmdD3d12Memory(gpu_handles[res_idx++]);
+        auto umd_output_memory_ = UmdD3d12Memory(gpu_handles[res_idx++]);
+        auto umd_bias_memory_ = use_bias() ? UmdD3d12Memory(gpu_handles[res_idx++]) : UmdD3d12Memory();
+        auto umd_scratchpad_memory_ = temporary_buffer_ ? UmdD3d12Memory(gpu_handles[res_idx++]) : UmdD3d12Memory();
 
         // stream is created in execute(...), because in MetaCommand cmd list object can be different from execute-to-execute
         ID3D12GraphicsCommandList4* cmd_list4 = nullptr;
@@ -709,18 +760,25 @@ public:
         {
             bias_memory.emplace(create_dnnl_memory(bias_memory_desc_.value(), umd_bias_memory_));
         }
+        std::optional<dnnl::memory> scratchpad_memory;
+        if (scratchpad_memory_desc_)
+        {
+            scratchpad_memory.emplace(create_dnnl_memory(scratchpad_memory_desc_.value(), umd_scratchpad_memory_));
+        }
         dnnl::memory output_memory = create_dnnl_memory(output_memory_desc_, umd_output_memory_);
 
         std::unordered_map<int, dnnl::memory> args;
         args.insert( { DNNL_ARG_SRC, input_memory });
         args.insert( { DNNL_ARG_WEIGHTS, filter_memory });
         args.insert( { DNNL_ARG_DST, output_memory} );
-
         if (use_bias())
         {
             args.insert({ DNNL_ARG_BIAS, bias_memory.value()});
         }
-
+        if (scratchpad_memory_desc_)
+        {
+            args.insert({ DNNL_ARG_SCRATCHPAD, scratchpad_memory.value() });
+        }
         convolution_.execute(stream, args);
         //stream.wait();
     }
@@ -754,6 +812,7 @@ private:
 
 private:
     UmdD3d12Device device_;
+    conv_umdd3d12_params_t umdd3d12_params_;
     dnnl::engine dnnl_engine_;
 
     dnnl::convolution_forward convolution_;
@@ -762,14 +821,13 @@ private:
     dnnl::memory::desc input_memory_desc_;
     dnnl::memory::desc filter_memory_desc_;
     std::optional<dnnl::memory::desc> bias_memory_desc_;
+    std::optional<dnnl::memory::desc> scratchpad_memory_desc_;
     dnnl::memory::desc output_memory_desc_;
 
-    //UmdD3d12Memory umd_input_memory_;
-    //UmdD3d12Memory umd_filter_memory_;
-    //UmdD3d12Memory umd_output_memory_;
-    //std::optional<UmdD3d12Memory> umd_bias_memory_;
 
+    ComPtr<ID3D12Resource> temporary_buffer_;
     ComPtr<ID3D12Resource> persistent_buffer_;
+
     CD3DX12_CPU_DESCRIPTOR_HANDLE base_cpu_handle_;
     CD3DX12_GPU_DESCRIPTOR_HANDLE base_gpu_handle_;
 };

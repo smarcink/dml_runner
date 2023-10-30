@@ -66,10 +66,11 @@ struct CliOptions
 
     // specific for implementation
     ConvolutionCmDispatcher::conv_cm_params_t conv_cm_params{};
+    ConvolutionUmdD3d12Dispatcher::conv_umdd3d12_params_t conv_umdd3d12_params{};
     MvnCmDispatcher::mvn_cm_params_t mvn_cm_params{};
     SoftmaxCmDispatcher::softmax_cm_params_t softmax_cm_params{};
     GemmCmDispatcher::cm_params_t gemm_cm_params{};
-    
+
     gpu_op::MemoryBandwidthDispatcher::create_params_t memory_bw_params{};
 };
 
@@ -117,6 +118,8 @@ int main()
     // specific for implementation
     auto conv_cm_option_groups = dml_runner_app.add_subcommand("conv_cm_opts", "Options for convolution layer with CM implementation.");
     ConvolutionCmDispatcher::conv_cm_params_t::add_cli_options(conv_cm_option_groups, opts.conv_cm_params);
+    auto conv_umdd3d12_option_groups = dml_runner_app.add_subcommand("conv_umdd3d12_opts", "Options for convolution layer with UMD D3D12 implementation.");
+    ConvolutionUmdD3d12Dispatcher::conv_umdd3d12_params_t::add_cli_options(conv_umdd3d12_option_groups, opts.conv_umdd3d12_params);
     auto mvn_cm_option_groups = dml_runner_app.add_subcommand("mvn_cm_opts", "Options for mvn layer with CM implementation.");
     MvnCmDispatcher::mvn_cm_params_t::add_cli_options(mvn_cm_option_groups, opts.mvn_cm_params);
     auto softmax_cm_option_groups = dml_runner_app.add_subcommand("softmax_cm_opts", "Options for softmax layer with CM implementation.");
@@ -196,7 +199,7 @@ int main()
         }
         else if (opts.node_type == NodeType::eConvUmdD3d12)
         {
-            node = std::make_unique<ConvolutionUmdD3d12Dispatcher>(std::move(opts.conv_opts),
+            node = std::make_unique<ConvolutionUmdD3d12Dispatcher>(std::move(opts.conv_opts), std::move(opts.conv_umdd3d12_params),
                 intel_extension_d3d12, d3d12_device.Get(), command_list.Get());
         }
         else if (opts.node_type == NodeType::eSoftmaxDml)
