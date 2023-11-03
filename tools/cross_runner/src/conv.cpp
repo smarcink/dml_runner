@@ -44,26 +44,6 @@ std::vector<std::byte> cpu_op::convolution(const bindings_t& bindings, opts_t op
         return ret;
     }(bindings.input);
 
-    dnnl::memory filter_memory = [&](const auto& binding)
-    {
-        const auto dims = to_dnnl_dims(binding.shape);
-        const auto dt = to_dnnl_data_type(binding.dt);
-        auto ft = dnnl::memory::format_tag::undef;
-        if (binding.layout == DataLayout::eNCHW)
-        {
-            ft = dnnl::memory::format_tag::oihw;
-        }
-        else if (binding.layout == DataLayout::eNHWC)
-        {
-            ft = dnnl::memory::format_tag::ohwi;
-        }
-        assert(ft != dnnl::memory::format_tag::undef);
-        auto ret = dnnl::memory({ dims, dt, ft }, engine);
-        copy_to_dnnl_memory(ret, binding.data);
-        return ret;
-    }(bindings.filter);
-
-
     dnnl::memory bias_memory = [&](const auto& binding)
     {
         if (!binding.data)  // no bias
@@ -90,9 +70,42 @@ std::vector<std::byte> cpu_op::convolution(const bindings_t& bindings, opts_t op
     const dnnl::primitive_attr attr = CreateEltwisePostOps(static_cast<dnnl::algorithm>(opts.activation_type), opts.activation_alpha, opts.activation_beta);
     const dnnl::convolution_forward::primitive_desc conv_desc(engine,
         dnnl::prop_kind::forward_inference, 
-        //dnnl::algorithm::convolution_winograd,
-        dnnl::algorithm::convolution_direct,
-        input_memory.get_desc(), filter_memory.get_desc(), bindings.bias.data ? bias_memory.get_desc() : dnnl::memory::desc{}, output_memory.get_desc(), stride, pad, pad, attr);
+        opts.force_winograd ? dnnl::algorithm::convolution_winograd : dnnl::algorithm::convolution_direct,
+        input_memory.get_desc(),
+        dnnl::memory::desc{to_dnnl_dims(bindings.filter.shape), to_dnnl_data_type(bindings.filter.dt), dnnl::memory::format_tag::any },
+        bindings.bias.data ? bias_memory.get_desc() : dnnl::memory::desc{},
+        output_memory.get_desc(),
+        stride, pad, pad, attr);
+
+    const auto filter_output_desc_mem = conv_desc.query_md(dnnl::query::weights_md);
+    dnnl::memory filter_memory(filter_output_desc_mem, engine);
+
+    // weights reorder
+    {
+        dnnl::memory filter_input_memory = [&](const auto& binding)
+        {
+            const auto dims = to_dnnl_dims(binding.shape);
+            const auto dt = to_dnnl_data_type(binding.dt);
+            auto ft = dnnl::memory::format_tag::undef;
+            if (binding.layout == DataLayout::eNCHW)
+            {
+                ft = dnnl::memory::format_tag::oihw;
+            }
+            else if (binding.layout == DataLayout::eNHWC)
+            {
+                ft = dnnl::memory::format_tag::ohwi;
+            }
+            assert(ft != dnnl::memory::format_tag::undef);
+            auto ret = dnnl::memory({ dims, dt, ft }, engine);
+            copy_to_dnnl_memory(ret, binding.data);
+            return ret;
+        }(bindings.filter);
+
+        dnnl::reorder::primitive_desc reorder_desc(filter_input_memory, filter_memory);
+        auto reorder = dnnl::reorder(reorder_desc);
+        reorder.execute(stream, { { DNNL_ARG_SRC, filter_input_memory }, { DNNL_ARG_DST, filter_memory } });
+        stream.wait();
+    }
 
     const auto guery_impl_str = conv_desc.impl_info_str();
     std::cout << "ref query impl: " << guery_impl_str << std::endl;

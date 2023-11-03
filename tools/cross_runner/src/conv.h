@@ -242,6 +242,7 @@ struct opts_t
     float activation_alpha;
     float activation_beta;
     DataLayout out_layout = DataLayout::eCount;
+    bool force_winograd = false;
 };
 std::vector<std::byte> convolution(const bindings_t& bindings, opts_t opts);
 }
@@ -267,6 +268,7 @@ public:
         bool no_bias = false;
         bool allow_fp16_computations = false;
         bool managaed_weights = false; // ToDo: pass it to DML class so its actually beigned used
+        bool algo_winograd = false;
 
         inline static void add_cli_options(CLI::App* opts, create_params_t& params)
         {
@@ -284,6 +286,7 @@ public:
             opts->add_option("--activation_type", params.act_type);
             opts->add_option("--activation_alpha", params.act_alpha);
             opts->add_option("--activation_beta", params.act_beta);
+            opts->add_flag("--algo_winograd", params.algo_winograd);
         }
     };
 
@@ -513,6 +516,7 @@ protected:
         opts.activation_type = params_.act_type;
         opts.activation_alpha = params_.act_alpha;
         opts.activation_beta = params_.act_beta;
+        opts.force_winograd = params_.algo_winograd;
         return cpu_op::convolution(bindings, opts);
     }
 
@@ -574,11 +578,8 @@ class ConvolutionUmdD3d12Dispatcher : public ConvolutionBaseDispatcher
 public:
     struct conv_umdd3d12_params_t
     {
-        bool algo_winograd = false;
-
         inline static void add_cli_options(CLI::App* opts, conv_umdd3d12_params_t& params)
         {
-            opts->add_flag("--algo_winograd", params.algo_winograd)->default_val(false);
         }
     };
 
@@ -624,7 +625,7 @@ public:
         const auto conv_desc = dnnl::convolution_forward::primitive_desc(
             dnnl_engine_,
             dnnl::prop_kind::forward_inference,
-            umdd3d12_params_.algo_winograd ? dnnl::algorithm::convolution_winograd : dnnl::algorithm::convolution_direct,
+            params_.algo_winograd ? dnnl::algorithm::convolution_winograd : dnnl::algorithm::convolution_direct,
             input_memory_desc_,
             to_dnnl_mem_desc(params_.filter_shape, DataLayout::eWeightsLayoutStart, params_.dt),  // DataLayout::eWeightsLayoutStart  to allow oneDNNL to reorder the weights
             bias_memory_desc_ ? bias_memory_desc_.value() : dnnl::memory::desc{},
