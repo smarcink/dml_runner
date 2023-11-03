@@ -380,7 +380,7 @@ public:
         input_binds.push_back({ nullptr, 0, 0 });  // tensor a
 
         //tensor b
-        if (input_1_.GetOutputDesc().flags == DML_TENSOR_FLAG_OWNED_BY_DML)
+        if (input_1_ && input_1_.GetOutputDesc().flags == DML_TENSOR_FLAG_OWNED_BY_DML)
         {
             input_binds.push_back({ resource_b, 0, resource_b->GetDesc().Width });
         }
