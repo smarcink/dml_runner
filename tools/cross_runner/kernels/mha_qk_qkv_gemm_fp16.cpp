@@ -7,6 +7,7 @@
 #else
 #define DT_ACCU DT
 #endif
+#define BASE_OUTPUT_OFFSET 0
 
 #define LOAD_SIMD_SIZE 16
 #define K_PER_LOAD 8
@@ -56,9 +57,9 @@ extern "C" _GENX_MAIN_ void mha_qk_qkv_gemm(
 )
 {
 
-    const uint32_t thread_id_0 = cm_group_id(0) * cm_local_size(0) + cm_local_id(0);
-    const uint32_t thread_id_1 = cm_group_id(1) * cm_local_size(1) + cm_local_id(1);
-    const uint32_t thread_id_2 = cm_group_id(2) * cm_local_size(2) + cm_local_id(2);
+    const uint32_t thread_id_0 = cm_group_id(0) * LWS_SIZE_X + cm_local_id(0);
+    const uint32_t thread_id_1 = cm_group_id(1) * LWS_SIZE_Y + cm_local_id(1);
+    const uint32_t thread_id_2 = cm_group_id(2) * LWS_SIZE_Z + cm_local_id(2);
 	const uint32_t k_slice_thread_offset = cm_local_id(2);
 
 	const uint32_t batch_thread_offset = cm_group_id(2) / SIZE_NUM_HEADS;
@@ -82,6 +83,7 @@ extern "C" _GENX_MAIN_ void mha_qk_qkv_gemm(
 	
 #if SLM_KN_SHARING
 	cm_slm_init(TILE_K * TILE_N * sizeof(DT));
+    uint slm_buffer = cm_slm_alloc(TILE_K * TILE_N * sizeof(DT));
 	const uint32_t th_local_id = cm_local_id(1);
 #endif
  
@@ -154,7 +156,13 @@ extern "C" _GENX_MAIN_ void mha_qk_qkv_gemm(
 				#pragma unroll
 				for(uint32_t j = 0; j < TILE_M; j++)
 				{
+#if ACCU_IS_FP32
+					vector<DT_ACCU, TILE_N> input_b_fp32 = vector<DT_ACCU, TILE_N>(input_b);
+					vector<DT_ACCU, TILE_N> input_a_fp32 = vector<DT_ACCU, TILE_N>(input.select<1, 1, 1, 1>(j, k_chunk * ks + k * packed_eles + i).replicate<TILE_N>());
+					accu.select<1, 1, TILE_N, 1>(j, 0) += input_b_fp32 * input_a_fp32;
+#else
 					accu.select<1, 1, TILE_N, 1>(j, 0) += input_b * input.select<1, 1, 1, 1>(j, k_chunk * ks + k * packed_eles + i).replicate<TILE_N>();
+#endif
 				}
 #endif
 			}
@@ -175,7 +183,16 @@ extern "C" _GENX_MAIN_ void mha_qk_qkv_gemm(
 		#pragma unroll
 		for(uint32_t m = 0; m < TILE_M; m++)
 		{
+
+#if 0
+            vector<DT_ACCU, TILE_N> input_b_fp32 = vector<DT_ACCU, TILE_N>(input_b);
+            vector<DT_ACCU, TILE_N> input_a_fp32 = vector<DT_ACCU, TILE_N>(input.select<1, 1, 1, 1>(j, k_chunk * ks + k * packed_eles + i).replicate<TILE_N>());
+            accu.select<1, 1, TILE_N, 1>(j, 0) += input_b_fp32 * input_a_fp32;
+#else
 			accu.select<1, 1, TILE_N, 1>(m, 0) += input_b * input.select<1, 1, 1, 1>(m, k).replicate<TILE_N>();
+#endif
+            
+            
 		}
 	}
 #endif
@@ -183,7 +200,8 @@ extern "C" _GENX_MAIN_ void mha_qk_qkv_gemm(
 #if SLICE_K > 1
 	const uint32_t TILE_N_PACKED = TILE_N / (sizeof(uint32_t)/sizeof(DT_ACCU));
     cm_slm_init(TILE_M * TILE_N * sizeof(DT_ACCU) * (LWS_SIZE_Z - 1));
-
+    uint slm_buffer = cm_slm_alloc(TILE_M * TILE_N * sizeof(DT_ACCU) * (LWS_SIZE_Z - 1));
+    
     if(cm_local_id(2) > 0)
     {
         #pragma unroll
@@ -220,9 +238,11 @@ extern "C" _GENX_MAIN_ void mha_qk_qkv_gemm(
  
     const uint32_t output_store_size = (TILE_N * sizeof(DT)) / sizeof(uint32_t);
     uint32_t output_offset = 
-				(batch_thread_offset * SIZE_NUM_HEADS + head_thread_offset) * SIZE_M * SIZE_N * sizeof(DT)
-				+ thread_id_1 * TILE_M * SIZE_N * sizeof(DT)
-				+ (thread_id_0 * TILE_N * sizeof(DT));
+				(batch_thread_offset * SIZE_NUM_HEADS * SIZE_M * SIZE_N
+                + head_thread_offset * SIZE_M * SIZE_N
+				+ thread_id_1 * TILE_M * SIZE_N 
+				+ thread_id_0 * TILE_N
+                + BASE_OUTPUT_OFFSET) * sizeof(DT);
 				
 		
 	matrix<DT, TILE_M, TILE_N> accu_out = accu;  // if DT_ACCU == DT then compiler removes this line

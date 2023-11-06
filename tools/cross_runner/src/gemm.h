@@ -19,7 +19,10 @@ enum class GemmType
     // q + kv
     GemmType_QK_Q_KV,
     GemmType_SV_S_KV,
+    //dpas
+    GemmType_QK_QKV_DPAS,
 };
+
 
 namespace
 {
@@ -122,7 +125,7 @@ public:
                 b_transposed ? DML_MATRIX_TRANSFORM_TRANSPOSE : DML_MATRIX_TRANSFORM_NONE,
                 alpha, beta);
         }
-        else if (type_ == GemmType::GemmType_QK_QKV)
+        else if (type_ == GemmType::GemmType_QK_QKV || type_ == GemmType::GemmType_QK_QKV_DPAS )
         {
             dml::TensorDesc::Dimensions dimensions_0;
             dimensions_0.push_back(shape_a.n);
@@ -379,26 +382,27 @@ public:
         std::vector<DML_BUFFER_BINDING> input_binds{};
         input_binds.push_back({ nullptr, 0, 0 });  // tensor a
 
-        //tensor b
-        if (input_1_ && input_1_.GetOutputDesc().flags == DML_TENSOR_FLAG_OWNED_BY_DML)
-        {
-            input_binds.push_back({ resource_b, 0, resource_b->GetDesc().Width });
-        }
-        else
-        {
-            input_binds.push_back({ nullptr, 0, 0 });
-        }
+        // temporarily commented out to only support QK_QKV
+        ////tensor b
+        //if (input_1_ && input_1_.GetOutputDesc().flags == DML_TENSOR_FLAG_OWNED_BY_DML)
+        //{
+        //    input_binds.push_back({ resource_b, 0, resource_b->GetDesc().Width });
+        //}
+        //else
+        //{
+        //    input_binds.push_back({ nullptr, 0, 0 });
+        //}
 
-        // tensor c 
-        if (input_2_ && input_2_->GetOutputDesc().flags == DML_TENSOR_FLAG_OWNED_BY_DML)
-        {
-            assert(resource_c != nullptr);
-            input_binds.push_back({ resource_c, 0, resource_c->GetDesc().Width });
-        }
-        else
-        {
-            input_binds.push_back({ nullptr, 0, 0 });
-        }
+        //// tensor c 
+        //if (input_2_ && input_2_->GetOutputDesc().flags == DML_TENSOR_FLAG_OWNED_BY_DML)
+        //{
+        //    assert(resource_c != nullptr);
+        //    input_binds.push_back({ resource_c, 0, resource_c->GetDesc().Width });
+        //}
+        //else
+        //{
+        //    input_binds.push_back({ nullptr, 0, 0 });
+        //}
 
         DML_BUFFER_ARRAY_BINDING input_bind{};
         input_bind.BindingCount = static_cast<UINT>(input_binds.size());
@@ -469,13 +473,14 @@ public:
             opts->add_flag("--fuse_softmax", params.fuse_softmax)->default_val(false);
 
             opts->add_option("--gemm_type", params.type, "Name of the type of GEMM to run.")
-                ->check(CLI::IsMember({ GemmType::GemmType_AB, GemmType::GemmType_QK_QKV, GemmType::GemmType_SV_S_QKV, GemmType::GemmType_QK_Q_KV, GemmType::GemmType_SV_S_KV }))->
+                ->check(CLI::IsMember({ GemmType::GemmType_AB, GemmType::GemmType_QK_QKV, GemmType::GemmType_SV_S_QKV, GemmType::GemmType_QK_Q_KV, GemmType::GemmType_SV_S_KV, GemmType::GemmType_QK_QKV_DPAS}))->
                 transform(CLI::Transformer(std::map<std::string, GemmType>{
                     { "ab", GemmType::GemmType_AB },
                     { "qk_qkv", GemmType::GemmType_QK_QKV },
                     { "sv_qkv", GemmType::GemmType_SV_S_QKV },
                     { "qk_q_kv", GemmType::GemmType_QK_Q_KV },
                     { "sv_s_kv", GemmType::GemmType_SV_S_KV },
+                    { "qk_qkv_dpas", GemmType::GemmType_QK_QKV_DPAS },
             }, CLI::ignore_case))->required();
 
         }
@@ -500,7 +505,7 @@ public:
             assert(!input_data_a_.empty());
             assert(!input_data_b_.empty());
         }
-        else if (params_.type == GemmType::GemmType_QK_QKV)
+        else if (params_.type == GemmType::GemmType_QK_QKV || params_.type == GemmType::GemmType_QK_QKV_DPAS)
         {
             assert(params_.shape_a.get_dims_count() == 5);
             assert(params_.shape_b.get_dims_count() == 0);
@@ -516,7 +521,7 @@ public:
             assert(!input_data_a_.empty());
             assert(!input_data_b_.empty());
         }
-        else if (params_.type == GemmType::GemmType_QK_Q_KV)
+        else if (params_.type == GemmType::GemmType_QK_Q_KV )
         {
             assert(params_.shape_a.get_dims_count() == 3);  // q input
             assert(params_.shape_b.get_dims_count() == 5);  // q_kv input 
@@ -756,7 +761,7 @@ protected:
         {
             return params_.shape_a.h;
         }
-        else if (params_.type == GemmType::GemmType_QK_QKV || params_.type == GemmType::GemmType_QK_Q_KV)
+        else if (params_.type == GemmType::GemmType_QK_QKV || params_.type == GemmType::GemmType_QK_QKV_DPAS || params_.type == GemmType::GemmType_QK_Q_KV)
         {
             return params_.shape_a.c;
         }
@@ -770,7 +775,7 @@ protected:
         {
             return params_.shape_a.w;
         }
-        else if (params_.type == GemmType::GemmType_QK_QKV)
+        else if (params_.type == GemmType::GemmType_QK_QKV || params_.type == GemmType::GemmType_QK_QKV_DPAS )
         {
             return params_.shape_a.w;
         }
@@ -788,7 +793,7 @@ protected:
         {
             return params_.b_transposed ? params_.shape_b.h : params_.shape_b.w;
         }
-        else if (params_.type == GemmType::GemmType_QK_QKV)
+        else if (params_.type == GemmType::GemmType_QK_QKV || params_.type == GemmType::GemmType_QK_QKV_DPAS )
         {
             return params_.shape_a.c;
         }
@@ -886,6 +891,7 @@ public:
             opts->add_option("--lws_z", params.lws[2]);
 
             opts->add_option("--slice_k", params.slice_k);
+
         }
     };
 
@@ -921,7 +927,8 @@ public:
             cm_params_.lws[2] = cm_params_.slice_k;
 #endif
         }
-        else if (params_.type == GemmType::GemmType_QK_QKV)
+        else if (params_.type == GemmType::GemmType_QK_QKV ||
+            params_.type == GemmType::GemmType_QK_QKV_DPAS)
         {
 #if 0
             cm_params_.large_grf = true;
@@ -942,7 +949,7 @@ public:
             }
 #endif
             //cm_params_.lws[0] = 32;
-            cm_params_.lws[1] = 16;
+            //cm_params_.lws[1] = 16;
         }
         else if(params_.type == GemmType::GemmType_QK_Q_KV)
         {
@@ -1020,7 +1027,7 @@ public:
         add_define("SIZE_N", N);
 
 
-        if (params_.type == GemmType::GemmType_QK_QKV)
+        if (params_.type == GemmType::GemmType_QK_QKV || params_.type == GemmType::GemmType_QK_QKV_DPAS)
         {
             add_define("SIZE_BATCH", params_.shape_a.n);
             add_define("SIZE_SEQ_LEN", params_.shape_a.c);
@@ -1070,6 +1077,7 @@ public:
             {
             case GemmType::GemmType_AB: path = "gemm_nchw_fp16.cpp"; break;
             case GemmType::GemmType_QK_QKV: path = "mha_qk_qkv_gemm_fp16.cpp"; break;
+            case GemmType::GemmType_QK_QKV_DPAS: path = "mha_qk_qkv_gemm_dpas.cpp"; break;
             case GemmType::GemmType_SV_S_QKV: path = "mha_sv_s_qkv_gemm_fp16.cpp";  break;
             case GemmType::GemmType_SV_S_KV: path = "mha_sv_s_kv_gemm_fp16.cpp";  break;
             case GemmType::GemmType_QK_Q_KV: path = "mha_qk_q_kv_gemm_fp16.cpp";  break;
@@ -1161,9 +1169,18 @@ public:
             }
             else if (params_.type == GemmType::GemmType_QK_QKV)
             {
-                gws_x = get_N() / cm_params_.tile_n;  // n first
-                gws_y = get_M() / cm_params_.tile_m;  // m second
-                gws_z = get_batch() * get_channels() * cm_params_.slice_k;
+              
+                    gws_x = get_N() / cm_params_.tile_n;  // n first
+                    gws_y = get_M() / cm_params_.tile_m;  // m second
+                    gws_z = get_batch() * get_channels() * cm_params_.slice_k;
+
+            }
+            else if(params_.type == GemmType::GemmType_QK_QKV_DPAS)
+            {
+                    gws_x = 8;
+                    gws_y = 2;
+                    gws_z = 16;
+
             }
             else
             {
