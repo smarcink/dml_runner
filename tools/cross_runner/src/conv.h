@@ -243,6 +243,9 @@ struct opts_t
     float activation_beta;
     DataLayout out_layout = DataLayout::eCount;
     bool force_winograd = false;
+
+    bool dump_weights = false;
+    bool dump_scratchpad = false;
 };
 std::vector<std::byte> convolution(const bindings_t& bindings, opts_t opts);
 }
@@ -270,6 +273,8 @@ public:
         bool managaed_weights = false; // ToDo: pass it to DML class so its actually beigned used
         bool algo_winograd = false;
 
+        bool dump_weights = false;
+
         inline static void add_cli_options(CLI::App* opts, create_params_t& params)
         {
             add_data_type_cli_option(opts, "--data_type", params.dt)->required();
@@ -287,6 +292,8 @@ public:
             opts->add_option("--activation_alpha", params.act_alpha);
             opts->add_option("--activation_beta", params.act_beta);
             opts->add_flag("--algo_winograd", params.algo_winograd);
+
+            opts->add_flag("--dump_weights", params.dump_weights);
         }
     };
 
@@ -517,7 +524,20 @@ protected:
         opts.activation_alpha = params_.act_alpha;
         opts.activation_beta = params_.act_beta;
         opts.force_winograd = params_.algo_winograd;
+        opts.dump_weights = dump_weights();
+        opts.dump_scratchpad = dump_weights();
         return cpu_op::convolution(bindings, opts);
+    }
+
+protected:
+    virtual bool dump_weights() const
+    {
+        return params_.dump_weights;
+    }
+
+    virtual bool dump_scratchpad() const
+    {
+        return params_.dump_weights;
     }
 
 protected:
@@ -677,8 +697,12 @@ public:
 
     std::uint32_t get_total_descriptor_count()override
     {
-        // input, output, weights
+        // input, output, weights, bias
         std::uint32_t ret = 3;
+        if (bias_buffer_)
+        {
+            ret++;
+        }
         if (persistent_buffer_)
         {
             ret++;
@@ -810,6 +834,46 @@ private:
     {
         return dnnl::iumd_interop::make_memory(desc, dnnl_engine_, &umd_mem);
     };
+
+    ConformanceResult validate_conformance(ID3D12CommandQueue* command_queue,
+        ID3D12CommandAllocator* command_allocator, ID3D12GraphicsCommandList* command_list) override
+    {
+        auto dump_buffer_to_file = [&](const auto& buffer, const auto& file_name)
+        {
+            const auto bytes_width = buffer->GetDesc().Width;
+            // readback data and validate
+            auto readback_buffer = create_buffer(d3d12_device_, bytes_width, D3D12_HEAP_TYPE_READBACK, D3D12_RESOURCE_STATE_COPY_DEST);
+            auto readback_output_barrirer = CD3DX12_RESOURCE_BARRIER::Transition(buffer.Get(),
+                D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
+            command_list->ResourceBarrier(1, &readback_output_barrirer);
+            command_list->CopyResource(readback_buffer.Get(), persistent_buffer_.Get());
+            close_execute_reset_wait(d3d12_device_, command_queue, command_allocator, command_list);
+
+            std::vector<std::byte> data_out(bytes_width);
+            std::byte* readback_mapped_ptr = nullptr;
+            readback_buffer->Map(0, nullptr, reinterpret_cast<void**>(&readback_mapped_ptr));
+            std::memcpy(data_out.data(), readback_mapped_ptr, data_out.size());
+            readback_buffer->Unmap(0, nullptr);
+
+            std::ofstream fout(file_name, std::ios::out | std::ios::binary);
+            fout.write((char*)data_out.data(), data_out.size());
+            fout.close();
+        };
+
+        if (dump_weights())
+        {
+            dump_buffer_to_file(persistent_buffer_, "umd_weights_data.dat");
+        }
+
+        const bool dump_scratchpads_data = true;
+        if (dump_scratchpad())
+        {
+            dump_buffer_to_file(temporary_buffer_, "umd_scratchpad_data.dat");
+        }
+
+        const auto ret = ConvolutionBaseDispatcher::validate_conformance(command_queue, command_allocator, command_list);
+        return ret;
+    }
 
 private:
     UmdD3d12Device device_;

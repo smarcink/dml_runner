@@ -15,6 +15,11 @@ inline dnnl::primitive_attr CreateEltwisePostOps(dnnl::algorithm Activation, flo
     dnnl::post_ops ops;
     dnnl::primitive_attr attr;
 
+    // sanity check
+    assert(attr.get_scratchpad_mode() == dnnl::scratchpad_mode::library);
+    // set scratchpad mode to user provided
+    attr.set_scratchpad_mode(dnnl::scratchpad_mode::user);
+
     if (Activation != dnnl::algorithm::undef)
     {
         ops.append_eltwise(Activation, alpha, beta);
@@ -22,6 +27,19 @@ inline dnnl::primitive_attr CreateEltwisePostOps(dnnl::algorithm Activation, flo
         attr.set_post_ops(ops);
     }
     return attr;
+}
+
+inline void dump_buffer_to_file(const dnnl::memory& memory, const std::string& file_name)
+{
+    const auto copy_size = dimensions_product(memory.get_desc().get_dims()) * dnnl::memory::data_type_size(memory.get_desc().get_data_type());
+    std::vector<std::byte> ret(copy_size);
+    auto* mapped_out_filter = memory.map_data<uint8_t>();
+    std::memcpy(ret.data(), mapped_out_filter, copy_size);
+    memory.unmap_data(mapped_out_filter);
+
+    std::ofstream fout(file_name, std::ios::out | std::ios::binary);
+    fout.write((char*)ret.data(), ret.size());
+    fout.close();
 }
 
 std::vector<std::byte> cpu_op::convolution(const bindings_t& bindings, opts_t opts)
@@ -105,14 +123,28 @@ std::vector<std::byte> cpu_op::convolution(const bindings_t& bindings, opts_t op
         auto reorder = dnnl::reorder(reorder_desc);
         reorder.execute(stream, { { DNNL_ARG_SRC, filter_input_memory }, { DNNL_ARG_DST, filter_memory } });
         stream.wait();
+
+        if (opts.dump_weights)
+        {
+            dump_buffer_to_file(filter_memory, "dnnl_weights_data.dat");
+        }
     }
+
+    const auto scratchpad_desc_mem = conv_desc.query_md(dnnl::query::scratchpad_md);
+    dnnl::memory scratchpad_memory(scratchpad_desc_mem, engine);
 
     const auto guery_impl_str = conv_desc.impl_info_str();
     std::cout << "ref query impl: " << guery_impl_str << std::endl;
 
     dnnl::convolution_forward convolution(conv_desc);
-    convolution.execute(stream, { { DNNL_ARG_SRC, input_memory }, {DNNL_ARG_WEIGHTS, filter_memory}, {DNNL_ARG_BIAS, bias_memory}, {DNNL_ARG_DST, output_memory} });
+    convolution.execute(stream, { { DNNL_ARG_SRC, input_memory }, {DNNL_ARG_WEIGHTS, filter_memory}, {DNNL_ARG_BIAS, bias_memory}, {DNNL_ARG_DST, output_memory}, 
+        {DNNL_ARG_SCRATCHPAD, scratchpad_memory} });
     stream.wait();
+
+    if (opts.dump_scratchpad)
+    {
+        dump_buffer_to_file(scratchpad_memory, "dnnl_scratchpad_data.dat");
+    }
 
     auto* out_dnnl_data = output_memory.map_data<uint8_t>();
     assert(out_dnnl_data != nullptr && "[dnnl][conv] Couldnt map output memory!");
