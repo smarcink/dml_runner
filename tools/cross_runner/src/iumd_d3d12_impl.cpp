@@ -119,8 +119,29 @@ bool UmdD3d12PipelineStateObject::execute(ID3D12GraphicsCommandList4* cmd_list, 
     return true;
 }
 
-bool UmdD3d12CommandList::dispatch(IUMDPipelineStateObject* pso, const std::array<std::size_t, 3>& gws, const std::array<std::size_t, 3>& lws)
+bool UmdD3d12CommandList::dispatch(IUMDPipelineStateObject* pso, const std::array<std::size_t, 3>& gws, const std::array<std::size_t, 3>& lws, const std::vector<IUMDEvent*>& deps, std::shared_ptr<IUMDEvent>* out)
 {
+    if (!deps.empty())
+    {
+        // Single global barrier is enough for now, because we use b.UAV.pResource = nullptr;
+        // If we would support concrete resources barriers, than we need a way to specify resource pointer to b.UAV.pResource
+        constexpr const bool single_barrier_is_enough = true;  
+        std::vector<D3D12_RESOURCE_BARRIER> barriers(single_barrier_is_enough ? 1u : deps.size());
+        for (auto& b : barriers)
+        {
+            b.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
+            b.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;
+            b.UAV.pResource = nullptr;
+        }
+        impl_->ResourceBarrier(static_cast<std::uint32_t>(barriers.size()), barriers.data());
+    }
+
     auto typed_pso = dynamic_cast<UmdD3d12PipelineStateObject*>(pso);
-    return typed_pso->execute(impl_, gws, lws);
+    const auto result = typed_pso->execute(impl_, gws, lws);
+ 
+    if (out)
+    {
+        *out = std::make_shared<UmdD3d12Event>();
+    }
+    return result;
 }

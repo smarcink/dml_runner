@@ -86,6 +86,13 @@ private:
     std::unordered_map<std::size_t, const UmdD3d12Memory*> resources;
 };
 
+
+class UmdD3d12Event : public IUMDEvent
+{
+public:
+
+};
+
 class UmdD3d12Device : public IUMDDevice
 {
 public:
@@ -209,7 +216,7 @@ public:
         : impl_(cmd_list)
     {}
 
-    bool dispatch(IUMDPipelineStateObject* pso, const std::array<std::size_t, 3>& gws, const std::array<std::size_t, 3>& lws) override;
+    bool dispatch(IUMDPipelineStateObject* pso, const std::array<std::size_t, 3>& gws, const std::array<std::size_t, 3>& lws, const std::vector<IUMDEvent*>& deps, std::shared_ptr<IUMDEvent>* out) override;
 
     bool supports_out_of_order() const { return false; }
     bool supports_profiling() const { return false; }
