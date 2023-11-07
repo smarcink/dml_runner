@@ -3,6 +3,8 @@
 #include <random>
 #include "dml_base_node.h"
 
+#include "dnnl_utils.h"
+
 #include "iumd_d3d12_impl.h"
 #include <dnnl_iumd.h>
 #include <dnnl.hpp>
@@ -809,27 +811,6 @@ public:
     }
 
 private:
-    dnnl::memory::desc to_dnnl_mem_desc(const TensorShape& shape, const DataLayout& l, const DataType& t)
-    {
-        const dnnl::memory::dims dims{ shape.n, shape.c, shape.h, shape.w };
-
-        dnnl::memory::format_tag fmt = dnnl::memory::format_tag::undef;
-        switch (l)
-        {
-        case DataLayout::eNCHW: fmt = dnnl::memory::format_tag::nchw; break;
-        case DataLayout::eNHWC: fmt = dnnl::memory::format_tag::nhwc; break;
-        case DataLayout::eWeightsLayoutStart: fmt = dnnl::memory::format_tag::any; break;
-        };
-
-        dnnl::memory::data_type dt;
-        switch (t)
-        {
-        case DataType::eFp32: dt = dnnl::memory::data_type::f32; break;
-        case DataType::eFp16: dt = dnnl::memory::data_type::f16; break;
-        }
-        return dnnl::memory::desc{ dims, dt, fmt };
-    };
-
     dnnl::memory create_dnnl_memory(const auto& desc, auto& umd_mem)
     {
         return dnnl::iumd_interop::make_memory(desc, dnnl_engine_, &umd_mem);

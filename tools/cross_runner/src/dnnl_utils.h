@@ -1,4 +1,4 @@
-#include "conv.h"
+#pragma once
 #include <oneapi/dnnl/dnnl.hpp>
 
 #include <numeric>
@@ -23,6 +23,7 @@ inline dnnl::memory::format_tag to_dnnl_format(const DataLayout l)
     {
     case DataLayout::eNCHW: return dnnl::memory::format_tag::nchw;
     case DataLayout::eNHWC: return dnnl::memory::format_tag::nhwc;
+    case DataLayout::eWeightsLayoutStart: return dnnl::memory::format_tag::any; break;
     default:
         return dnnl::memory::format_tag::undef;
     }
@@ -39,6 +40,11 @@ inline dnnl::memory::data_type to_dnnl_data_type(const DataType l)
         return dnnl::memory::data_type::undef;
     }
     return dnnl::memory::data_type::undef;
+}
+
+inline dnnl::memory::desc to_dnnl_mem_desc(const TensorShape& shape, const DataLayout& l, const DataType& t)
+{
+    return dnnl::memory::desc{ to_dnnl_dims(shape), to_dnnl_data_type(t), to_dnnl_format (l)};
 }
 
 inline void copy_to_dnnl_memory(dnnl::memory& dst_memory, const std::byte* input_data)

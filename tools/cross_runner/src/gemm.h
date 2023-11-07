@@ -9,6 +9,14 @@
 #include "dml_base_node.h"
 #include "softmax.h"
 
+#include "dnnl_utils.h"
+
+#include "iumd_d3d12_impl.h"
+#include <dnnl_iumd.h>
+#include <dnnl.hpp>
+#include <dnnl_iumd.hpp>
+#include "oneapi/dnnl/dnnl.hpp"
+
 enum class GemmType
 {
     GemmType_AB = 0,
@@ -847,6 +855,154 @@ public:
 
 private:
     gpu_op::Gemm gemm_;
+};
+
+
+class GemmUmdD3d12Dispatcher : public GemmBaseDispatcher
+{
+public:
+    GemmUmdD3d12Dispatcher(create_params_t&& params, IntelExtension& intc_ext, ID3D12Device* d3d12_device, ID3D12GraphicsCommandList* cmd_list, IDMLDevice* dml_device, IDMLCommandRecorder* dml_cmd_recorder)
+        : GemmBaseDispatcher(std::move(params), d3d12_device, dml_device, dml_cmd_recorder, cmd_list)
+        , device_(d3d12_device, intc_ext.get_info())
+        , dnnl_engine_(dnnl::iumd_interop::make_engine(&device_))
+    {
+        const dnnl::primitive_attr attr = [](dnnl::algorithm act, float alpha, float beta)
+        {
+            // create a post-op with relu
+            dnnl::post_ops ops;
+            dnnl::primitive_attr attr;
+
+            // sanity check
+            assert(attr.get_scratchpad_mode() == dnnl::scratchpad_mode::library);
+            // set scratchpad mode to user provided
+            attr.set_scratchpad_mode(dnnl::scratchpad_mode::user);
+
+            if (act != dnnl::algorithm::undef)
+            {
+                ops.append_eltwise(act, alpha, beta);
+                // create an attribute and set the corresponding post op
+                attr.set_post_ops(ops);
+            }
+
+            return attr;
+        }(dnnl::algorithm::undef, 0.0f, 0.0f);
+
+        input_a_memory_desc_ = to_dnnl_mem_desc(params_.shape_a, params_.layout, params_.dt);
+        input_b_memory_desc_ = to_dnnl_mem_desc(params_.shape_b, params_.layout, params_.dt);
+        output_memory_desc_ = to_dnnl_mem_desc(get_shape_output(), params_.layout, params_.dt);
+
+        if (input_buffer_c_)
+        {
+            input_c_memory_desc_.emplace(to_dnnl_mem_desc(params_.shape_c, params_.layout, params_.dt));
+        }
+
+        dnnl::matmul::primitive_desc matmul_desc(dnnl_engine_,
+            input_a_memory_desc_,
+            input_b_memory_desc_,
+            input_c_memory_desc_ ? *input_c_memory_desc_ : dnnl::memory::desc{},
+            output_memory_desc_,
+            attr
+        );
+        assert(matmul_desc.query_s64(dnnl::query::memory_consumption_s64) == 0);  // we provide scratchpad, so sanity check that primitive does not require any "hidden" memory
+        scratchpad_memory_desc_.emplace(matmul_desc.query_md(dnnl::query::scratchpad_md));
+        const auto temporary_resoruce_size = scratchpad_memory_desc_->get_size();
+        if (temporary_resoruce_size != 0)
+        {
+            const auto heap_props = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
+            const auto buffder_desc = CD3DX12_RESOURCE_DESC::Buffer(temporary_resoruce_size, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+            throw_if_failed(d3d12_device_->CreateCommittedResource(
+                &heap_props,
+                D3D12_HEAP_FLAG_NONE,
+                &buffder_desc,
+                D3D12_RESOURCE_STATE_COMMON,
+                nullptr, IID_PPV_ARGS(temporary_buffer_.ReleaseAndGetAddressOf())), "create buffer resource");
+        }
+
+        // create convolution primitive
+        gemm_ = dnnl::matmul(matmul_desc);
+    }
+
+    std::uint32_t get_total_descriptor_count()override
+    {
+        // input_a, input_b, output
+        std::uint32_t ret = 3;
+        if (input_buffer_c_)
+        {
+            ret++;
+        }
+        if (temporary_buffer_)
+        {
+            ret++;
+        }
+        return ret;
+    }
+
+    void initialize(ID3D12GraphicsCommandList* cmd_list, D3D12_CPU_DESCRIPTOR_HANDLE cpu_handle, D3D12_GPU_DESCRIPTOR_HANDLE gpu_handle) override
+    {
+        ID3D12GraphicsCommandList4* cmd_list4 = nullptr;
+        throw_if_failed(cmd_list->QueryInterface(&cmd_list4), "cant cast d3d12 device to ID3D12Device5");
+        UmdD3d12CommandList cmd(cmd_list4);
+        dnnl::stream stream = dnnl::iumd_interop::make_stream(dnnl_engine_, &cmd);
+
+        base_cpu_handle_ = CD3DX12_CPU_DESCRIPTOR_HANDLE{ cpu_handle };
+        base_gpu_handle_ = CD3DX12_GPU_DESCRIPTOR_HANDLE{ gpu_handle };
+    }
+
+    void execute(ID3D12GraphicsCommandList* cmd_list) override
+    {
+        std::vector<std::pair<DescType, ID3D12Resource*>> resources_list;
+        resources_list.reserve(get_total_descriptor_count());
+        resources_list.push_back({ DescType::eUav, input_buffer_a_.Get() });
+        resources_list.push_back({ DescType::eUav, input_buffer_b_.Get() });
+        resources_list.push_back({ DescType::eUav, output_buffer_.Get() });
+        if (input_buffer_c_)
+        {
+            resources_list.push_back({ DescType::eUav, input_buffer_c_.Get() });
+        }
+        if (temporary_buffer_)
+        {
+            resources_list.push_back({ DescType::eUav, temporary_buffer_.Get() });
+        }
+        const auto gpu_handles = create_resource_views_and_handles(d3d12_device_, resources_list, base_cpu_handle_, base_gpu_handle_);
+
+        std::size_t res_idx = 0;
+        auto umd_input_a_memory_ = UmdD3d12Memory(gpu_handles[res_idx++]);
+        auto umd_input_b_memory_ = UmdD3d12Memory(gpu_handles[res_idx++]);
+        auto umd_output_memory_ = UmdD3d12Memory(gpu_handles[res_idx++]);
+        auto umd_input_c_memory_ = input_buffer_c_ ? UmdD3d12Memory(gpu_handles[res_idx++]) : UmdD3d12Memory();
+        auto umd_scratchpad_memory_ = temporary_buffer_ ? UmdD3d12Memory(gpu_handles[res_idx++]) : UmdD3d12Memory();
+
+        // stream is created in execute(...), because in MetaCommand cmd list object can be different from execute-to-execute
+        ID3D12GraphicsCommandList4* cmd_list4 = nullptr;
+        throw_if_failed(cmd_list->QueryInterface(&cmd_list4), "cant cast d3d12 device to ID3D12Device5");
+        UmdD3d12CommandList cmd(cmd_list4);
+        dnnl::stream stream = dnnl::iumd_interop::make_stream(dnnl_engine_, &cmd);
+        //stream.wait();
+    }
+
+private:
+    dnnl::memory create_dnnl_memory(const auto& desc, auto& umd_mem)
+    {
+        return dnnl::iumd_interop::make_memory(desc, dnnl_engine_, &umd_mem);
+    };
+
+private:
+    UmdD3d12Device device_;
+    dnnl::engine dnnl_engine_;
+
+    dnnl::matmul gemm_;
+
+    dnnl::memory::desc input_a_memory_desc_;
+    dnnl::memory::desc input_b_memory_desc_;
+    dnnl::memory::desc output_memory_desc_;
+    std::optional<dnnl::memory::desc> input_c_memory_desc_;
+    std::optional<dnnl::memory::desc> scratchpad_memory_desc_;
+
+    ComPtr<ID3D12Resource> temporary_buffer_;
+    ComPtr<ID3D12Resource> persistent_buffer_;  // ToDo: input_b can be managed, than it should be used for that
+
+    CD3DX12_CPU_DESCRIPTOR_HANDLE base_cpu_handle_;
+    CD3DX12_GPU_DESCRIPTOR_HANDLE base_gpu_handle_;
 };
 
 class GemmCmDispatcher : public GemmBaseDispatcher
