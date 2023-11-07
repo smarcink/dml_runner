@@ -31,7 +31,13 @@ inline dnnl::primitive_attr CreateEltwisePostOps(dnnl::algorithm Activation, flo
 
 inline void dump_buffer_to_file(const dnnl::memory& memory, const std::string& file_name)
 {
+    if (memory.get_desc().is_zero())
+    {
+        return;
+    }
+
     const auto copy_size = dimensions_product(memory.get_desc().get_dims()) * dnnl::memory::data_type_size(memory.get_desc().get_data_type());
+
     std::vector<std::byte> ret(copy_size);
     auto* mapped_out_filter = memory.map_data<uint8_t>();
     std::memcpy(ret.data(), mapped_out_filter, copy_size);

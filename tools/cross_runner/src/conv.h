@@ -840,6 +840,10 @@ private:
     {
         auto dump_buffer_to_file = [&](const auto& buffer, const auto& file_name)
         {
+            if (!buffer)
+            {
+                return;
+            }
             const auto bytes_width = buffer->GetDesc().Width;
             // readback data and validate
             auto readback_buffer = create_buffer(d3d12_device_, bytes_width, D3D12_HEAP_TYPE_READBACK, D3D12_RESOURCE_STATE_COPY_DEST);
