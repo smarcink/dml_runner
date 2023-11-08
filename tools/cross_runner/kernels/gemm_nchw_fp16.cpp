@@ -69,7 +69,8 @@ extern "C" _GENX_MAIN_ void gemm_nchw_fp16(
 				
 		
 	matrix<DT, TILE_M, TILE_N> accu_out = accu;  // if DT_ACCU == DT then compiler removes this line
-	accu_out *= DT(SCALE);
+	accu_out *= DT(ALPHA);
+	accu_out += DT(BETA);
 	
 	#pragma unroll
     for(uint32_t i = 0; i < TILE_M; i++)

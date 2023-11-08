@@ -381,28 +381,27 @@ public:
 
         std::vector<DML_BUFFER_BINDING> input_binds{};
         input_binds.push_back({ nullptr, 0, 0 });  // tensor a
+        
+        //tensor b
+        if (input_1_ && input_1_.GetOutputDesc().flags == DML_TENSOR_FLAG_OWNED_BY_DML)
+        {
+           input_binds.push_back({ resource_b, 0, resource_b->GetDesc().Width });
+        }
+       /*  else
+         {
+            input_binds.push_back({ nullptr, 0, 0 });
+         }*/
 
-        // temporarily commented out to only support QK_QKV
-        ////tensor b
-        //if (input_1_ && input_1_.GetOutputDesc().flags == DML_TENSOR_FLAG_OWNED_BY_DML)
-        //{
-        //    input_binds.push_back({ resource_b, 0, resource_b->GetDesc().Width });
-        //}
-        //else
-        //{
-        //    input_binds.push_back({ nullptr, 0, 0 });
-        //}
-
-        //// tensor c 
-        //if (input_2_ && input_2_->GetOutputDesc().flags == DML_TENSOR_FLAG_OWNED_BY_DML)
-        //{
-        //    assert(resource_c != nullptr);
-        //    input_binds.push_back({ resource_c, 0, resource_c->GetDesc().Width });
-        //}
-        //else
-        //{
-        //    input_binds.push_back({ nullptr, 0, 0 });
-        //}
+        // tensor c 
+        if (input_2_ && input_2_->GetOutputDesc().flags == DML_TENSOR_FLAG_OWNED_BY_DML)
+        {
+            assert(resource_c != nullptr);
+            input_binds.push_back({ resource_c, 0, resource_c->GetDesc().Width });
+        }
+      /*  else
+        {
+            input_binds.push_back({ nullptr, 0, 0 });
+        }*/
 
         DML_BUFFER_ARRAY_BINDING input_bind{};
         input_bind.BindingCount = static_cast<UINT>(input_binds.size());
@@ -1044,7 +1043,8 @@ public:
             add_define("SIZE_HEAD_SIZE", params_.shape_b.w);
         }
 
-        add_define("SCALE", params_.alpha);
+        add_define("ALPHA", params_.alpha);
+        add_define("BETA", params_.beta);
 
         add_define("DT", "half");
 
