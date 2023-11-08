@@ -44,7 +44,7 @@ struct META_COMMAND_INITIALIZE_CUSTOM_DESC
 //////////////////////////////////////////////////////////////////////////
 struct META_COMMAND_EXECUTE_CUSTOM_DESC
 {
-    D3D12_GPU_DESCRIPTOR_HANDLE Resources[10];
+    D3D12_GPU_DESCRIPTOR_HANDLE Resources[20];
 
     UINT64 ResourceCount;
     UINT64 RuntimeConstants;
@@ -77,6 +77,7 @@ public:
         UMD_SHADER_LANGUAGE language);
 
     bool set_kernel_arg(std::size_t index, const IUMDMemory* memory) override;
+    bool set_kernel_arg(std::size_t index, IUMDPipelineStateObject::ScalarArgType scalar) override;
 
     bool execute(ID3D12GraphicsCommandList4* cmd_list, const std::array<std::size_t, 3>& gws, const std::array<std::size_t, 3>& lws);
 
@@ -84,6 +85,7 @@ private:
     UmdD3d12Device* device_ = nullptr;
     ComPtr<ID3D12MetaCommand> mc_ = nullptr;
     std::unordered_map<std::size_t, const UmdD3d12Memory*> resources;
+    std::unordered_map<std::size_t, ScalarArgType> scalars;
 };
 
 

@@ -84,10 +84,17 @@ bool UmdD3d12PipelineStateObject::set_kernel_arg(std::size_t index, const IUMDMe
     return true;
 }
 
+bool UmdD3d12PipelineStateObject::set_kernel_arg(std::size_t index, IUMDPipelineStateObject::ScalarArgType scalar)
+{
+    scalars[index] = scalar;
+    return true;
+}
+
 bool UmdD3d12PipelineStateObject::execute(ID3D12GraphicsCommandList4* cmd_list, const std::array<std::size_t, 3>& gws, const std::array<std::size_t, 3>& lws)
 {
     assert(gws.size() == lws.size());
 
+    // [0] Calculate dispatch thread size
     META_COMMAND_EXECUTE_CUSTOM_DESC exec_desc{};
     for (std::size_t i = 0; i < gws.size(); i++)
     {
@@ -98,6 +105,7 @@ bool UmdD3d12PipelineStateObject::execute(ID3D12GraphicsCommandList4* cmd_list, 
         exec_desc.DispatchThreadGroup[i] = gws[i] / lws[i];
     }
 
+    // [1] Prepare resoruces pointer handles
     for (const auto& [idx, mem] : resources)
     {
         if (idx >= std::size(exec_desc.Resources))
@@ -109,13 +117,27 @@ bool UmdD3d12PipelineStateObject::execute(ID3D12GraphicsCommandList4* cmd_list, 
         exec_desc.ResourceCount++;
     }
 
-    cmd_list->ExecuteMetaCommand(mc_.Get(), &exec_desc, sizeof(exec_desc));
+    // [2] Build execution time constants 
+    std::vector<std::byte> execution_time_constants;
+    for (const auto& [idx, scalar] : scalars)
+    {
+        execution_time_constants.resize(execution_time_constants.size() + scalar.size);
+    }
+    if (execution_time_constants.size() % 4 != 0)
+    {
+        assert(!"Please use 4 byte aligned scalars for metacommand. ToDo: This can be workaround with proper padding and alignments!");
+        return false;
+    }
+    auto* ptr_to_copy_data = execution_time_constants.data();
+    for (const auto& [idx, scalar] : scalars)
+    {
+        std::memcpy(ptr_to_copy_data, scalar.data, scalar.size);
+        ptr_to_copy_data += scalar.size;
+    }
+    exec_desc.RuntimeConstantsCount += execution_time_constants.size() / 4;  // how many 4 bytes are packed in the buffer
+    exec_desc.RuntimeConstants = reinterpret_cast<UINT64>(execution_time_constants.data());
 
-    D3D12_RESOURCE_BARRIER barrier{};
-    barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
-    barrier.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;
-    barrier.UAV.pResource = nullptr;
-    cmd_list->ResourceBarrier(1, &barrier);
+    cmd_list->ExecuteMetaCommand(mc_.Get(), &exec_desc, sizeof(exec_desc));
     return true;
 }
 

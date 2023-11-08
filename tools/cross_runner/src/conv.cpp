@@ -22,7 +22,8 @@ inline dnnl::primitive_attr CreateEltwisePostOps(dnnl::algorithm Activation, flo
 
     if (Activation != dnnl::algorithm::undef)
     {
-        ops.append_eltwise(Activation, alpha, beta);
+        ops.append_eltwise(Activation
+            , alpha, beta);
         // create an attribute and set the corresponding post op
         attr.set_post_ops(ops);
     }

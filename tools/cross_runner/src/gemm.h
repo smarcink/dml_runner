@@ -973,7 +973,29 @@ public:
         throw_if_failed(cmd_list->QueryInterface(&cmd_list4), "cant cast d3d12 device to ID3D12Device5");
         UmdD3d12CommandList cmd(cmd_list4);
         dnnl::stream stream = dnnl::iumd_interop::make_stream(dnnl_engine_, &cmd);
-        //stream.wait();
+        
+        // memory resources are created in execute(...), because in MetaCommand these objects can be different from execute-to-execute
+        dnnl::memory input_memory = create_dnnl_memory(input_a_memory_desc_, umd_input_a_memory_);
+        dnnl::memory weights_memory = create_dnnl_memory(input_b_memory_desc_, umd_input_b_memory_);
+        dnnl::memory bias_memory;
+        if (input_c_memory_desc_)
+        {
+            bias_memory = create_dnnl_memory(input_c_memory_desc_.value(), umd_input_c_memory_);
+        }
+        dnnl::memory scratchpad_memory;
+        if (scratchpad_memory_desc_)
+        {
+            scratchpad_memory = create_dnnl_memory(scratchpad_memory_desc_.value(), umd_scratchpad_memory_);
+        }
+        dnnl::memory output_memory = create_dnnl_memory(output_memory_desc_, umd_output_memory_);
+
+        std::unordered_map<int, dnnl::memory> args;
+        args.insert({ DNNL_ARG_SRC, input_memory });
+        args.insert({ DNNL_ARG_WEIGHTS, weights_memory });
+        args.insert({ DNNL_ARG_BIAS, bias_memory });
+        args.insert({ DNNL_ARG_DST, output_memory });
+        args.insert({ DNNL_ARG_SCRATCHPAD, scratchpad_memory });
+        gemm_.execute(stream, args);
     }
 
 private:
