@@ -88,13 +88,14 @@ int main()
     CliOptions opts;
     CLI::App dml_runner_app{ "App to microbenchmark and developer dml kernels.", "DirectML runner." };
     dml_runner_app.add_option("--type", opts.node_type, "Name of the type of layer to run.")
-        ->required()->check(CLI::IsMember({ NodeType::eConvDml, NodeType::eConvCm, NodeType::eConvUmdD3d12, NodeType::eGemmDml, NodeType::eGemmCm, NodeType::eSoftmaxDml, NodeType::eSoftmaxCm, NodeType::eMvnDml, NodeType::eMvnCm, NodeType::eMemoryBandwidth }))->
+        ->required()->check(CLI::IsMember({ NodeType::eConvDml, NodeType::eConvCm, NodeType::eConvUmdD3d12, NodeType::eGemmDml, NodeType::eGemmCm, NodeType::eSoftmaxDml, NodeType::eSoftmaxCm, NodeType::eMvnDml, NodeType::eMvnCm, NodeType::eMemoryBandwidth, NodeType::eGemmUmdD3d12 }))->
         transform(CLI::Transformer(std::map<std::string, NodeType>{
             { "conv_dml", NodeType::eConvDml },
             { "conv_cm", NodeType::eConvCm },
             { "conv_umd_d3d12", NodeType::eConvUmdD3d12 },
             { "gemm_dml", NodeType::eGemmDml },
             { "gemm_cm", NodeType::eGemmCm },
+            { "gemm_umd_d3d12", NodeType::eGemmUmdD3d12 },
             { "softmax_dml", NodeType::eSoftmaxDml },
             { "softmax_cm", NodeType::eSoftmaxCm },
             { "mvn_dml", NodeType::eMvnDml },
@@ -185,6 +186,11 @@ int main()
         else if (opts.node_type == NodeType::eGemmCm)
         {
             node = std::make_unique<GemmCmDispatcher>(std::move(opts.gemm_opts), std::move(opts.gemm_cm_params),
+                intel_extension_d3d12, d3d12_device.Get(), dml_device.Get(), dml_command_recorder.Get(), command_list.Get());
+        }
+        else if (opts.node_type == NodeType::eGemmUmdD3d12)
+        {
+            node = std::make_unique<GemmUmdD3d12Dispatcher>(std::move(opts.gemm_opts),
                 intel_extension_d3d12, d3d12_device.Get(), dml_device.Get(), dml_command_recorder.Get(), command_list.Get());
         }
         else if (opts.node_type == NodeType::eConvDml)

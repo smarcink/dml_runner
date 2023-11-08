@@ -205,6 +205,7 @@ enum class NodeType
 {
     eGemmDml,
     eGemmCm,
+    eGemmUmdD3d12,
     eConvDml,
     eConvCm,
     eConvUmdD3d12,

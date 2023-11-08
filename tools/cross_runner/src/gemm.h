@@ -400,10 +400,6 @@ public:
             assert(resource_c != nullptr);
             input_binds.push_back({ resource_c, 0, resource_c->GetDesc().Width });
         }
-        else
-        {
-            input_binds.push_back({ nullptr, 0, 0 });
-        }
 
         DML_BUFFER_ARRAY_BINDING input_bind{};
         input_bind.BindingCount = static_cast<UINT>(input_binds.size());
@@ -861,7 +857,7 @@ private:
 class GemmUmdD3d12Dispatcher : public GemmBaseDispatcher
 {
 public:
-    GemmUmdD3d12Dispatcher(create_params_t&& params, IntelExtension& intc_ext, ID3D12Device* d3d12_device, ID3D12GraphicsCommandList* cmd_list, IDMLDevice* dml_device, IDMLCommandRecorder* dml_cmd_recorder)
+    GemmUmdD3d12Dispatcher(create_params_t&& params, IntelExtension& intc_ext, ID3D12Device* d3d12_device, IDMLDevice* dml_device, IDMLCommandRecorder* dml_cmd_recorder, ID3D12GraphicsCommandList* cmd_list)
         : GemmBaseDispatcher(std::move(params), d3d12_device, dml_device, dml_cmd_recorder, cmd_list)
         , device_(d3d12_device, intc_ext.get_info())
         , dnnl_engine_(dnnl::iumd_interop::make_engine(&device_))
