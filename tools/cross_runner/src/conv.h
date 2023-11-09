@@ -11,6 +11,35 @@
 #include <dnnl_iumd.hpp>
 #include "oneapi/dnnl/dnnl.hpp"
 
+namespace dnnl_conv_op
+{
+struct bindings_t
+{
+    dnnl_utils::binding_t input;
+    dnnl_utils::binding_t filter;
+    dnnl_utils::binding_t bias;
+};
+
+struct opts_t
+{
+    std::uint32_t inp_pad;
+    std::uint32_t out_pad;
+    TensorShape stride;
+    TensorShape output_shape;
+    DataType out_dt = DataType::eCount;
+    std::uint32_t activation_type;
+    float activation_alpha;
+    float activation_beta;
+    DataLayout out_layout = DataLayout::eCount;
+    bool force_winograd = false;
+
+    bool dump_weights = false;
+    bool dump_scratchpad = false;
+};
+std::vector<std::byte> convolution(const bindings_t& bindings, opts_t opts);
+}
+
+
 namespace gpu_op
 {
 class Convolution : public DirectMlBaseNode
@@ -214,35 +243,6 @@ private:
     DML_BUFFER_TENSOR_DESC tensor_out_desc_;
 };
 }
-
-namespace dnnl_conv_op
-{
-struct bindings_t
-{
-    dnnl_utils::binding_t input;
-    dnnl_utils::binding_t filter;
-    dnnl_utils::binding_t bias;
-};
-
-struct opts_t
-{
-    std::uint32_t inp_pad;
-    std::uint32_t out_pad;
-    TensorShape stride;
-    TensorShape output_shape;
-    DataType out_dt = DataType::eCount;
-    std::uint32_t activation_type;
-    float activation_alpha;
-    float activation_beta;
-    DataLayout out_layout = DataLayout::eCount;
-    bool force_winograd = false;
-
-    bool dump_weights = false;
-    bool dump_scratchpad = false;
-};
-std::vector<std::byte> convolution(const bindings_t& bindings, opts_t opts);
-}
-
 
 class ConvolutionBaseDispatcher : public NodeDispatcher
 {

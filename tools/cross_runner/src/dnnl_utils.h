@@ -7,6 +7,13 @@
 
 namespace dnnl_utils
 {
+struct binding_t
+{
+    const std::byte* data = nullptr;
+    DataType dt = DataType::eCount;
+    DataLayout layout = DataLayout::eCount;
+    TensorShape shape;
+};
 
 inline dnnl::memory::dim dimensions_product(const dnnl::memory::dims& dims)
 {
@@ -79,12 +86,12 @@ inline void dump_buffer_to_file(const dnnl::memory& memory, const std::string& f
     fout.close();
 }
 
-struct binding_t
+inline dnnl::memory create_dnnl_memory(const dnnl_utils::binding_t binding, dnnl::engine& engine)
 {
-    const std::byte* data = nullptr;
-    DataType dt = DataType::eCount;
-    DataLayout layout = DataLayout::eCount;
-    TensorShape shape;
-};
+    const auto dims = dnnl_utils::to_dnnl_dims(binding.shape);
+    const auto dt = dnnl_utils::to_dnnl_data_type(binding.dt);
+    const auto ft = dnnl_utils::to_dnnl_format(binding.layout);
+    return dnnl::memory({ dims, dt, ft }, engine);
+}
 
 }// namespace dnnl_utils

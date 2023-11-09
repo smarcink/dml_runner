@@ -29,6 +29,25 @@ enum class GemmType
     GemmType_SV_S_KV,
 };
 
+namespace dnnl_gemm_op
+{
+struct bindings_t
+{
+    dnnl_utils::binding_t input_a;
+    dnnl_utils::binding_t input_b;
+    dnnl_utils::binding_t input_c;
+};
+
+struct opts_t
+{
+    TensorShape output_shape;
+    DataType out_dt = DataType::eCount;
+    DataLayout out_layout = DataLayout::eCount;
+};
+std::vector<std::byte> gemm(const bindings_t& bindings, opts_t opts);
+}
+
+
 namespace
 {
 // a bit of hack :)>
@@ -669,9 +688,34 @@ public:
             D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
         command_list->ResourceBarrier(1, &readback_output_barrirer);
 
+        std::vector<std::byte> ref_untyped_result;
         if (params_.use_dnnl_for_reference_calculations)
         {
+            dnnl_gemm_op::bindings_t bindings{};
+            bindings.input_a.data = input_data_a_.data();
+            bindings.input_a.dt = params_.dt;
+            bindings.input_a.layout = params_.layout;
+            bindings.input_a.shape = params_.shape_a;
 
+            bindings.input_b.data = input_data_b_.data();
+            bindings.input_b.dt = params_.dt;
+            bindings.input_b.layout = params_.layout;
+            bindings.input_b.shape = params_.shape_b;
+
+            if (input_buffer_c_)
+            {
+                bindings.input_c.data = input_data_c_.data();
+                bindings.input_c.dt = params_.dt;
+                bindings.input_c.layout = params_.layout;
+                bindings.input_c.shape = params_.shape_c;
+            }
+
+            dnnl_gemm_op::opts_t opts{};
+            opts.out_dt = params_.dt;
+            opts.out_layout = params_.layout;
+            opts.output_shape = get_shape_output();
+
+            ref_untyped_result = dnnl_gemm_op::gemm(bindings, opts);
         }
         else   
         {
@@ -690,20 +734,19 @@ public:
             command_list->SetDescriptorHeaps(1, d3d12_descriptor_heaps);
             gemm_ref.record_execute(dml_cmd_recorder_, command_list, output_buffer_.Get(), input_buffer_a_.Get(), input_buffer_b_.Get(), input_buffer_c_.Get());
             close_execute_reset_wait(d3d12_device_, command_queue, command_allocator, command_list);
+
+            readback_output_barrirer = CD3DX12_RESOURCE_BARRIER::Transition(output_buffer_.Get(),
+                D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
+            command_list->ResourceBarrier(1, &readback_output_barrirer);
+            command_list->CopyResource(readback_buffer.Get(), output_buffer_.Get());
+            close_execute_reset_wait(d3d12_device_, command_queue, command_allocator, command_list);
+
+            ref_untyped_result.resize(tensor_out_bytes_width);
+            readback_mapped_ptr = nullptr;
+            readback_buffer->Map(0, nullptr, reinterpret_cast<void**>(&readback_mapped_ptr));
+            std::memcpy(ref_untyped_result.data(), readback_mapped_ptr, ref_untyped_result.size());
+            readback_buffer->Unmap(0, nullptr);
         }
-
-        readback_output_barrirer = CD3DX12_RESOURCE_BARRIER::Transition(output_buffer_.Get(),
-            D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
-        command_list->ResourceBarrier(1, &readback_output_barrirer);
-        command_list->CopyResource(readback_buffer.Get(), output_buffer_.Get());
-        close_execute_reset_wait(d3d12_device_, command_queue, command_allocator, command_list);
-
-        std::vector<std::byte> ref_untyped_result(tensor_out_bytes_width);
-        readback_mapped_ptr = nullptr;
-        readback_buffer->Map(0, nullptr, reinterpret_cast<void**>(&readback_mapped_ptr));
-        std::memcpy(ref_untyped_result.data(), readback_mapped_ptr, ref_untyped_result.size());
-        readback_buffer->Unmap(0, nullptr);
-
 
         if (params_.dt == DataType::eFp32)
         {

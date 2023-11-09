@@ -1,14 +1,6 @@
 #include "conv.h"
 #include "dnnl_utils.h"
 
-inline dnnl::memory create_dnnl_memory(const dnnl_utils::binding_t binding, dnnl::engine& engine)
-{
-    const auto dims = dnnl_utils::to_dnnl_dims(binding.shape);
-    const auto dt = dnnl_utils::to_dnnl_data_type(binding.dt);
-    const auto ft = dnnl_utils::to_dnnl_format(binding.layout);
-    return dnnl::memory({ dims, dt, ft }, engine);
-}
-
 inline dnnl::primitive_attr CreateEltwisePostOps(dnnl::algorithm Activation, float alpha, float beta)
 {
     // create a post-op with relu
@@ -38,7 +30,7 @@ std::vector<std::byte> dnnl_conv_op::convolution(const bindings_t& bindings, opt
     static dnnl::stream stream(engine);
     const auto engine_kind = engine.get_kind();
 
-    dnnl::set_jit_dump(true);
+    dnnl::set_jit_dump(false);
 
     stream.wait();  // just to be sure we can freely upload the input data    
 
