@@ -9,6 +9,7 @@ set(TARGET_SOURCES
     ${SOURCES_DIR}/layers_utils.h
     ${SOURCES_DIR}/dnnl_utils.h
     ${SOURCES_DIR}/gemm.h
+    ${SOURCES_DIR}/gemm.cpp
     ${SOURCES_DIR}/conv.h
     ${SOURCES_DIR}/conv.cpp
     ${SOURCES_DIR}/softmax.h

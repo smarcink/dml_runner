@@ -215,22 +215,13 @@ private:
 };
 }
 
-namespace cpu_op
+namespace dnnl_conv_op
 {
-
-struct binding_t
-{
-    const std::byte* data = nullptr;
-    DataType dt = DataType::eCount;
-    DataLayout layout = DataLayout::eCount;
-    TensorShape shape;
-};
-
 struct bindings_t
 {
-    binding_t input;
-    binding_t filter;
-    binding_t bias;
+    dnnl_utils::binding_t input;
+    dnnl_utils::binding_t filter;
+    dnnl_utils::binding_t bias;
 };
 
 struct opts_t
@@ -493,7 +484,7 @@ protected:
 
     std::vector<std::byte> get_dnnl_result() const
     {
-        cpu_op::bindings_t bindings{};
+        dnnl_conv_op::bindings_t bindings{};
         {
             bindings.input.data = input_data_.data();
             bindings.input.dt = params_.dt;
@@ -515,7 +506,7 @@ protected:
             bindings.bias.shape = TensorShape(params_.filter_shape.n, 1u, 1u, 1u);
         }
 
-        cpu_op::opts_t opts{};
+        dnnl_conv_op::opts_t opts{};
         opts.output_shape = get_output_shape();
         opts.inp_pad = params_.in_pad;
         opts.out_pad = params_.out_pad;
@@ -528,7 +519,7 @@ protected:
         opts.force_winograd = params_.algo_winograd;
         opts.dump_weights = dump_weights();
         opts.dump_scratchpad = dump_weights();
-        return cpu_op::convolution(bindings, opts);
+        return dnnl_conv_op::convolution(bindings, opts);
     }
 
 protected:
@@ -612,6 +603,7 @@ public:
         , umdd3d12_params_(std::move(umdd3d12_params))
         , dnnl_engine_(dnnl::iumd_interop::make_engine(&device_))
     {      
+        using namespace dnnl_utils;
         const dnnl::memory::dims pad{ params.in_pad, params.in_pad };
         const dnnl::memory::dims stride{ params.stride.h, params.stride.w };
 
@@ -649,7 +641,7 @@ public:
             dnnl::prop_kind::forward_inference,
             params_.algo_winograd ? dnnl::algorithm::convolution_winograd : dnnl::algorithm::convolution_direct,
             input_memory_desc_,
-            to_dnnl_mem_desc(params_.filter_shape, DataLayout::eWeightsLayoutStart, params_.dt),  // DataLayout::eWeightsLayoutStart  to allow oneDNNL to reorder the weights
+            dnnl_utils::to_dnnl_mem_desc(params_.filter_shape, DataLayout::eWeightsLayoutStart, params_.dt),  // DataLayout::eWeightsLayoutStart  to allow oneDNNL to reorder the weights
             bias_memory_desc_ ? bias_memory_desc_.value() : dnnl::memory::desc{},
             output_memory_desc_,
             stride,
@@ -738,7 +730,7 @@ public:
             auto umd_filter_input_mem = UmdD3d12Memory(gpu_handles[0]);
             auto umd_filter_reorder_mem = UmdD3d12Memory(gpu_handles[1]);
 
-            dnnl::memory filer_input_memory = create_dnnl_memory(to_dnnl_mem_desc(params_.filter_shape, params_.filter_layout, params_.dt), umd_filter_input_mem);
+            dnnl::memory filer_input_memory = create_dnnl_memory(dnnl_utils::to_dnnl_mem_desc(params_.filter_shape, params_.filter_layout, params_.dt), umd_filter_input_mem);
             dnnl::memory filer_reorder_memory = create_dnnl_memory(filter_memory_desc_, umd_filter_reorder_mem);
 
             std::unordered_map<int, dnnl::memory> args;

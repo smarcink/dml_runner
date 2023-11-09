@@ -447,9 +447,10 @@ public:
         float alpha = 1.0f;
         float beta = 0.0f;
 
-        bool fuse_softmax = false;
         bool b_managed = false;
         bool b_transposed = false;
+
+        bool use_dnnl_for_reference_calculations = false;
 
         inline static void add_cli_options(CLI::App* opts, create_params_t& params)
         {
@@ -467,7 +468,7 @@ public:
             opts->add_option("--alpha", params.alpha);
             opts->add_option("--beta", params.beta);
 
-            opts->add_flag("--fuse_softmax", params.fuse_softmax)->default_val(false);
+            opts->add_flag("--dnnl_reference", params.use_dnnl_for_reference_calculations)->default_val(false);
 
             opts->add_option("--gemm_type", params.type, "Name of the type of GEMM to run.")
                 ->check(CLI::IsMember({ GemmType::GemmType_AB, GemmType::GemmType_QK_QKV, GemmType::GemmType_SV_S_QKV, GemmType::GemmType_QK_Q_KV, GemmType::GemmType_SV_S_KV }))->
@@ -668,22 +669,28 @@ public:
             D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
         command_list->ResourceBarrier(1, &readback_output_barrirer);
 
-        gpu_op::Gemm gemm_ref(params_.type, to_dml_data_type(params_.dt), to_dml_tensor_policy(params_.layout),
-            params_.shape_a, params_.shape_b, params_.shape_c, get_shape_output(),
-             false /*params_.b_managed*/, params_.b_transposed, params_.alpha, params_.beta, dml_device_, d3d12_device_, true);
+        if (params_.use_dnnl_for_reference_calculations)
+        {
 
-        // bind descriptor heap
-        auto descriptor_heap = create_descriptor_heap(d3d12_device_, gemm_ref.get_total_descriptor_count());
-        ID3D12DescriptorHeap* d3d12_descriptor_heaps[] = { descriptor_heap.Get() };
-        command_list->SetDescriptorHeaps(1, d3d12_descriptor_heaps);
+        }
+        else   
+        {
+            gpu_op::Gemm gemm_ref(params_.type, to_dml_data_type(params_.dt), to_dml_tensor_policy(params_.layout),
+                params_.shape_a, params_.shape_b, params_.shape_c, get_shape_output(),
+                false /*params_.b_managed*/, params_.b_transposed, params_.alpha, params_.beta, dml_device_, d3d12_device_, true);
+            // bind descriptor heap
+            auto descriptor_heap = create_descriptor_heap(d3d12_device_, gemm_ref.get_total_descriptor_count());
+            ID3D12DescriptorHeap* d3d12_descriptor_heaps[] = { descriptor_heap.Get() };
+            command_list->SetDescriptorHeaps(1, d3d12_descriptor_heaps);
 
-        gemm_ref.create_binding_tables(descriptor_heap->GetCPUDescriptorHandleForHeapStart(), descriptor_heap->GetGPUDescriptorHandleForHeapStart());
-        gemm_ref.record_initialize(dml_cmd_recorder_, command_list, input_buffer_b_.Get(), input_buffer_c_.Get());
-        close_execute_reset_wait(d3d12_device_, command_queue, command_allocator, command_list);
+            gemm_ref.create_binding_tables(descriptor_heap->GetCPUDescriptorHandleForHeapStart(), descriptor_heap->GetGPUDescriptorHandleForHeapStart());
+            gemm_ref.record_initialize(dml_cmd_recorder_, command_list, input_buffer_b_.Get(), input_buffer_c_.Get());
+            close_execute_reset_wait(d3d12_device_, command_queue, command_allocator, command_list);
 
-        command_list->SetDescriptorHeaps(1, d3d12_descriptor_heaps);
-        gemm_ref.record_execute(dml_cmd_recorder_, command_list, output_buffer_.Get(), input_buffer_a_.Get(), input_buffer_b_.Get(), input_buffer_c_.Get());
-        close_execute_reset_wait(d3d12_device_, command_queue, command_allocator, command_list);
+            command_list->SetDescriptorHeaps(1, d3d12_descriptor_heaps);
+            gemm_ref.record_execute(dml_cmd_recorder_, command_list, output_buffer_.Get(), input_buffer_a_.Get(), input_buffer_b_.Get(), input_buffer_c_.Get());
+            close_execute_reset_wait(d3d12_device_, command_queue, command_allocator, command_list);
+        }
 
         readback_output_barrirer = CD3DX12_RESOURCE_BARRIER::Transition(output_buffer_.Get(),
             D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
@@ -696,12 +703,6 @@ public:
         readback_buffer->Map(0, nullptr, reinterpret_cast<void**>(&readback_mapped_ptr));
         std::memcpy(ref_untyped_result.data(), readback_mapped_ptr, ref_untyped_result.size());
         readback_buffer->Unmap(0, nullptr);
-
-        if (params_.fuse_softmax)
-        {
-            ref_untyped_result = cpu_op::softmax(3, ref_untyped_result.data(), get_shape_output(), params_.dt, params_.layout);
-        }
-
 
 
         if (params_.dt == DataType::eFp32)
@@ -862,6 +863,7 @@ public:
         , device_(d3d12_device, intc_ext.get_info())
         , dnnl_engine_(dnnl::iumd_interop::make_engine(&device_))
     {
+        using namespace dnnl_utils;
         const dnnl::primitive_attr attr = [](dnnl::algorithm act, float alpha, float beta)
         {
             // create a post-op with relu
@@ -1218,7 +1220,7 @@ public:
         add_define("SLICE_K", cm_params_.slice_k);
 
         add_define("ACCU_IS_FP32", cm_params_.fp32_accu);
-        add_define("FUSE_SOFTMAX", params_.fuse_softmax);
+        add_define("FUSE_SOFTMAX", false);
 
         // kernel compilation
         const auto dump_asm_str = cm_params_.dump_asm ? " -mdump_asm" : "";

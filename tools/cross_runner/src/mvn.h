@@ -163,12 +163,12 @@ private:
 
 }  // namespace gpu_op
 
-namespace cpu_op
+namespace dnnl_mvn_op
 {
 
 std::vector<std::byte> mvn(const TensorShape& in_out_shape, DataLayout in_out_layout, DataType in_out_datatype,
     const std::byte* input_data, const std::byte* scale_data, const std::byte* bias_data, const float epsilon);
-}  // namespace cpu_op
+}  // namespace dnnl_op
 
 
 class MvnBaseDispatcher : public NodeDispatcher
@@ -372,7 +372,7 @@ public:
         readback_buffer->Unmap(0, nullptr);
 
         // dnnl seems to be broken, use mvn non-mc path
-        //const auto dnnl_untyped_result = cpu_op::mvn(params_.shape, params_.layout, params_.dt, input_data_.data(), scale_data_.data(), bias_data_.data(), params_.epsilon);
+        //const auto dnnl_untyped_result = dnnl_op::mvn(params_.shape, params_.layout, params_.dt, input_data_.data(), scale_data_.data(), bias_data_.data(), params_.epsilon);
 
         if (params_.dt == DataType::eFp32)
         {

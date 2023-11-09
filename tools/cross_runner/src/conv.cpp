@@ -1,11 +1,11 @@
 #include "conv.h"
 #include "dnnl_utils.h"
 
-inline dnnl::memory create_dnnl_memory(const cpu_op::binding_t binding, dnnl::engine& engine)
+inline dnnl::memory create_dnnl_memory(const dnnl_utils::binding_t binding, dnnl::engine& engine)
 {
-    const auto dims = to_dnnl_dims(binding.shape);
-    const auto dt = to_dnnl_data_type(binding.dt);
-    const auto ft = to_dnnl_format(binding.layout);
+    const auto dims = dnnl_utils::to_dnnl_dims(binding.shape);
+    const auto dt = dnnl_utils::to_dnnl_data_type(binding.dt);
+    const auto ft = dnnl_utils::to_dnnl_format(binding.layout);
     return dnnl::memory({ dims, dt, ft }, engine);
 }
 
@@ -30,27 +30,10 @@ inline dnnl::primitive_attr CreateEltwisePostOps(dnnl::algorithm Activation, flo
     return attr;
 }
 
-inline void dump_buffer_to_file(const dnnl::memory& memory, const std::string& file_name)
+
+std::vector<std::byte> dnnl_conv_op::convolution(const bindings_t& bindings, opts_t opts)
 {
-    if (memory.get_desc().is_zero())
-    {
-        return;
-    }
-
-    const auto copy_size = dimensions_product(memory.get_desc().get_dims()) * dnnl::memory::data_type_size(memory.get_desc().get_data_type());
-
-    std::vector<std::byte> ret(copy_size);
-    auto* mapped_out_filter = memory.map_data<uint8_t>();
-    std::memcpy(ret.data(), mapped_out_filter, copy_size);
-    memory.unmap_data(mapped_out_filter);
-
-    std::ofstream fout(file_name, std::ios::out | std::ios::binary);
-    fout.write((char*)ret.data(), ret.size());
-    fout.close();
-}
-
-std::vector<std::byte> cpu_op::convolution(const bindings_t& bindings, opts_t opts)
-{
+    using namespace dnnl_utils;
     static dnnl::engine engine(dnnl::engine::kind::gpu, 0);
     static dnnl::stream stream(engine);
     const auto engine_kind = engine.get_kind();

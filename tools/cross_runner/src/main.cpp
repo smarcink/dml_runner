@@ -245,7 +245,6 @@ int main()
         ID3D12DescriptorHeap* d3d12_descriptor_heaps[] = { descriptor_heap.Get() };
         command_list->SetDescriptorHeaps(1, d3d12_descriptor_heaps);
 
-
         // initalize
         node->initialize(command_list.Get(), descriptor_heap->GetCPUDescriptorHandleForHeapStart(), descriptor_heap->GetGPUDescriptorHandleForHeapStart());
         close_execute_reset_wait(d3d12_device.Get(), command_queue.Get(), command_allocator.Get(), command_list.Get());

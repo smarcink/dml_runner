@@ -5,6 +5,9 @@
 #include <span>
 #include <cassert>
 
+namespace dnnl_utils
+{
+
 inline dnnl::memory::dim dimensions_product(const dnnl::memory::dims& dims)
 {
     return std::accumulate(dims.begin(), dims.end(), (dnnl::memory::dim)1, std::multiplies<dnnl::memory::dim>());
@@ -44,7 +47,7 @@ inline dnnl::memory::data_type to_dnnl_data_type(const DataType l)
 
 inline dnnl::memory::desc to_dnnl_mem_desc(const TensorShape& shape, const DataLayout& l, const DataType& t)
 {
-    return dnnl::memory::desc{ to_dnnl_dims(shape), to_dnnl_data_type(t), to_dnnl_format (l)};
+    return dnnl::memory::desc{ to_dnnl_dims(shape), to_dnnl_data_type(t), to_dnnl_format(l) };
 }
 
 inline void copy_to_dnnl_memory(dnnl::memory& dst_memory, const std::byte* input_data)
@@ -55,3 +58,33 @@ inline void copy_to_dnnl_memory(dnnl::memory& dst_memory, const std::byte* input
     std::memcpy(dest_ptr, input_data, copy_size);
     dst_memory.unmap_data(dest_ptr);
 }
+
+
+inline void dump_buffer_to_file(const dnnl::memory& memory, const std::string& file_name)
+{
+    if (memory.get_desc().is_zero())
+    {
+        return;
+    }
+
+    const auto copy_size = dimensions_product(memory.get_desc().get_dims()) * dnnl::memory::data_type_size(memory.get_desc().get_data_type());
+
+    std::vector<std::byte> ret(copy_size);
+    auto* mapped_out_filter = memory.map_data<uint8_t>();
+    std::memcpy(ret.data(), mapped_out_filter, copy_size);
+    memory.unmap_data(mapped_out_filter);
+
+    std::ofstream fout(file_name, std::ios::out | std::ios::binary);
+    fout.write((char*)ret.data(), ret.size());
+    fout.close();
+}
+
+struct binding_t
+{
+    const std::byte* data = nullptr;
+    DataType dt = DataType::eCount;
+    DataLayout layout = DataLayout::eCount;
+    TensorShape shape;
+};
+
+}// namespace dnnl_utils
