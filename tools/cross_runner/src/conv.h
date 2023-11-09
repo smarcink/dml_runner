@@ -649,6 +649,7 @@ public:
             pad,
             attr
         );
+        std::cout << "dnnl-umd kernel impl: " << conv_desc.impl_info_str() << std::endl;
 
         filter_memory_desc_ = conv_desc.query_md(dnnl::query::weights_md);
 

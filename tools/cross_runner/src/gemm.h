@@ -944,6 +944,8 @@ public:
             output_memory_desc_,
             attr
         );
+        std::cout << "dnnl-umd kernel impl: " << matmul_desc.impl_info_str() << std::endl;
+
         assert(matmul_desc.query_s64(dnnl::query::memory_consumption_s64) == 0);  // we provide scratchpad, so sanity check that primitive does not require any "hidden" memory
         scratchpad_memory_desc_.emplace(matmul_desc.query_md(dnnl::query::scratchpad_md));
         const auto temporary_resoruce_size = scratchpad_memory_desc_->get_size();
