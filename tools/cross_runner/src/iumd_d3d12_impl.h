@@ -12,61 +12,28 @@
 #include <cassert>
 #include <string>
 
-//////////////////////////////////////////////////////////////////////////
-// Custom Metacommand
-// {9C365CB6-AF13-49B6-BA9C-4B74E10FCDE1}
-static constexpr GUID GUID_CUSTOM =
-{ 0x9c365cb6, 0xaf13, 0x49b6,{ 0xba, 0x9c, 0x4b, 0x74, 0xe1, 0xf, 0xcd, 0xe1 } };
-
-//////////////////////////////////////////////////////////////////////////
-enum META_COMMAND_CUSTOM_SHADER_LANGUAGE : UINT64
-{
-    META_COMMAND_CUSTOM_SHADER_LANGUAGE_NONE = 0,
-    META_COMMAND_CUSTOM_SHADER_LANGUAGE_OCL
-};
-
-//////////////////////////////////////////////////////////////////////////
-struct META_COMMAND_CREATE_CUSTOM_DESC
-{
-    UINT64 ShaderSourceCode;
-    UINT64 ShaderSourceCodeSize;
-    UINT64 BuildOptionString;
-    UINT64 BuildOptionStringSize;
-    META_COMMAND_CUSTOM_SHADER_LANGUAGE ShaderLanguage;
-};
-
-//////////////////////////////////////////////////////////////////////////
-struct META_COMMAND_INITIALIZE_CUSTOM_DESC
-{
-    D3D12_GPU_DESCRIPTOR_HANDLE Resources[10];
-};
-
-//////////////////////////////////////////////////////////////////////////
-struct META_COMMAND_EXECUTE_CUSTOM_DESC
-{
-    D3D12_GPU_DESCRIPTOR_HANDLE Resources[20];
-
-    UINT64 ResourceCount;
-    UINT64 RuntimeConstants;
-    UINT64 RuntimeConstantsCount;
-
-    UINT64 DispatchThreadGroup[3];
-};
-
 class UmdD3d12Memory : public IUMDMemory
 {
 public:
     UmdD3d12Memory() = default;
     UmdD3d12Memory(D3D12_GPU_DESCRIPTOR_HANDLE handle)
-        : handle_(handle)
+        : UmdD3d12Memory(handle, 0ull)
     {
 
     }
+    // offset is a byte offset to beignning of the resource (set to non 0 only for "sub-buffers")
+    UmdD3d12Memory(D3D12_GPU_DESCRIPTOR_HANDLE handle, std::uint64_t offset)
+        : handle_(handle)
+        , offset_(offset)
+    {
+    }
 
     D3D12_GPU_DESCRIPTOR_HANDLE get_gpu_descriptor_handle() const { return handle_; }
+    std::uint64_t get_byte_offset() const { return offset_; }
 
 private:
     D3D12_GPU_DESCRIPTOR_HANDLE handle_;
+    std::uint64_t offset_;
 };
 
 class UmdD3d12PipelineStateObject : public IUMDPipelineStateObject

@@ -2,6 +2,50 @@
 
 #include <cassert>
 
+//////////////////////////////////////////////////////////////////////////
+// Custom Metacommand
+// {9C365CB6-AF13-49B6-BA9C-4B74E10FCDE1}
+static constexpr GUID GUID_CUSTOM =
+{ 0x9c365cb6, 0xaf13, 0x49b6,{ 0xba, 0x9c, 0x4b, 0x74, 0xe1, 0xf, 0xcd, 0xe1 } };
+
+//////////////////////////////////////////////////////////////////////////
+enum META_COMMAND_CUSTOM_SHADER_LANGUAGE : UINT64
+{
+    META_COMMAND_CUSTOM_SHADER_LANGUAGE_NONE = 0,
+    META_COMMAND_CUSTOM_SHADER_LANGUAGE_OCL,
+    META_COMMAND_CUSTOM_SHADER_LANGUAGE_OCL_STATELESS
+};
+
+//////////////////////////////////////////////////////////////////////////
+struct META_COMMAND_CREATE_CUSTOM_DESC
+{
+    UINT64 ShaderSourceCode;
+    UINT64 ShaderSourceCodeSize;
+    UINT64 BuildOptionString;
+    UINT64 BuildOptionStringSize;
+    META_COMMAND_CUSTOM_SHADER_LANGUAGE ShaderLanguage;
+};
+
+//////////////////////////////////////////////////////////////////////////
+struct META_COMMAND_INITIALIZE_CUSTOM_DESC
+{
+    D3D12_GPU_DESCRIPTOR_HANDLE Resources[10];
+};
+
+//////////////////////////////////////////////////////////////////////////
+struct META_COMMAND_EXECUTE_CUSTOM_DESC
+{
+    D3D12_GPU_DESCRIPTOR_HANDLE Resources[20];
+    UINT64                      ResourcesByteOffsets[20];  // works only in stateless mode
+
+    UINT64 ResourceCount;
+    UINT64 RuntimeConstants;
+    UINT64 RuntimeConstantsCount;
+
+    UINT64 DispatchThreadGroup[3];
+};
+
+
 UmdD3d12Device::UmdD3d12Device(ID3D12Device* device, INTCExtensionInfo extension_info)
     : impl_(device)
 {
@@ -65,6 +109,9 @@ UmdD3d12PipelineStateObject::UmdD3d12PipelineStateObject(UmdD3d12Device* device,
     case UMD_SHADER_LANGUAGE_OCL:
         create_desc.ShaderLanguage = META_COMMAND_CUSTOM_SHADER_LANGUAGE_OCL;
         break;
+    case UMD_SHADER_LANGUAGE_OCL_STATELESS:
+        create_desc.ShaderLanguage = META_COMMAND_CUSTOM_SHADER_LANGUAGE_OCL_STATELESS;
+        break;
     default:
         create_desc.ShaderLanguage = META_COMMAND_CUSTOM_SHADER_LANGUAGE_NONE;
         
@@ -113,7 +160,11 @@ bool UmdD3d12PipelineStateObject::execute(ID3D12GraphicsCommandList4* cmd_list, 
             assert(!"Please extend number of supported resources for custom metacommand!");
             return false;
         }
-        exec_desc.Resources[idx] = mem ? mem->get_gpu_descriptor_handle() : D3D12_GPU_DESCRIPTOR_HANDLE{};
+        if (mem)
+        {
+            exec_desc.Resources[idx] = mem->get_gpu_descriptor_handle();
+            exec_desc.ResourcesByteOffsets[idx] = mem->get_byte_offset();
+        }
         exec_desc.ResourceCount++;
     }
 
