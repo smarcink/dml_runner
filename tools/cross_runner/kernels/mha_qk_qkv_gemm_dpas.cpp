@@ -148,10 +148,10 @@ mha_qk_qkv_gemm_dpas(SurfaceIndex INMTXa[[type("buffer_t half")]], // 0 input qk
 	}
 	
 	vector<HALF, 32> result_hf16_CL1 = 0.0;
-	result11 *= HALF(SCALE);
-	result12 *= HALF(SCALE);
-	result13 *= HALF(SCALE);
-	result14 *= HALF(SCALE);
+	result11 *= HALF(ALPHA);
+	result12 *= HALF(ALPHA);
+	result13 *= HALF(ALPHA);
+	result14 *= HALF(ALPHA);
 	
 	#pragma unroll
 	for(int j = 0; j < SG_TILE_NUM_ROWS; j++)

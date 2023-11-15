@@ -19,8 +19,6 @@ enum class GemmType
     // q + kv
     GemmType_QK_Q_KV,
     GemmType_SV_S_KV,
-    //dpas
-    GemmType_QK_QKV_DPAS,
 };
 
 
@@ -125,7 +123,7 @@ public:
                 b_transposed ? DML_MATRIX_TRANSFORM_TRANSPOSE : DML_MATRIX_TRANSFORM_NONE,
                 alpha, beta);
         }
-        else if (type_ == GemmType::GemmType_QK_QKV || type_ == GemmType::GemmType_QK_QKV_DPAS )
+        else if (type_ == GemmType::GemmType_QK_QKV)
         {
             dml::TensorDesc::Dimensions dimensions_0;
             dimensions_0.push_back(shape_a.n);
@@ -453,6 +451,8 @@ public:
         bool b_managed = false;
         bool b_transposed = false;
 
+        bool use_dpas = false;
+
         inline static void add_cli_options(CLI::App* opts, create_params_t& params)
         {
             add_data_type_cli_option(opts, "--data_type", params.dt)->required();
@@ -464,7 +464,7 @@ public:
             opts->add_option("--shape_c", params.shape_c); 
 
             opts->add_flag("--b_transposed", params.b_transposed)->default_val(false);
-            opts->add_flag("--b_managed", params.b_managed)->default_val(false);;
+            opts->add_flag("--b_managed", params.b_managed)->default_val(false);
 
             opts->add_option("--alpha", params.alpha);
             opts->add_option("--beta", params.beta);
@@ -472,15 +472,16 @@ public:
             opts->add_flag("--fuse_softmax", params.fuse_softmax)->default_val(false);
 
             opts->add_option("--gemm_type", params.type, "Name of the type of GEMM to run.")
-                ->check(CLI::IsMember({ GemmType::GemmType_AB, GemmType::GemmType_QK_QKV, GemmType::GemmType_SV_S_QKV, GemmType::GemmType_QK_Q_KV, GemmType::GemmType_SV_S_KV, GemmType::GemmType_QK_QKV_DPAS}))->
+                ->check(CLI::IsMember({ GemmType::GemmType_AB, GemmType::GemmType_QK_QKV, GemmType::GemmType_SV_S_QKV, GemmType::GemmType_QK_Q_KV, GemmType::GemmType_SV_S_KV}))->
                 transform(CLI::Transformer(std::map<std::string, GemmType>{
                     { "ab", GemmType::GemmType_AB },
                     { "qk_qkv", GemmType::GemmType_QK_QKV },
                     { "sv_qkv", GemmType::GemmType_SV_S_QKV },
                     { "qk_q_kv", GemmType::GemmType_QK_Q_KV },
                     { "sv_s_kv", GemmType::GemmType_SV_S_KV },
-                    { "qk_qkv_dpas", GemmType::GemmType_QK_QKV_DPAS },
             }, CLI::ignore_case))->required();
+
+            opts-> add_flag("--use_dpas", params.use_dpas)->default_val(false);
 
         }
     };
@@ -504,7 +505,7 @@ public:
             assert(!input_data_a_.empty());
             assert(!input_data_b_.empty());
         }
-        else if (params_.type == GemmType::GemmType_QK_QKV || params_.type == GemmType::GemmType_QK_QKV_DPAS)
+        else if (params_.type == GemmType::GemmType_QK_QKV)
         {
             assert(params_.shape_a.get_dims_count() == 5);
             assert(params_.shape_b.get_dims_count() == 0);
@@ -760,7 +761,7 @@ protected:
         {
             return params_.shape_a.h;
         }
-        else if (params_.type == GemmType::GemmType_QK_QKV || params_.type == GemmType::GemmType_QK_QKV_DPAS || params_.type == GemmType::GemmType_QK_Q_KV)
+        else if (params_.type == GemmType::GemmType_QK_QKV  || params_.type == GemmType::GemmType_QK_Q_KV)
         {
             return params_.shape_a.c;
         }
@@ -774,7 +775,7 @@ protected:
         {
             return params_.shape_a.w;
         }
-        else if (params_.type == GemmType::GemmType_QK_QKV || params_.type == GemmType::GemmType_QK_QKV_DPAS )
+        else if (params_.type == GemmType::GemmType_QK_QKV)
         {
             return params_.shape_a.w;
         }
@@ -792,7 +793,7 @@ protected:
         {
             return params_.b_transposed ? params_.shape_b.h : params_.shape_b.w;
         }
-        else if (params_.type == GemmType::GemmType_QK_QKV || params_.type == GemmType::GemmType_QK_QKV_DPAS )
+        else if (params_.type == GemmType::GemmType_QK_QKV )
         {
             return params_.shape_a.c;
         }
@@ -926,8 +927,7 @@ public:
             cm_params_.lws[2] = cm_params_.slice_k;
 #endif
         }
-        else if (params_.type == GemmType::GemmType_QK_QKV ||
-            params_.type == GemmType::GemmType_QK_QKV_DPAS)
+        else if (params_.type == GemmType::GemmType_QK_QKV)
         {
 #if 0
             cm_params_.large_grf = true;
@@ -1026,7 +1026,7 @@ public:
         add_define("SIZE_N", N);
 
 
-        if (params_.type == GemmType::GemmType_QK_QKV || params_.type == GemmType::GemmType_QK_QKV_DPAS)
+        if (params_.type == GemmType::GemmType_QK_QKV)
         {
             add_define("SIZE_BATCH", params_.shape_a.n);
             add_define("SIZE_SEQ_LEN", params_.shape_a.c);
@@ -1070,14 +1070,22 @@ public:
             std::cout << build_options_final << std::endl;
         }
 
-        auto kernel_source_content = [](GemmType type)
+        auto kernel_source_content = [](GemmType type, bool dpas_flag)
         {
             std::string path = "";
             switch (type)
             {
             case GemmType::GemmType_AB: path = "gemm_nchw_fp16.cpp"; break;
-            case GemmType::GemmType_QK_QKV: path = "mha_qk_qkv_gemm_fp16.cpp"; break;
-            case GemmType::GemmType_QK_QKV_DPAS: path = "mha_qk_qkv_gemm_dpas.cpp"; break;
+            case GemmType::GemmType_QK_QKV:
+            {
+                if(dpas_flag == true)
+                {
+                    path = "mha_qk_qkv_gemm_dpas.cpp";
+                }else{
+                    path = "mha_qk_qkv_gemm_fp16.cpp";
+                }       
+                 break;
+            }
             case GemmType::GemmType_SV_S_QKV: path = "mha_sv_s_qkv_gemm_fp16.cpp";  break;
             case GemmType::GemmType_SV_S_KV: path = "mha_sv_s_kv_gemm_fp16.cpp";  break;
             case GemmType::GemmType_QK_Q_KV: path = "mha_qk_q_kv_gemm_fp16.cpp";  break;
@@ -1092,7 +1100,7 @@ public:
                 throw std::runtime_error(msg);
             }
             return std::string((std::istreambuf_iterator<char>(file)), (std::istreambuf_iterator<char>()));
-        }(params_.type);
+        }(params_.type,params_.use_dpas);
 
         CD3DX12_SHADER_BYTECODE byte_code;
         byte_code.pShaderBytecode = kernel_source_content.data();
@@ -1169,18 +1177,19 @@ public:
             }
             else if (params_.type == GemmType::GemmType_QK_QKV)
             {
-              
-                    gws_x = get_N() / cm_params_.tile_n;  // n first
-                    gws_y = get_M() / cm_params_.tile_m;  // m second
-                    gws_z = get_batch() * get_channels() * cm_params_.slice_k;
-
-            }
-            else if(params_.type == GemmType::GemmType_QK_QKV_DPAS)
-            {
+                if(params_.use_dpas)
+                {
                     gws_x = 8;
                     gws_y = 2;
                     gws_z = 16;
 
+                }
+                else
+                {
+                    gws_x = get_N() / cm_params_.tile_n;  // n first
+                    gws_y = get_M() / cm_params_.tile_m;  // m second
+                    gws_z = get_batch() * get_channels() * cm_params_.slice_k;
+                }
             }
             else
             {

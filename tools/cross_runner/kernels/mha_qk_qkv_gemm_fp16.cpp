@@ -246,7 +246,7 @@ extern "C" _GENX_MAIN_ void mha_qk_qkv_gemm(
 				
 		
 	matrix<DT, TILE_M, TILE_N> accu_out = accu;  // if DT_ACCU == DT then compiler removes this line
-	accu_out *= DT(SCALE);
+	accu_out *= DT(ALPHA);
     for(uint32_t i = 0; i < TILE_M; i++)
     {
         vector_ref<uint32_t, output_store_size> accu_0_packed = accu_out.select<1, 1, TILE_N, 1>(i, 0).format<uint32_t>();
