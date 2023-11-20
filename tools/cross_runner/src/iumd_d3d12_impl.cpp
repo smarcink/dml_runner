@@ -124,10 +124,10 @@ UmdD3d12PipelineStateObject::UmdD3d12PipelineStateObject(UmdD3d12Device* device,
     //dev5->CheckFeatureSupport(D3D12_FEATURE_QUERY_META_COMMAND, &query, sizeof(query));
 }
 
-bool UmdD3d12PipelineStateObject::set_kernel_arg(std::size_t index, const IUMDMemory* memory)
+bool UmdD3d12PipelineStateObject::set_kernel_arg(std::size_t index, const IUMDMemory* memory, std::size_t base_offset)
 {
     auto typed_mem = memory ? dynamic_cast<const UmdD3d12Memory*>(memory) : nullptr;
-    resources[index] = typed_mem;
+    resources[index] = { typed_mem, base_offset };
     return true;
 }
 
@@ -160,10 +160,11 @@ bool UmdD3d12PipelineStateObject::execute(ID3D12GraphicsCommandList4* cmd_list, 
             assert(!"Please extend number of supported resources for custom metacommand!");
             return false;
         }
-        if (mem)
+        const auto& [mem_ptr, base_offset] = mem;
+        if (mem_ptr)
         {
-            exec_desc.Resources[idx] = mem->get_gpu_descriptor_handle();
-            exec_desc.ResourcesByteOffsets[idx] = mem->get_byte_offset();
+            exec_desc.Resources[idx] = mem_ptr->get_gpu_descriptor_handle();
+            exec_desc.ResourcesByteOffsets[idx] = base_offset;
         }
         exec_desc.ResourceCount++;
     }
