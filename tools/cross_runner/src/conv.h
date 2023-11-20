@@ -710,7 +710,7 @@ public:
     {
         // input, output, weights, bias
         std::uint32_t ret = 3;
-        if (bias_buffer_)
+        if (bias_memory_desc_.has_value())
         {
             ret++;
         }
@@ -754,7 +754,6 @@ public:
         // weights reorder
         if (reorder_weights_)
         { 
-
             auto umd_filter_input_mem = UmdD3d12Memory(gpu_handles[0]);
             auto umd_filter_reorder_mem = UmdD3d12Memory(gpu_handles[1]);
 
@@ -795,9 +794,9 @@ public:
         resources_list.push_back({ DescType::eUav, input_buffer_.Get() });
         resources_list.push_back({ DescType::eUav, reorder_weights_ ? persistent_buffer_.Get() : filter_buffer_.Get() });
         resources_list.push_back({ DescType::eUav, output_buffer_.Get() });
-        if (use_bias())
+        if (use_bias() && bias_buffer_ && !reorder_bias_)
         {
-            resources_list.push_back({ DescType::eUav, reorder_bias_ ? persistent_buffer_.Get() : bias_buffer_.Get() });
+            resources_list.push_back({ DescType::eUav,  bias_buffer_.Get() });
         }
         if (temporary_buffer_)
         {
@@ -809,7 +808,16 @@ public:
         auto umd_input_memory = UmdD3d12Memory(gpu_handles[res_idx++]);
         auto umd_filter_memory = UmdD3d12Memory(gpu_handles[res_idx++]);
         auto umd_output_memory = UmdD3d12Memory(gpu_handles[res_idx++]);
-        auto umd_bias_memory = use_bias() ? UmdD3d12Memory(gpu_handles[res_idx++]) : UmdD3d12Memory();
+        UmdD3d12Memory umd_bias_memory = UmdD3d12Memory(); // use_bias() ? UmdD3d12Memory(gpu_handles[res_idx++]) :
+        if (use_bias() && persistent_buffer_ && reorder_bias_)
+        {
+            // persitent resources shader with filter memory;
+            umd_bias_memory = umd_filter_memory;
+        }
+        else if (use_bias() && bias_buffer_ && !reorder_bias_)
+        {
+            umd_bias_memory = UmdD3d12Memory(gpu_handles[res_idx++]);
+        }
         auto umd_scratchpad_memory = temporary_buffer_ ? UmdD3d12Memory(gpu_handles[res_idx++]) : UmdD3d12Memory();
 
         // stream is created in execute(...), because in MetaCommand cmd list object can be different from execute-to-execute
