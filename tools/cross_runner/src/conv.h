@@ -633,7 +633,7 @@ public:
 
         if (!params_.no_bias)
         {
-            bias_memory_desc_.emplace(to_dnnl_mem_desc(TensorShape{ params_.filter_shape.n, 1, 1, 1 }, DataLayout::eNCHW, params_.dt));
+            bias_memory_desc_.emplace(to_dnnl_mem_desc(TensorShape{ params_.filter_shape.n, 0, 0, 0}, DataLayout::eO, params_.dt));
         }
         
         const auto conv_desc = dnnl::convolution_forward::primitive_desc(
@@ -719,15 +719,19 @@ public:
         base_cpu_handle_ = CD3DX12_CPU_DESCRIPTOR_HANDLE{ cpu_handle };
         base_gpu_handle_ = CD3DX12_GPU_DESCRIPTOR_HANDLE{ gpu_handle };
 
+        std::vector<std::pair<DescType, ID3D12Resource*>> resources_list;
+        resources_list.reserve(2);
+        resources_list.push_back({ DescType::eUav, filter_buffer_.Get() });
+        resources_list.push_back({ DescType::eUav, persistent_buffer_.Get() });
+        if (bias_buffer_)
+        {
+            resources_list.push_back({ DescType::eUav, bias_buffer_.Get() });
+        }
+        const auto gpu_handles = create_resource_views_and_handles(d3d12_device_, resources_list, base_cpu_handle_, base_gpu_handle_);
+
         // weights reorder
         if (reorder_weights_)
-        {
-            std::vector<std::pair<DescType, ID3D12Resource*>> resources_list;
-            resources_list.reserve(2);
-            resources_list.push_back({ DescType::eUav, filter_buffer_.Get() });
-            resources_list.push_back({ DescType::eUav, persistent_buffer_.Get() });
-            const auto gpu_handles = create_resource_views_and_handles(d3d12_device_, resources_list, base_cpu_handle_, base_gpu_handle_);
-
+        { 
             auto umd_filter_input_mem = UmdD3d12Memory(gpu_handles[0]);
             auto umd_filter_reorder_mem = UmdD3d12Memory(gpu_handles[1]);
 
@@ -740,6 +744,23 @@ public:
 
             reorder_weights_.execute(stream, args);
         }
+
+        if (bias_buffer_ && reorder_bias_)
+        {
+            auto umd_bias_input_mem = UmdD3d12Memory(gpu_handles[2]);
+            auto umd_bias_reorder_mem = UmdD3d12Memory(gpu_handles[1]);
+            const auto bias_desc = dnnl_utils::to_dnnl_mem_desc(TensorShape{ params_.filter_shape.n, 1, 1, 1 }, DataLayout::eNCHW, params_.dt);
+            // this is just a copy from user provided bias to metacommand manged persitent resource 
+            dnnl::memory bias_input_memory = create_dnnl_memory(bias_desc, umd_bias_input_mem);
+            dnnl::memory bias_reorder_memory = create_dnnl_memory(bias_desc, umd_bias_reorder_mem);
+
+            std::unordered_map<int, dnnl::memory> args;
+            args.insert({ DNNL_ARG_SRC, bias_input_memory });
+            args.insert({ DNNL_ARG_DST, bias_reorder_memory });
+
+            reorder_bias_.execute(stream, args);
+        }
+
     }
 
     void execute(ID3D12GraphicsCommandList* cmd_list) override
@@ -751,7 +772,7 @@ public:
         resources_list.push_back({ DescType::eUav, output_buffer_.Get() });
         if (use_bias())
         {
-            resources_list.push_back({ DescType::eUav, bias_buffer_.Get() });
+            resources_list.push_back({ DescType::eUav, reorder_bias_ ? persistent_buffer_.Get() : bias_buffer_.Get() });
         }
         if (temporary_buffer_)
         {
@@ -860,6 +881,7 @@ private:
 
     dnnl::convolution_forward convolution_;
     dnnl::reorder reorder_weights_;
+    dnnl::reorder reorder_bias_;  // metacommand copy bias data to persistent buffer
 
     dnnl::memory::desc input_memory_desc_;
     dnnl::memory::desc filter_memory_desc_;

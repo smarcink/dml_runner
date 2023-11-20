@@ -127,6 +127,7 @@ enum class DataLayout
 
     // weights layouts
     eWeightsLayoutStart = 1000,
+    eO, // for bias
     eOIYX,          // nchw and oiyx layouts are the same format, this is just to express it with proper name
     eIO_i8_o8_i2,  // layout for 1x1 fp16 CM simd8 dpas kernel
 

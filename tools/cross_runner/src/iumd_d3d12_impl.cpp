@@ -124,10 +124,10 @@ UmdD3d12PipelineStateObject::UmdD3d12PipelineStateObject(UmdD3d12Device* device,
     //dev5->CheckFeatureSupport(D3D12_FEATURE_QUERY_META_COMMAND, &query, sizeof(query));
 }
 
-bool UmdD3d12PipelineStateObject::set_kernel_arg(std::size_t index, const IUMDMemory* memory, std::size_t base_offset)
+bool UmdD3d12PipelineStateObject::set_kernel_arg(std::size_t index, const IUMDMemory* memory, std::size_t offset)
 {
     auto typed_mem = memory ? dynamic_cast<const UmdD3d12Memory*>(memory) : nullptr;
-    resources[index] = { typed_mem, base_offset };
+    resources[index] = { typed_mem, offset };
     return true;
 }
 
@@ -153,18 +153,18 @@ bool UmdD3d12PipelineStateObject::execute(ID3D12GraphicsCommandList4* cmd_list, 
     }
 
     // [1] Prepare resoruces pointer handles
-    for (const auto& [idx, mem] : resources)
+    for (const auto& [idx, memory] : resources)
     {
         if (idx >= std::size(exec_desc.Resources))
         {
             assert(!"Please extend number of supported resources for custom metacommand!");
             return false;
         }
-        const auto& [mem_ptr, base_offset] = mem;
+        const auto& [mem_ptr, runtime_offset] = memory;
         if (mem_ptr)
         {
             exec_desc.Resources[idx] = mem_ptr->get_gpu_descriptor_handle();
-            exec_desc.ResourcesByteOffsets[idx] = base_offset;
+            exec_desc.ResourcesByteOffsets[idx] = mem_ptr->get_base_offset() + runtime_offset;
         }
         exec_desc.ResourceCount++;
     }

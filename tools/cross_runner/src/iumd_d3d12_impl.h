@@ -16,15 +16,17 @@ class UmdD3d12Memory : public IUMDMemory
 {
 public:
     UmdD3d12Memory() = default;
-    UmdD3d12Memory(D3D12_GPU_DESCRIPTOR_HANDLE handle)
+    UmdD3d12Memory(D3D12_GPU_DESCRIPTOR_HANDLE handle, std::size_t base_offset = 0)
         : handle_(handle)
+        , base_offset_(base_offset)
     {
     }
 
     D3D12_GPU_DESCRIPTOR_HANDLE get_gpu_descriptor_handle() const { return handle_; }
-
+    std::size_t get_base_offset() const { return base_offset_; }
 private:
     D3D12_GPU_DESCRIPTOR_HANDLE handle_;
+    std::size_t base_offset_;
 };
 
 class UmdD3d12PipelineStateObject : public IUMDPipelineStateObject
@@ -34,7 +36,8 @@ public:
         const char* code_string, const char* build_options,
         UMD_SHADER_LANGUAGE language);
 
-    bool set_kernel_arg(std::size_t index, const IUMDMemory* memory, std::size_t base_offset = 0) override;
+    // "offset" is a runtime offset added to "base_offset" of the resource 
+    bool set_kernel_arg(std::size_t index, const IUMDMemory* memory, std::size_t offset) override;
     bool set_kernel_arg(std::size_t index, IUMDPipelineStateObject::ScalarArgType scalar) override;
 
     bool execute(ID3D12GraphicsCommandList4* cmd_list, const std::array<std::size_t, 3>& gws, const std::array<std::size_t, 3>& lws);
