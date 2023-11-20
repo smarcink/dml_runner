@@ -653,7 +653,15 @@ public:
 
         filter_memory_desc_ = conv_desc.query_md(dnnl::query::weights_md);
 
-        const auto persistent_resource_size = filter_memory_desc_.get_size();
+        const auto persistent_resource_size = [&]()
+        {
+            auto ret = filter_memory_desc_.get_size();
+            if (use_bias())
+            {
+                ret += bias_memory_desc_->get_size();
+            }
+            return ret;
+        }();
         if (persistent_resource_size != 0)
         {
             const auto heap_props = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
@@ -688,6 +696,14 @@ public:
         // ToDo: check if reorder needs scratchpad memory??
         dnnl::reorder::primitive_desc reorder_desc(dnnl_engine_, to_dnnl_mem_desc(params_.filter_shape, params_.filter_layout, params_.dt), dnnl_engine_, filter_memory_desc_);
         reorder_weights_ = dnnl::reorder(reorder_desc);
+
+        if (use_bias())
+        {
+            assert(bias_memory_desc_.has_value());
+            // mimic copy shader from metacommand
+            dnnl::reorder::primitive_desc reorder_desc(dnnl_engine_, *bias_memory_desc_, dnnl_engine_, *bias_memory_desc_);
+            reorder_bias_ = dnnl::reorder(reorder_desc);
+        }
     }
 
     std::uint32_t get_total_descriptor_count()override
@@ -719,11 +735,17 @@ public:
         base_cpu_handle_ = CD3DX12_CPU_DESCRIPTOR_HANDLE{ cpu_handle };
         base_gpu_handle_ = CD3DX12_GPU_DESCRIPTOR_HANDLE{ gpu_handle };
 
+        if (!reorder_weights_ && !reorder_bias_)
+        {
+            // early exit, as no reordering needed
+            return;
+        }
+
         std::vector<std::pair<DescType, ID3D12Resource*>> resources_list;
         resources_list.reserve(2);
         resources_list.push_back({ DescType::eUav, filter_buffer_.Get() });
         resources_list.push_back({ DescType::eUav, persistent_buffer_.Get() });
-        if (bias_buffer_)
+        if (use_bias())
         {
             resources_list.push_back({ DescType::eUav, bias_buffer_.Get() });
         }
@@ -732,6 +754,7 @@ public:
         // weights reorder
         if (reorder_weights_)
         { 
+
             auto umd_filter_input_mem = UmdD3d12Memory(gpu_handles[0]);
             auto umd_filter_reorder_mem = UmdD3d12Memory(gpu_handles[1]);
 
@@ -745,14 +768,16 @@ public:
             reorder_weights_.execute(stream, args);
         }
 
-        if (bias_buffer_ && reorder_bias_)
+        if (use_bias() && reorder_bias_)
         {
-            auto umd_bias_input_mem = UmdD3d12Memory(gpu_handles[2]);
-            auto umd_bias_reorder_mem = UmdD3d12Memory(gpu_handles[1]);
+            const auto persitent_resoruce_base_offset = filter_memory_desc_.get_size();
+
+            auto umd_bias_input_mem = UmdD3d12Memory(gpu_handles[2]);   // bias input
+            auto umd_bias_reorder_mem = UmdD3d12Memory(gpu_handles[1]); // persitent output
             const auto bias_desc = dnnl_utils::to_dnnl_mem_desc(TensorShape{ params_.filter_shape.n, 1, 1, 1 }, DataLayout::eNCHW, params_.dt);
             // this is just a copy from user provided bias to metacommand manged persitent resource 
             dnnl::memory bias_input_memory = create_dnnl_memory(bias_desc, umd_bias_input_mem);
-            dnnl::memory bias_reorder_memory = create_dnnl_memory(bias_desc, umd_bias_reorder_mem);
+            dnnl::memory bias_reorder_memory = create_dnnl_memory(bias_desc, umd_bias_reorder_mem, persitent_resoruce_base_offset);
 
             std::unordered_map<int, dnnl::memory> args;
             args.insert({ DNNL_ARG_SRC, bias_input_memory });
@@ -781,11 +806,11 @@ public:
         const auto gpu_handles = create_resource_views_and_handles(d3d12_device_, resources_list, base_cpu_handle_, base_gpu_handle_);
 
         std::size_t res_idx = 0;
-        auto umd_input_memory_ = UmdD3d12Memory(gpu_handles[res_idx++]);
-        auto umd_filter_memory_ = UmdD3d12Memory(gpu_handles[res_idx++]);
-        auto umd_output_memory_ = UmdD3d12Memory(gpu_handles[res_idx++]);
-        auto umd_bias_memory_ = use_bias() ? UmdD3d12Memory(gpu_handles[res_idx++]) : UmdD3d12Memory();
-        auto umd_scratchpad_memory_ = temporary_buffer_ ? UmdD3d12Memory(gpu_handles[res_idx++]) : UmdD3d12Memory();
+        auto umd_input_memory = UmdD3d12Memory(gpu_handles[res_idx++]);
+        auto umd_filter_memory = UmdD3d12Memory(gpu_handles[res_idx++]);
+        auto umd_output_memory = UmdD3d12Memory(gpu_handles[res_idx++]);
+        auto umd_bias_memory = use_bias() ? UmdD3d12Memory(gpu_handles[res_idx++]) : UmdD3d12Memory();
+        auto umd_scratchpad_memory = temporary_buffer_ ? UmdD3d12Memory(gpu_handles[res_idx++]) : UmdD3d12Memory();
 
         // stream is created in execute(...), because in MetaCommand cmd list object can be different from execute-to-execute
         ID3D12GraphicsCommandList4* cmd_list4 = nullptr;
@@ -794,19 +819,19 @@ public:
         dnnl::stream stream = dnnl::iumd_interop::make_stream(dnnl_engine_, &cmd);
 
         // memory resources are created in execute(...), because in MetaCommand these objects can be different from execute-to-execute
-        dnnl::memory input_memory = create_dnnl_memory(input_memory_desc_, umd_input_memory_);
-        dnnl::memory filter_memory = create_dnnl_memory(filter_memory_desc_, umd_filter_memory_);
+        dnnl::memory input_memory = create_dnnl_memory(input_memory_desc_, umd_input_memory);
+        dnnl::memory filter_memory = create_dnnl_memory(filter_memory_desc_, umd_filter_memory);
         std::optional<dnnl::memory> bias_memory;
         if (use_bias())
         {
-            bias_memory.emplace(create_dnnl_memory(bias_memory_desc_.value(), umd_bias_memory_));
+            bias_memory.emplace(create_dnnl_memory(bias_memory_desc_.value(), umd_bias_memory, filter_memory_desc_.get_size()));
         }
         std::optional<dnnl::memory> scratchpad_memory;
         if (scratchpad_memory_desc_)
         {
-            scratchpad_memory.emplace(create_dnnl_memory(scratchpad_memory_desc_.value(), umd_scratchpad_memory_));
+            scratchpad_memory.emplace(create_dnnl_memory(scratchpad_memory_desc_.value(), umd_scratchpad_memory));
         }
-        dnnl::memory output_memory = create_dnnl_memory(output_memory_desc_, umd_output_memory_);
+        dnnl::memory output_memory = create_dnnl_memory(output_memory_desc_, umd_output_memory);
 
         std::unordered_map<int, dnnl::memory> args;
         args.insert( { DNNL_ARG_SRC, input_memory });
@@ -825,9 +850,9 @@ public:
     }
 
 private:
-    dnnl::memory create_dnnl_memory(const auto& desc, auto& umd_mem)
+    dnnl::memory create_dnnl_memory(const auto& desc, auto& umd_mem, std::size_t offset = 0)
     {
-        return dnnl::iumd_interop::make_memory(desc, dnnl_engine_, &umd_mem);
+        return dnnl::iumd_interop::make_memory(desc, dnnl_engine_, &umd_mem, offset);
     };
 
     ConformanceResult validate_conformance(ID3D12CommandQueue* command_queue,

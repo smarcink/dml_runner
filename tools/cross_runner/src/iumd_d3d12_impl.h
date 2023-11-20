@@ -16,17 +16,14 @@ class UmdD3d12Memory : public IUMDMemory
 {
 public:
     UmdD3d12Memory() = default;
-    UmdD3d12Memory(D3D12_GPU_DESCRIPTOR_HANDLE handle, std::size_t base_offset = 0)
+    UmdD3d12Memory(D3D12_GPU_DESCRIPTOR_HANDLE handle)
         : handle_(handle)
-        , base_offset_(base_offset)
     {
     }
 
     D3D12_GPU_DESCRIPTOR_HANDLE get_gpu_descriptor_handle() const { return handle_; }
-    std::size_t get_base_offset() const { return base_offset_; }
 private:
     D3D12_GPU_DESCRIPTOR_HANDLE handle_;
-    std::size_t base_offset_;
 };
 
 class UmdD3d12PipelineStateObject : public IUMDPipelineStateObject

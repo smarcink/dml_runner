@@ -160,11 +160,11 @@ bool UmdD3d12PipelineStateObject::execute(ID3D12GraphicsCommandList4* cmd_list, 
             assert(!"Please extend number of supported resources for custom metacommand!");
             return false;
         }
-        const auto& [mem_ptr, runtime_offset] = memory;
+        const auto& [mem_ptr, base_offset] = memory;
         if (mem_ptr)
         {
             exec_desc.Resources[idx] = mem_ptr->get_gpu_descriptor_handle();
-            exec_desc.ResourcesByteOffsets[idx] = mem_ptr->get_base_offset() + runtime_offset;
+            exec_desc.ResourcesByteOffsets[idx] = base_offset;
         }
         exec_desc.ResourceCount++;
     }
