@@ -228,6 +228,17 @@ inline void randomize_linear_container_float(std::mt19937& gen, std::uniform_rea
     }
 }
 
+
+inline void fill_with_constant_linear_container_float(std::span<std::byte> container, float value)
+{
+    using Dt = float;
+    auto* ptr = reinterpret_cast<Dt*>(container.data());
+    for (auto i = 0; i < container.size() / sizeof(Dt); i++)
+    {
+        ptr[i] = value;
+    }
+}
+
 inline void randomize_linear_container_half(std::mt19937& gen, std::uniform_real_distribution<float>& dist, std::span<std::byte> container)
 {
     using Dt = Half;

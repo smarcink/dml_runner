@@ -577,12 +577,14 @@ public:
         {
             randomize_linear_container_float(random_generator, uniform_distribution, input_data_a_);
             randomize_linear_container_float(random_generator, uniform_distribution, input_data_b_);
+            //fill_with_constant_linear_container_float(input_data_c_, 1.0f);
             randomize_linear_container_float(random_generator, uniform_distribution, input_data_c_);
         }
         else if (params_.dt == DataType::eFp16)
         {
             randomize_linear_container_half(random_generator, uniform_distribution, input_data_a_);
             randomize_linear_container_half(random_generator, uniform_distribution, input_data_b_);
+            //fill_with_constant_linear_container_float(input_data_c_, 1.0f);
             randomize_linear_container_half(random_generator, uniform_distribution, input_data_c_);
         }
         else
@@ -940,7 +942,7 @@ public:
         dnnl::matmul::primitive_desc matmul_desc(dnnl_engine_,
             input_a_memory_desc_,
             input_b_memory_desc_,
-            input_c_memory_desc_ ? *input_c_memory_desc_ : dnnl::memory::desc{},
+            input_c_memory_desc_.has_value() ? *input_c_memory_desc_ : dnnl::memory::desc{},
             output_memory_desc_,
             attr
         );
@@ -1025,12 +1027,12 @@ public:
         dnnl::memory input_memory = create_dnnl_memory(input_a_memory_desc_, umd_input_a_memory_);
         dnnl::memory weights_memory = create_dnnl_memory(input_b_memory_desc_, umd_input_b_memory_);
         dnnl::memory bias_memory;
-        if (input_c_memory_desc_)
+        if (input_c_memory_desc_.has_value())
         {
             bias_memory = create_dnnl_memory(input_c_memory_desc_.value(), umd_input_c_memory_);
         }
         dnnl::memory scratchpad_memory;
-        if (scratchpad_memory_desc_)
+        if (scratchpad_memory_desc_.has_value())
         {
             scratchpad_memory = create_dnnl_memory(scratchpad_memory_desc_.value(), umd_scratchpad_memory_);
         }
@@ -1041,7 +1043,10 @@ public:
         args.insert({ DNNL_ARG_WEIGHTS, weights_memory });
         args.insert({ DNNL_ARG_BIAS, bias_memory });
         args.insert({ DNNL_ARG_DST, output_memory });
-        args.insert({ DNNL_ARG_SCRATCHPAD, scratchpad_memory });
+        if (scratchpad_memory_desc_.has_value())
+        {
+            args.insert({ DNNL_ARG_SCRATCHPAD, scratchpad_memory });
+        }
         gemm_.execute(stream, args);
     }
 

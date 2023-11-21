@@ -33,14 +33,18 @@ struct META_COMMAND_INITIALIZE_CUSTOM_DESC
 };
 
 //////////////////////////////////////////////////////////////////////////
+    //////////////////////////////////////////////////////////////////////////
 struct META_COMMAND_EXECUTE_CUSTOM_DESC
 {
     D3D12_GPU_DESCRIPTOR_HANDLE Resources[20];
     UINT64                      ResourcesByteOffsets[20];  // works only in stateless mode
-
     UINT64 ResourceCount;
-    UINT64 RuntimeConstants;
-    UINT64 RuntimeConstantsCount;
+
+    UINT64 RuntimeConstants;      // buffer with constants
+    UINT64 RuntimeConstantsCount; // how many runtime constants in total
+    UINT64 RuntimeConstantsBindOffsets[40];  // offsets in bindings
+    UINT64 RuntimeConstantsMemorySizes[40];   // how much bytes to copy
+    UINT64 RuntimeConstantsMemoryOffsets[40]; // bytes offset into "RuntimeConstants" buffer
 
     UINT64 DispatchThreadGroup[3];
 };
@@ -171,9 +175,13 @@ bool UmdD3d12PipelineStateObject::execute(ID3D12GraphicsCommandList4* cmd_list, 
 
     // [2] Build execution time constants 
     std::vector<std::byte> execution_time_constants;
-    for (const auto& [idx, scalar] : scalars)
+    for (std::size_t i = 0; const auto& [idx, scalar] : scalars)
     {
+        exec_desc.RuntimeConstantsBindOffsets[i] = idx;
+        exec_desc.RuntimeConstantsMemorySizes[i] = scalar.size;
+        exec_desc.RuntimeConstantsMemoryOffsets[i] = execution_time_constants.size();;
         execution_time_constants.resize(execution_time_constants.size() + scalar.size);
+        i++;
     }
     if (execution_time_constants.size() % 4 != 0)
     {
@@ -186,7 +194,7 @@ bool UmdD3d12PipelineStateObject::execute(ID3D12GraphicsCommandList4* cmd_list, 
         std::memcpy(ptr_to_copy_data, scalar.data, scalar.size);
         ptr_to_copy_data += scalar.size;
     }
-    exec_desc.RuntimeConstantsCount += execution_time_constants.size() / 4;  // how many 4 bytes are packed in the buffer
+    exec_desc.RuntimeConstantsCount = scalars.size();
     exec_desc.RuntimeConstants = reinterpret_cast<UINT64>(execution_time_constants.data());
 
     cmd_list->ExecuteMetaCommand(mc_.Get(), &exec_desc, sizeof(exec_desc));
