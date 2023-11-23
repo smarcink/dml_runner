@@ -419,6 +419,10 @@ public:
             assert(resource_c != nullptr);
             input_binds.push_back({ resource_c, 0, resource_c->GetDesc().Width });
         }
+        else if (input_2_)
+        {
+            input_binds.push_back({ nullptr, 0, 0 });
+        }
 
         DML_BUFFER_ARRAY_BINDING input_bind{};
         input_bind.BindingCount = static_cast<UINT>(input_binds.size());
@@ -739,17 +743,18 @@ public:
             gemm_ref.record_execute(dml_cmd_recorder_, command_list, output_buffer_.Get(), input_buffer_a_.Get(), input_buffer_b_.Get(), input_buffer_c_.Get());
             close_execute_reset_wait(d3d12_device_, command_queue, command_allocator, command_list);
 
+            auto readback_buffer_ref = create_buffer(d3d12_device_, tensor_out_bytes_width, D3D12_HEAP_TYPE_READBACK, D3D12_RESOURCE_STATE_COPY_DEST);
             readback_output_barrirer = CD3DX12_RESOURCE_BARRIER::Transition(output_buffer_.Get(),
                 D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
             command_list->ResourceBarrier(1, &readback_output_barrirer);
-            command_list->CopyResource(readback_buffer.Get(), output_buffer_.Get());
+            command_list->CopyResource(readback_buffer_ref.Get(), output_buffer_.Get());
             close_execute_reset_wait(d3d12_device_, command_queue, command_allocator, command_list);
 
             ref_untyped_result.resize(tensor_out_bytes_width);
-            readback_mapped_ptr = nullptr;
-            readback_buffer->Map(0, nullptr, reinterpret_cast<void**>(&readback_mapped_ptr));
-            std::memcpy(ref_untyped_result.data(), readback_mapped_ptr, ref_untyped_result.size());
-            readback_buffer->Unmap(0, nullptr);
+            void* readback_mapped_ptr_ref = nullptr;
+            readback_buffer_ref->Map(0, nullptr, reinterpret_cast<void**>(&readback_mapped_ptr_ref));
+            std::memcpy(ref_untyped_result.data(), readback_mapped_ptr_ref, ref_untyped_result.size());
+            readback_buffer_ref->Unmap(0, nullptr);
         }
 
         if (params_.dt == DataType::eFp32)
@@ -914,7 +919,7 @@ public:
         , dnnl_engine_(dnnl::iumd_interop::make_engine(&device_))
     {
         using namespace dnnl_utils;
-        const dnnl::primitive_attr attr = [](dnnl::algorithm act, float alpha, float beta)
+        const dnnl::primitive_attr attr = [](bool scale_source)
         {
             // create a post-op with relu
             dnnl::post_ops ops;
@@ -925,15 +930,13 @@ public:
             // set scratchpad mode to user provided
             attr.set_scratchpad_mode(dnnl::scratchpad_mode::user);
 
-            if (act != dnnl::algorithm::undef)
+            if (scale_source)
             {
-                ops.append_eltwise(act, alpha, beta);
-                // create an attribute and set the corresponding post op
-                attr.set_post_ops(ops);
+                // alpha
+                attr.set_scales_mask(DNNL_ARG_SRC, 0);
             }
-
             return attr;
-        }(dnnl::algorithm::undef, 0.0f, 0.0f);
+        }(has_alpha_scaling());
 
 
         input_a_memory_desc_ = to_dnnl_mem_desc(params_.shape_a, params_.layout, params_.dt);
@@ -989,7 +992,16 @@ public:
 
         assert(matmul_desc.query_s64(dnnl::query::memory_consumption_s64) == 0);  // we provide scratchpad, so sanity check that primitive does not require any "hidden" memory
         scratchpad_memory_desc_.emplace(matmul_desc.query_md(dnnl::query::scratchpad_md));
-        const auto temporary_resoruce_size = scratchpad_memory_desc_->get_size();
+        const auto temporary_resoruce_size = [&]()
+        {
+            auto ret = scratchpad_memory_desc_->get_size();
+            if (has_alpha_scaling())
+            {
+                assert(ret == 0 && "Not tested path: scratchpad + copy alpha yet! Potential bugs ahead.");
+                ret += sizeof(float);
+            }
+            return ret;
+        }(); 
         if (temporary_resoruce_size != 0)
         {
             const auto heap_props = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
@@ -1017,6 +1029,19 @@ public:
             dnnl::reorder::primitive_desc reorder_desc(dnnl_engine_, to_dnnl_mem_desc(params_.shape_c, params_.layout, params_.dt), dnnl_engine_, input_c_memory_desc_.value());
             reorder_input_c_ = dnnl::reorder(reorder_desc);
         }
+
+        if (has_alpha_scaling())
+        {
+            const char* code_string =
+                "__attribute__((reqd_work_group_size(1,1, 1))) "
+                "__kernel void copy_alpha(__global float* output, float alpha) "
+                "{"
+                "output[0] = alpha;"
+                "}";
+
+            copy_alpha_shader_ = device_.create_pipeline_state_object("copy_alpha", code_string, "", UMD_SHADER_LANGUAGE_OCL_STATELESS);
+            assert(copy_alpha_shader_);
+        }
     }
 
     std::uint32_t get_total_descriptor_count()override
@@ -1028,6 +1053,10 @@ public:
             ret++;
         }
         if (temporary_buffer_)
+        {
+            ret++;
+        }
+        if (persistent_buffer_)
         {
             ret++;
         }
@@ -1044,15 +1073,18 @@ public:
         base_cpu_handle_ = CD3DX12_CPU_DESCRIPTOR_HANDLE{ cpu_handle };
         base_gpu_handle_ = CD3DX12_GPU_DESCRIPTOR_HANDLE{ gpu_handle };
 
-        if (!reorder_input_b_ && !reorder_input_c_)
+        if (!reorder_input_b_ && !reorder_input_c_ && !copy_alpha_shader_)
         {
-            // early exit, as no reordering needed
+            // early exit, as no reordering needed or copy shader for alpha value not needed
             return;
         }
 
         std::vector<std::pair<DescType, ID3D12Resource*>> resources_list;
-        resources_list.reserve(3);
-        resources_list.push_back({ DescType::eUav, persistent_buffer_.Get() });
+        resources_list.reserve(4);
+        if (persistent_buffer_)
+        {
+            resources_list.push_back({ DescType::eUav, persistent_buffer_.Get() });
+        }
         if (reorder_input_b_)
         {
             resources_list.push_back({ DescType::eUav, input_buffer_b_.Get() });
@@ -1061,10 +1093,14 @@ public:
         {
             resources_list.push_back({ DescType::eUav, input_buffer_c_.Get() });
         }
+        if (has_alpha_scaling())
+        {
+            resources_list.push_back({ DescType::eUav, temporary_buffer_.Get() });
+        }
         const auto gpu_handles = create_resource_views_and_handles(d3d12_device_, resources_list, base_cpu_handle_, base_gpu_handle_);
         
         std::size_t rsc_idx = 0;
-        auto umd_persistent_mem = UmdD3d12Memory(gpu_handles[rsc_idx++]);
+        auto umd_persistent_mem = persistent_buffer_ ? UmdD3d12Memory(gpu_handles[rsc_idx++]) : UmdD3d12Memory{};
 
         // weights reorder
         if (reorder_input_b_)
@@ -1096,6 +1132,15 @@ public:
 
             reorder_input_c_.execute(stream, args);
         }
+
+        if (has_alpha_scaling())
+        {
+            auto umd_scratchpad_memory = UmdD3d12Memory(gpu_handles[rsc_idx++]);
+            copy_alpha_shader_->set_kernel_arg(0, &umd_scratchpad_memory);
+            copy_alpha_shader_->set_kernel_arg(1, IUMDPipelineStateObject::ScalarArgType{ 4, &params_.alpha });
+            cmd.dispatch(copy_alpha_shader_, { 1, 1, 1 }, { 1, 1, 1 }, {}, nullptr);
+        }
+
     }
 
     void execute(ID3D12GraphicsCommandList* cmd_list) override
@@ -1166,6 +1211,12 @@ public:
         {
             args.insert({ DNNL_ARG_SCRATCHPAD, scratchpad_memory });
         }
+
+        if (has_alpha_scaling())
+        {
+            args.insert({ DNNL_ARG_ATTR_SCALES | DNNL_ARG_SRC, scratchpad_memory });
+        }
+
         gemm_.execute(stream, args);
     }
 
@@ -1176,12 +1227,20 @@ private:
     };
 
 private:
+    bool has_alpha_scaling() const
+    {
+        return params_.alpha != 1.0f;
+    }
+
+private:
     UmdD3d12Device device_;
     dnnl::engine dnnl_engine_;
 
     dnnl::matmul gemm_;
     dnnl::reorder reorder_input_b_;
     dnnl::reorder reorder_input_c_;
+
+    IUMDPipelineStateObject* copy_alpha_shader_;
 
     dnnl::memory::desc input_a_memory_desc_;
     dnnl::memory::desc input_b_memory_desc_;
