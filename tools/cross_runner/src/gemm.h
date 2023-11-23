@@ -468,7 +468,7 @@ public:
 
 
         float alpha = 1.0f;
-        float beta = 0.0f;
+        float beta = 1.0f;
 
         bool b_managed = false;
         bool c_managed = false;
@@ -490,8 +490,8 @@ public:
             opts->add_flag("--b_managed", params.b_managed)->default_val(false);;
             opts->add_flag("--c_managed", params.c_managed)->default_val(false);;
 
-            opts->add_option("--alpha", params.alpha);
-            opts->add_option("--beta", params.beta);
+            opts->add_option("--alpha", params.alpha)->default_val(1.0f);
+            opts->add_option("--beta", params.beta)->default_val(1.0f);
 
             opts->add_flag("--dnnl_reference", params.use_dnnl_for_reference_calculations)->default_val(false);
 
@@ -1240,7 +1240,7 @@ private:
     dnnl::reorder reorder_input_b_;
     dnnl::reorder reorder_input_c_;
 
-    IUMDPipelineStateObject* copy_alpha_shader_;
+    IUMDPipelineStateObject* copy_alpha_shader_ = nullptr;
 
     dnnl::memory::desc input_a_memory_desc_;
     dnnl::memory::desc input_b_memory_desc_;
