@@ -467,6 +467,7 @@ public:
         float beta = 0.0f;
 
         bool b_managed = false;
+        bool c_managed = false;
         bool b_transposed = false;
 
         bool use_dnnl_for_reference_calculations = false;
@@ -483,6 +484,7 @@ public:
 
             opts->add_flag("--b_transposed", params.b_transposed)->default_val(false);
             opts->add_flag("--b_managed", params.b_managed)->default_val(false);;
+            opts->add_flag("--c_managed", params.b_managed)->default_val(false);;
 
             opts->add_option("--alpha", params.alpha);
             opts->add_option("--beta", params.beta);
@@ -874,7 +876,10 @@ public:
             params_.alpha, params_.beta,
             dml_device, d3d12_device, false)
     {
-
+        if (params_.c_managed)
+        {
+            assert(params_.shape_c.get_dims_count() > 0 && "Cant use c_managed if shape of c is not defined!");
+        }
     }
 
 
@@ -930,23 +935,57 @@ public:
             return attr;
         }(dnnl::algorithm::undef, 0.0f, 0.0f);
 
+
         input_a_memory_desc_ = to_dnnl_mem_desc(params_.shape_a, params_.layout, params_.dt);
-        input_b_memory_desc_ = to_dnnl_mem_desc(params_.shape_b, params_.layout, params_.dt);
+        const auto input_b_memory_desc = to_dnnl_mem_desc(params_.shape_b, params_.b_managed ? DataLayout::eWeightsLayoutStart : params_.layout, params_.dt);
         output_memory_desc_ = to_dnnl_mem_desc(get_shape_output(), params_.layout, params_.dt);
 
-        if (input_buffer_c_)
+        const auto input_c_memory_desc = [&]()
         {
-            input_c_memory_desc_.emplace(to_dnnl_mem_desc(params_.shape_c, params_.layout, params_.dt));
-        }
+             return input_buffer_c_ ? to_dnnl_mem_desc(params_.shape_c, params_.c_managed ? DataLayout::eWeightsLayoutStart : params_.layout, params_.dt) : dnnl::memory::desc{};
+        }();
 
         dnnl::matmul::primitive_desc matmul_desc(dnnl_engine_,
             input_a_memory_desc_,
-            input_b_memory_desc_,
-            input_c_memory_desc_.has_value() ? *input_c_memory_desc_ : dnnl::memory::desc{},
+            input_b_memory_desc,
+            input_c_memory_desc,
             output_memory_desc_,
             attr
         );
         std::cout << "dnnl-umd kernel impl: " << matmul_desc.impl_info_str() << std::endl;
+
+        input_b_memory_desc_ = matmul_desc.query_md(dnnl::query::weights_md, 0);
+        if (input_buffer_c_)
+        {
+            input_c_memory_desc_.emplace(matmul_desc.query_md(dnnl::query::weights_md, 1));
+        }
+        const auto persistent_resource_size = [&]()
+        {
+            std::size_t ret = 0ull;
+            if (params_.b_managed)
+            {
+                ret += input_b_memory_desc_.get_size();
+            }
+
+            if (params_.c_managed)
+            {
+                assert(input_c_memory_desc_.has_value());
+                ret += input_c_memory_desc_->get_size();
+            }
+            return ret;
+        }();
+
+        if (persistent_resource_size != 0)
+        {
+            const auto heap_props = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
+            const auto buffder_desc = CD3DX12_RESOURCE_DESC::Buffer(persistent_resource_size, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+            throw_if_failed(d3d12_device_->CreateCommittedResource(
+                &heap_props,
+                D3D12_HEAP_FLAG_NONE,
+                &buffder_desc,
+                D3D12_RESOURCE_STATE_COMMON,
+                nullptr, IID_PPV_ARGS(persistent_buffer_.ReleaseAndGetAddressOf())), "create buffer resource");
+        }
 
         assert(matmul_desc.query_s64(dnnl::query::memory_consumption_s64) == 0);  // we provide scratchpad, so sanity check that primitive does not require any "hidden" memory
         scratchpad_memory_desc_.emplace(matmul_desc.query_md(dnnl::query::scratchpad_md));
@@ -965,6 +1004,19 @@ public:
 
         // create convolution primitive
         gemm_ = dnnl::matmul(matmul_desc);
+
+        if (params_.b_managed)
+        {
+            dnnl::reorder::primitive_desc reorder_desc(dnnl_engine_, to_dnnl_mem_desc(params_.shape_b, params_.layout, params_.dt), dnnl_engine_, input_b_memory_desc_);
+            reorder_input_b_ = dnnl::reorder(reorder_desc);
+        }
+
+        if (params_.c_managed)
+        {
+            assert(input_c_memory_desc_.has_value());
+            dnnl::reorder::primitive_desc reorder_desc(dnnl_engine_, to_dnnl_mem_desc(params_.shape_c, params_.layout, params_.dt), dnnl_engine_, input_c_memory_desc_.value());
+            reorder_input_c_ = dnnl::reorder(reorder_desc);
+        }
     }
 
     std::uint32_t get_total_descriptor_count()override
@@ -991,6 +1043,61 @@ public:
 
         base_cpu_handle_ = CD3DX12_CPU_DESCRIPTOR_HANDLE{ cpu_handle };
         base_gpu_handle_ = CD3DX12_GPU_DESCRIPTOR_HANDLE{ gpu_handle };
+
+        if (!reorder_input_b_ && !reorder_input_c_)
+        {
+            // early exit, as no reordering needed
+            return;
+        }
+
+        std::vector<std::pair<DescType, ID3D12Resource*>> resources_list;
+        resources_list.reserve(3);
+        resources_list.push_back({ DescType::eUav, persistent_buffer_.Get() });
+        if (reorder_input_b_)
+        {
+            resources_list.push_back({ DescType::eUav, input_buffer_b_.Get() });
+        }
+        if (reorder_input_c_)
+        {
+            resources_list.push_back({ DescType::eUav, input_buffer_c_.Get() });
+        }
+        const auto gpu_handles = create_resource_views_and_handles(d3d12_device_, resources_list, base_cpu_handle_, base_gpu_handle_);
+        
+        std::size_t rsc_idx = 0;
+        auto umd_persistent_mem = UmdD3d12Memory(gpu_handles[rsc_idx++]);
+
+        // weights reorder
+        if (reorder_input_b_)
+        {  
+            auto umd_input_mem = UmdD3d12Memory(gpu_handles[rsc_idx++]);
+
+            dnnl::memory input_memory = create_dnnl_memory(dnnl_utils::to_dnnl_mem_desc(params_.shape_b, params_.layout, params_.dt), umd_input_mem);
+            dnnl::memory reorder_memory = create_dnnl_memory(input_b_memory_desc_, umd_persistent_mem);
+
+            std::unordered_map<int, dnnl::memory> args;
+            args.insert({ DNNL_ARG_SRC, input_memory });
+            args.insert({ DNNL_ARG_DST, reorder_memory });
+
+            reorder_input_b_.execute(stream, args);
+            input_buffer_b_ = nullptr; // input not longer valid to use
+        }
+
+        // weights reorder
+        if (reorder_input_c_)
+        {
+            assert(input_c_memory_desc_.has_value());
+            auto umd_input_mem = UmdD3d12Memory(gpu_handles[rsc_idx++]);
+
+            dnnl::memory input_memory = create_dnnl_memory(dnnl_utils::to_dnnl_mem_desc(params_.shape_c, params_.layout, params_.dt), umd_input_mem);
+            dnnl::memory reorder_memory = create_dnnl_memory(input_c_memory_desc_.value(), umd_persistent_mem, reorder_input_b_ ? input_b_memory_desc_.get_size() : 0ull);
+
+            std::unordered_map<int, dnnl::memory> args;
+            args.insert({ DNNL_ARG_SRC, input_memory });
+            args.insert({ DNNL_ARG_DST, reorder_memory });
+
+            reorder_input_c_.execute(stream, args);
+            input_buffer_c_ = nullptr; // input not longer valid to use
+        }
     }
 
     void execute(ID3D12GraphicsCommandList* cmd_list) override
@@ -998,7 +1105,7 @@ public:
         std::vector<std::pair<DescType, ID3D12Resource*>> resources_list;
         resources_list.reserve(get_total_descriptor_count());
         resources_list.push_back({ DescType::eUav, input_buffer_a_.Get() });
-        resources_list.push_back({ DescType::eUav, input_buffer_b_.Get() });
+        resources_list.push_back({ DescType::eUav, reorder_input_b_ ? persistent_buffer_.Get() : input_buffer_b_.Get()});
         resources_list.push_back({ DescType::eUav, output_buffer_.Get() });
         if (input_buffer_c_)
         {
@@ -1051,9 +1158,9 @@ public:
     }
 
 private:
-    dnnl::memory create_dnnl_memory(const auto& desc, auto& umd_mem)
+    dnnl::memory create_dnnl_memory(const auto& desc, auto& umd_mem, std::size_t offset = 0)
     {
-        return dnnl::iumd_interop::make_memory(desc, dnnl_engine_, &umd_mem);
+        return dnnl::iumd_interop::make_memory(desc, dnnl_engine_, &umd_mem, offset);
     };
 
 private:
@@ -1061,6 +1168,8 @@ private:
     dnnl::engine dnnl_engine_;
 
     dnnl::matmul gemm_;
+    dnnl::reorder reorder_input_b_;
+    dnnl::reorder reorder_input_c_;
 
     dnnl::memory::desc input_a_memory_desc_;
     dnnl::memory::desc input_b_memory_desc_;
