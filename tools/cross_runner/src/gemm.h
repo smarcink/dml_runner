@@ -484,7 +484,7 @@ public:
 
             opts->add_flag("--b_transposed", params.b_transposed)->default_val(false);
             opts->add_flag("--b_managed", params.b_managed)->default_val(false);;
-            opts->add_flag("--c_managed", params.b_managed)->default_val(false);;
+            opts->add_flag("--c_managed", params.c_managed)->default_val(false);;
 
             opts->add_option("--alpha", params.alpha);
             opts->add_option("--beta", params.beta);
@@ -1079,7 +1079,6 @@ public:
             args.insert({ DNNL_ARG_DST, reorder_memory });
 
             reorder_input_b_.execute(stream, args);
-            input_buffer_b_ = nullptr; // input not longer valid to use
         }
 
         // weights reorder
@@ -1096,7 +1095,6 @@ public:
             args.insert({ DNNL_ARG_DST, reorder_memory });
 
             reorder_input_c_.execute(stream, args);
-            input_buffer_c_ = nullptr; // input not longer valid to use
         }
     }
 
@@ -1107,7 +1105,7 @@ public:
         resources_list.push_back({ DescType::eUav, input_buffer_a_.Get() });
         resources_list.push_back({ DescType::eUav, reorder_input_b_ ? persistent_buffer_.Get() : input_buffer_b_.Get()});
         resources_list.push_back({ DescType::eUav, output_buffer_.Get() });
-        if (input_buffer_c_)
+        if (input_buffer_c_ && !reorder_input_c_)
         {
             resources_list.push_back({ DescType::eUav, input_buffer_c_.Get() });
         }
@@ -1121,7 +1119,20 @@ public:
         auto umd_input_a_memory_ = UmdD3d12Memory(gpu_handles[res_idx++]);
         auto umd_input_b_memory_ = UmdD3d12Memory(gpu_handles[res_idx++]);
         auto umd_output_memory_ = UmdD3d12Memory(gpu_handles[res_idx++]);
-        auto umd_input_c_memory_ = input_buffer_c_ ? UmdD3d12Memory(gpu_handles[res_idx++]) : UmdD3d12Memory();
+        auto umd_input_c_memory_ = [&]()
+        {
+            if (input_buffer_c_ && !reorder_input_c_)
+            {
+                return UmdD3d12Memory(gpu_handles[res_idx++]);
+            }
+            else if (reorder_input_c_)
+            {
+                return umd_input_b_memory_;
+            }
+            return UmdD3d12Memory{};
+        }();
+
+
         auto umd_scratchpad_memory_ = temporary_buffer_ ? UmdD3d12Memory(gpu_handles[res_idx++]) : UmdD3d12Memory();
 
         // stream is created in execute(...), because in MetaCommand cmd list object can be different from execute-to-execute
@@ -1136,7 +1147,8 @@ public:
         dnnl::memory bias_memory;
         if (input_c_memory_desc_.has_value())
         {
-            bias_memory = create_dnnl_memory(input_c_memory_desc_.value(), umd_input_c_memory_);
+            std::size_t offset = (reorder_input_b_ && reorder_input_c_) ? input_b_memory_desc_.get_size()  : 0ull;
+            bias_memory = create_dnnl_memory(input_c_memory_desc_.value(), umd_input_c_memory_, offset);
         }
         dnnl::memory scratchpad_memory;
         if (scratchpad_memory_desc_.has_value())
