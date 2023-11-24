@@ -933,7 +933,7 @@ public:
             if (scale_source)
             {
                 // alpha
-                attr.set_scales_mask(DNNL_ARG_SRC, 0);
+                attr.set_scales_mask(DNNL_ARG_WEIGHTS, 0);
             }
             return attr;
         }(has_alpha_scaling());
@@ -1214,7 +1214,7 @@ public:
 
         if (has_alpha_scaling())
         {
-            args.insert({ DNNL_ARG_ATTR_SCALES | DNNL_ARG_SRC, scratchpad_memory });
+            args.insert({ DNNL_ARG_ATTR_SCALES | DNNL_ARG_WEIGHTS, scratchpad_memory });
         }
 
         gemm_.execute(stream, args);
