@@ -49,11 +49,25 @@ std::vector<std::byte> dnnl_gemm_op::gemm(const bindings_t& bindings, opts_t opt
         return create_dnnl_memory(binding_t{ nullptr, opts.out_dt, opts.out_layout, opts.output_shape }, engine);
     }();
 
+    dnnl::primitive_attr attrs{};
+    switch (opts.accumulator_dt)
+    {
+    case DataType::eFp32:
+        attrs.set_accumulation_mode(dnnl::accumulation_mode::f32);
+        break;
+    case DataType::eFp16:
+        attrs.set_accumulation_mode(dnnl::accumulation_mode::f16);
+    default:
+        attrs.set_accumulation_mode(dnnl::accumulation_mode::strict);
+    }
+
+
     dnnl::matmul::primitive_desc matmul_desc(engine,
         input_memory.get_desc(),
         weights_memory.get_desc(),
         bias_memory ? bias_memory.get_desc() : dnnl::memory::desc{},
-        output_memory.get_desc()
+        output_memory.get_desc(),
+        attrs
     );
     const auto guery_impl_str = matmul_desc.impl_info_str();
     std::cout << "ref query impl: " << guery_impl_str << std::endl;

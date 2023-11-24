@@ -43,6 +43,7 @@ struct opts_t
     TensorShape output_shape;
     DataType out_dt = DataType::eCount;
     DataLayout out_layout = DataLayout::eCount;
+    DataType accumulator_dt = DataType::eCount;
 };
 std::vector<std::byte> gemm(const bindings_t& bindings, opts_t opts);
 }
@@ -108,7 +109,7 @@ class Gemm : public DirectMlBaseNode
 public:
     Gemm(GemmType gemm_type, const DML_TENSOR_DATA_TYPE data_type, const dml::TensorPolicy& tensor_policy,
         const TensorShape& shape_a, const TensorShape& shape_b, const TensorShape& shape_c, const TensorShape& shape_out,
-        bool b_managed, bool b_transposed, float alpha, float beta,
+        bool b_managed, bool b_transposed, float alpha, float beta, bool allow_fp16_computations,
         IDMLDevice* dml_device, ID3D12Device* d3d12_device, bool disable_mc = false)
         : DirectMlBaseNode(dml_device, d3d12_device)
         , type_(gemm_type)
@@ -322,7 +323,7 @@ public:
         }
 
         DML_EXECUTION_FLAGS execution_flags = DML_EXECUTION_FLAG_DESCRIPTORS_VOLATILE;
-        if (data_type == DML_TENSOR_DATA_TYPE_FLOAT16)
+        if (allow_fp16_computations)
         {
             execution_flags |= DML_EXECUTION_FLAG_ALLOW_HALF_PRECISION_COMPUTATION;
         }
@@ -474,6 +475,7 @@ public:
         bool c_managed = false;
         bool b_transposed = false;
 
+        bool allow_fp16_computations = false;
         bool use_dnnl_for_reference_calculations = false;
 
         inline static void add_cli_options(CLI::App* opts, create_params_t& params)
@@ -487,8 +489,9 @@ public:
             opts->add_option("--shape_c", params.shape_c); 
 
             opts->add_flag("--b_transposed", params.b_transposed)->default_val(false);
-            opts->add_flag("--b_managed", params.b_managed)->default_val(false);;
-            opts->add_flag("--c_managed", params.c_managed)->default_val(false);;
+            opts->add_flag("--b_managed", params.b_managed)->default_val(false);
+            opts->add_flag("--c_managed", params.c_managed)->default_val(false);
+            opts->add_flag("--allow_fp16_computations", params.allow_fp16_computations);
 
             opts->add_option("--alpha", params.alpha)->default_val(1.0f);
             opts->add_option("--beta", params.beta)->default_val(1.0f);
@@ -722,14 +725,15 @@ public:
             opts.out_dt = params_.dt;
             opts.out_layout = params_.layout;
             opts.output_shape = get_shape_output();
-
+            opts.accumulator_dt = (params_.allow_fp16_computations && params_.dt == DataType::eFp16) ? DataType::eFp16 : DataType::eFp32;
             ref_untyped_result = dnnl_gemm_op::gemm(bindings, opts);
         }
         else   
         {
             gpu_op::Gemm gemm_ref(params_.type, to_dml_data_type(params_.dt), to_dml_tensor_policy(params_.layout),
                 params_.shape_a, params_.shape_b, params_.shape_c, get_shape_output(),
-                false /*params_.b_managed*/, params_.b_transposed, params_.alpha, params_.beta, dml_device_, d3d12_device_, true);
+                false /*params_.b_managed*/, params_.b_transposed, params_.alpha, params_.beta, params_.allow_fp16_computations,
+                dml_device_, d3d12_device_, true);
             // bind descriptor heap
             auto descriptor_heap = create_descriptor_heap(d3d12_device_, gemm_ref.get_total_descriptor_count());
             ID3D12DescriptorHeap* d3d12_descriptor_heaps[] = { descriptor_heap.Get() };
@@ -878,7 +882,7 @@ public:
     GemmDmlDispatcher(create_params_t&& params, ID3D12Device* d3d12_device, IDMLDevice* dml_device, IDMLCommandRecorder* dml_cmd_recorder, ID3D12GraphicsCommandList* cmd_list)
         : GemmBaseDispatcher(std::move(params), d3d12_device, dml_device, dml_cmd_recorder, cmd_list)
         , gemm_(params_.type, to_dml_data_type(params_.dt), to_dml_tensor_policy(params_.layout),  params_.shape_a, params_.shape_b, params_.shape_c, get_shape_output(), params_.b_managed, params_.b_transposed,
-            params_.alpha, params_.beta,
+            params_.alpha, params_.beta, params_.allow_fp16_computations,
             dml_device, d3d12_device, false)
     {
         if (params_.c_managed)
@@ -919,7 +923,7 @@ public:
         , dnnl_engine_(dnnl::iumd_interop::make_engine(&device_))
     {
         using namespace dnnl_utils;
-        const dnnl::primitive_attr attr = [](bool scale_source)
+        const dnnl::primitive_attr attr = [](bool scale_source, bool allow_half_computation)
         {
             // create a post-op with relu
             dnnl::post_ops ops;
@@ -930,13 +934,18 @@ public:
             // set scratchpad mode to user provided
             attr.set_scratchpad_mode(dnnl::scratchpad_mode::user);
 
+            if (allow_half_computation)
+            {
+                attr.set_accumulation_mode(dnnl::accumulation_mode::f16);
+            }
+
             if (scale_source)
             {
                 // alpha
                 attr.set_scales_mask(DNNL_ARG_WEIGHTS, 0);
             }
             return attr;
-        }(has_alpha_scaling());
+        }(has_alpha_scaling(), params_.allow_fp16_computations && params_.dt == DataType::eFp16);
 
 
         input_a_memory_desc_ = to_dnnl_mem_desc(params_.shape_a, params_.layout, params_.dt);
