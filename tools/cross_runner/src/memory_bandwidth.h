@@ -183,7 +183,7 @@ public:
             cmd_list->SetComputeRootDescriptorTable(root_index++, gpu_heap_handle);
         }
 
-        const auto gws_x = (params_.shape.n * params_.shape.c * params_.shape.h * params_.shape.w) / params_.items_per_hw;
+        const auto gws_x = (params_.shape[DIM::N] * params_.shape[DIM::C] * params_.shape[DIM::H] * params_.shape[DIM::W]) / params_.items_per_hw;
 
         assert(gws_x % params_.lws_x == 0);
 

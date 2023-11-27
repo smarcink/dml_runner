@@ -12,7 +12,7 @@ public:
         IDMLDevice* dml_device, ID3D12Device* d3d12_device)
         : DirectMlBaseNode(dml_device, d3d12_device)
     {
-        const dml::TensorDimensions input_dims{ shape.n, shape.c, shape.h, shape.w };
+        const dml::TensorDimensions input_dims{ shape[DIM::N], shape[DIM::C], shape[DIM::H], shape[DIM::W] };
 
         tensor_input_desc_.DataType = data_type;
         tensor_input_desc_.Flags = DML_TENSOR_FLAG_NONE;
@@ -264,7 +264,7 @@ public:
             throw std::runtime_error("Unsupported width for softmax operator for MHA layer!");
         }
 
-        cm_params_.lws[0] = params_.shape.w / items_per_hw_th;
+        cm_params_.lws[0] = params_.shape[DIM::W] / items_per_hw_th;
         cm_params_.lws[1] = 1;
         cm_params_.lws[2] = 1;
 
@@ -297,8 +297,8 @@ public:
             build_options += pre_jit + name + between_name_and_value + value_str + post_jit;
         };
 
-        add_define("INOUT_WIDTH", params_.shape.w);
-        add_define("INOUT_HEIGHT", params_.shape.h);
+        add_define("INOUT_WIDTH", params_.shape[DIM::W]);
+        add_define("INOUT_HEIGHT", params_.shape[DIM::H]);
         add_define("ITEMNUM_PER_HW", items_per_hw_th);
         add_define("LWS_SIZE_X_ALIGNED", align(cm_params_.lws[0], 8));
 
@@ -370,9 +370,9 @@ public:
             cmd_list->SetComputeRootDescriptorTable(root_index++, gpu_heap_handle);
         }
 
-        const auto gws_x = params_.shape.w / get_items_per_hw();
-        const auto gws_y = params_.shape.h;
-        const auto gws_z = params_.shape.n * params_.shape.c;
+        const auto gws_x = params_.shape[DIM::W] / get_items_per_hw();
+        const auto gws_y = params_.shape[DIM::H];
+        const auto gws_z = params_.shape[DIM::N] * params_.shape[DIM::C];
 
         assert(gws_x % cm_params_.lws[0] == 0);
         assert(gws_y % cm_params_.lws[1] == 0);
@@ -387,27 +387,27 @@ public:
 private:
     std::uint32_t get_items_per_hw()
     {
-        std::uint32_t items_per_hw_th = params_.shape.w;
-        if (params_.shape.w % 128 == 0)
+        std::uint32_t items_per_hw_th = params_.shape[DIM::W];
+        if (params_.shape[DIM::W] % 128 == 0)
         {
             items_per_hw_th = 128;
         }
-        else if (params_.shape.w % 64 == 0)
+        else if (params_.shape[DIM::W] % 64 == 0)
         {
             items_per_hw_th = 64;
         }
-        else if (params_.shape.w % 32 == 0)
+        else if (params_.shape[DIM::W] % 32 == 0)
         {
             items_per_hw_th = 32;
         }
-        else if (params_.shape.w % 16 == 0)
+        else if (params_.shape[DIM::W] % 16 == 0)
         {
             items_per_hw_th = 16;
         }
         // tehnically bigger W would work, but not tested
-        else if (params_.shape.w < 128)
+        else if (params_.shape[DIM::W] < 128)
         {
-            items_per_hw_th = params_.shape.w;
+            items_per_hw_th = params_.shape[DIM::W];
         }
         // error
         return items_per_hw_th;

@@ -54,13 +54,13 @@ public:
         : DirectMlBaseNode(dml_device, d3d12_device)
     {
 
-        const dml::TensorDimensions input_dims{ input_shape.n, input_shape.c, input_shape.h, input_shape.w };
-        const dml::TensorDimensions filter_dims{ filter_shape.n, filter_shape.c, filter_shape.h, filter_shape.w };
-        const dml::TensorDimensions output_dims{ output_shape.n, output_shape.c, output_shape.h, output_shape.w };
+        const dml::TensorDimensions input_dims{ input_shape[DIM::N], input_shape[DIM::C], input_shape[DIM::H], input_shape[DIM::W] };
+        const dml::TensorDimensions filter_dims{ filter_shape[DIM::N], filter_shape[DIM::C], filter_shape[DIM::H], filter_shape[DIM::W] };
+        const dml::TensorDimensions output_dims{ output_shape[DIM::N], output_shape[DIM::C], output_shape[DIM::H], output_shape[DIM::W] };
 
-        const dml::TensorDimensions bias_dims{ 1, output_shape.c, 1, 1 };
+        const dml::TensorDimensions bias_dims{ 1, output_shape[DIM::C], 1, 1 };
 
-        const std::array<std::uint32_t, 2> strides = { stride_shape.h, stride_shape.w };
+        const std::array<std::uint32_t, 2> strides = { stride_shape[DIM::H], stride_shape[DIM::W] };
         const std::vector<std::uint32_t> dilations = { 1u, 1u };
         const std::vector<std::uint32_t> start_pad = { input_pad, input_pad };
         const std::vector<std::uint32_t> end_pad = { input_pad, input_pad };
@@ -298,13 +298,13 @@ public:
         , filter_data_(params_.filter_shape.get_elements_count()* get_data_type_bytes_width(params_.dt))
 
     {
-        assert(params_.input_shape.c == params_.filter_shape.c);
+        assert(params_.input_shape[DIM::C] == params_.filter_shape[DIM::C]);
         const auto output_shape = get_output_shape();
         prepare_constant_data();
 
         if (!params_.no_bias)
         {
-            bias_data_ = std::vector<std::byte>(params_.filter_shape.n * get_data_type_bytes_width(params_.dt));
+            bias_data_ = std::vector<std::byte>(params_.filter_shape[DIM::N] * get_data_type_bytes_width(params_.dt));
         }
         // randomize data
         std::mt19937 random_generator(42); // static, create it once!
@@ -447,11 +447,10 @@ protected:
     inline TensorShape get_output_shape() const
     {
         TensorShape ret;
-        ret.n = params_.input_shape.n;
-        ret.c = params_.filter_shape.n; // output channels
-        ret.d = 0;
-        ret.h = (params_.input_shape.h - params_.filter_shape.h + params_.in_pad + params_.in_pad) / params_.stride.h + 1;
-        ret.w = (params_.input_shape.w - params_.filter_shape.w + params_.in_pad + params_.in_pad) / params_.stride.w + 1;
+        ret.dims.push_back(params_.input_shape[DIM::N]);
+        ret.dims.push_back(params_.filter_shape[DIM::N]); // output channels
+        ret.dims.push_back((params_.input_shape[DIM::H] - params_.filter_shape[DIM::H] + params_.in_pad + params_.in_pad) / params_.stride[DIM::H] + 1);
+        ret.dims.push_back((params_.input_shape[DIM::W] - params_.filter_shape[DIM::W] + params_.in_pad + params_.in_pad) / params_.stride[DIM::W] + 1);
         return ret;
     }
 
@@ -461,21 +460,21 @@ protected:
         const auto output_shape = get_output_shape();
         using Dt = int;
         auto* ptr = reinterpret_cast<Dt*>(constant_data_.data());
-        *ptr++ = static_cast<Dt>(params_.input_shape.h);
-        *ptr++ = static_cast<Dt>(params_.input_shape.w);
+        *ptr++ = static_cast<Dt>(params_.input_shape[DIM::H]);
+        *ptr++ = static_cast<Dt>(params_.input_shape[DIM::W]);
         *ptr++ = static_cast<Dt>(params_.in_pad);
-        *ptr++ = static_cast<Dt>(output_shape.c);
-        *ptr++ = static_cast<Dt>(output_shape.h);
-        *ptr++ = static_cast<Dt>(output_shape.w);
-        *ptr++ = static_cast<Dt>(params_.stride.h);
-        *ptr++ = static_cast<Dt>(params_.filter_shape.c);
-        *ptr++ = static_cast<Dt>(params_.filter_shape.n);
+        *ptr++ = static_cast<Dt>(output_shape[DIM::C]);
+        *ptr++ = static_cast<Dt>(output_shape[DIM::H]);
+        *ptr++ = static_cast<Dt>(output_shape[DIM::W]);
+        *ptr++ = static_cast<Dt>(params_.stride[DIM::H]);
+        *ptr++ = static_cast<Dt>(params_.filter_shape[DIM::C]);
+        *ptr++ = static_cast<Dt>(params_.filter_shape[DIM::N]);
         *ptr++ = static_cast<Dt>(params_.act_type);
         *ptr++ = static_cast<Dt>(params_.act_alpha);
         *ptr++ = static_cast<Dt>(params_.act_beta);
         *ptr++ = static_cast<Dt>(params_.output_layout == DataLayout::eNCHW ? 0 : 1);
         *ptr++ = static_cast<Dt>(params_.input_layout == DataLayout::eNCHW ? 0 : 1);
-        *ptr++ = static_cast<Dt>(params_.input_shape.c);
+        *ptr++ = static_cast<Dt>(params_.input_shape[DIM::C]);
         *ptr++ = static_cast<Dt>(params_.filter_layout == DataLayout::eNCHW ? 0 : 1);
     }
     inline bool use_bias() const
@@ -504,7 +503,7 @@ protected:
             bindings.bias.data = bias_data_.data();
             bindings.bias.dt = params_.dt;
             bindings.bias.layout = params_.input_layout;
-            bindings.bias.shape = TensorShape(params_.filter_shape.n, 1u, 1u, 1u);
+            bindings.bias.shape = TensorShape(params_.filter_shape[DIM::N], 1u, 1u, 1u);
         }
 
         dnnl_conv_op::opts_t opts{};
@@ -607,7 +606,7 @@ public:
     {      
         using namespace dnnl_utils;
         const dnnl::memory::dims pad{ params.in_pad, params.in_pad };
-        const dnnl::memory::dims stride{ params.stride.h, params.stride.w };
+        const dnnl::memory::dims stride{ params.stride[DIM::H], params.stride[DIM::W]};
 
         const dnnl::primitive_attr attr = [](dnnl::algorithm act, float alpha, float beta, bool allow_half_computation)
         {
@@ -641,7 +640,7 @@ public:
 
         if (!params_.no_bias)
         {
-            bias_memory_desc_.emplace(to_dnnl_mem_desc(TensorShape{ params_.filter_shape.n, 0, 0, 0}, DataLayout::eO, params_.dt));
+            bias_memory_desc_.emplace(to_dnnl_mem_desc(TensorShape{ params_.filter_shape[DIM::N], 0, 0, 0 }, DataLayout::eO, params_.dt));
         }
         
         const auto conv_desc = dnnl::convolution_forward::primitive_desc(
@@ -781,7 +780,7 @@ public:
 
             auto umd_bias_input_mem = UmdD3d12Memory(gpu_handles[2]);   // bias input
             auto umd_bias_reorder_mem = UmdD3d12Memory(gpu_handles[1]); // persitent output
-            const auto bias_desc = dnnl_utils::to_dnnl_mem_desc(TensorShape{ params_.filter_shape.n, 1, 1, 1 }, DataLayout::eNCHW, params_.dt);
+            const auto bias_desc = dnnl_utils::to_dnnl_mem_desc(TensorShape{ params_.filter_shape[DIM::N], 1, 1, 1 }, DataLayout::eNCHW, params_.dt);
             // this is just a copy from user provided bias to metacommand manged persitent resource 
             dnnl::memory bias_input_memory = create_dnnl_memory(bias_desc, umd_bias_input_mem);
             dnnl::memory bias_reorder_memory = create_dnnl_memory(bias_desc, umd_bias_reorder_mem, persitent_resoruce_base_offset);
@@ -977,7 +976,7 @@ public:
         , cm_params_(std::move(cm_params))
         , output_shape_(get_output_shape())
     {
-        assert(params_.filter_shape.h == params_.filter_shape.w);
+        assert(params_.filter_shape[DIM::H] == params_.filter_shape[DIM::W]);
 
         // weights reoder
         if(cm_params_.reorder_weights)
@@ -985,16 +984,16 @@ public:
             WeightsReorder::create_params_t wr_params{};
             wr_params.input_dt = params_.dt;
             wr_params.output_dt = params_.dt;
-            wr_params.ic = params_.filter_shape.c;
-            wr_params.oc = params_.filter_shape.n;
-            wr_params.k_size = params_.filter_shape.w;
+            wr_params.ic = params_.filter_shape[DIM::C];
+            wr_params.oc = params_.filter_shape[DIM::N];
+            wr_params.k_size = params_.filter_shape[DIM::W];
             wr_params.input_layout = DataLayout::eOIYX;
 
-            /*if (params_.dt == DataType::eFp16 && params_.filter_shape.w == 1 && params_.filter_shape.h == 1)
+            /*if (params_.dt == DataType::eFp16 && params_.filter_shape[DIM::W] == 1 && params_.filter_shape[DIM::H] == 1)
             {
                 wr_params.output_layout = DataLayout::eIO_i8_o8_i2;
             }
-            else if (params_.dt == DataType::eFp16  && params_.filter_shape.w != 1 && params_.filter_shape.h != 1)
+            else if (params_.dt == DataType::eFp16  && params_.filter_shape[DIM::W] != 1 && params_.filter_shape[DIM::H] != 1)
             {*/
                 if (cm_params_.block_oc == 8)
                 {
@@ -1045,20 +1044,20 @@ public:
             build_options += pre_jit + name + between_name_and_value + value_str + post_jit;
         };
         add_define("DT", static_cast<uint32_t>(params_.dt));
-        //add_define("INPUT_WIDTH", params_.input_shape.w);
-        //add_define("INPUT_HEIGHT", params_.input_shape.h);
-        //add_define("INPUT_CHANNELS", params_.input_shape.c);
+        //add_define("INPUT_WIDTH", params_.input_shape[DIM::W]);
+        //add_define("INPUT_HEIGHT", params_.input_shape[DIM::H]);
+        //add_define("INPUT_CHANNELS", params_.input_shape[DIM::C]);
 
         //add_define("OUTPUT_WIDTH", output_shape_.w);
         //add_define("OUTPUT_HEIGHT", output_shape_.h);
         //("OUTPUT_CHANNELS", output_shape_.c);
 
-        //add_define("BATCH", params_.input_shape.n);
+        //add_define("BATCH", params_.input_shape[DIM::N]);
         //add_define("INPUT_PAD", params_.in_pad);
         //add_define("OUTPUT_PAD", params_.out_pad);
         add_define("USE_BIAS", !params_.no_bias);
-        add_define("KERNEL_SIZE", params_.filter_shape.h);
-        add_define("STRIDE_W", params_.stride.w);
+        add_define("KERNEL_SIZE", params_.filter_shape[DIM::H]);
+        add_define("STRIDE_W", params_.stride[DIM::W]);
         //add_define("STRIDE_H", params_.stride.h);
 
         //add_define("SLICE_IC", cm_params_.slice_ic);
@@ -1103,7 +1102,7 @@ public:
             }
             std::cout << std::format("Read kernel file: {} \n", path);
             return std::string((std::istreambuf_iterator<char>(file)), (std::istreambuf_iterator<char>()));
-        }(params_.filter_shape.w);
+        }(params_.filter_shape[DIM::W]);
 
         CD3DX12_SHADER_BYTECODE byte_code;
         byte_code.pShaderBytecode = kernel_source_content.data();
@@ -1186,10 +1185,10 @@ public:
             }
         }
 
-        const uint32_t out_ch_size = static_cast<uint32_t>(std::ceil(params_.filter_shape.n / (double)(cm_params_.block_oc)));
-        const auto gws_x = cm_params_.slice_ic * (round_up_next_multiple(output_shape_.w, cm_params_.block_w) / cm_params_.block_w);
-        const auto gws_y = round_up_next_multiple(output_shape_.h, cm_params_.block_h) / cm_params_.block_h;
-        const auto gws_z = (params_.input_shape.n / cm_params_.block_batch) * out_ch_size;
+        const uint32_t out_ch_size = static_cast<uint32_t>(std::ceil(params_.filter_shape[DIM::N] / (double)(cm_params_.block_oc)));
+        const auto gws_x = cm_params_.slice_ic * (round_up_next_multiple(output_shape_[DIM::W], cm_params_.block_w) / cm_params_.block_w);
+        const auto gws_y = round_up_next_multiple(output_shape_[DIM::H], cm_params_.block_h) / cm_params_.block_h;
+        const auto gws_z = (params_.input_shape[DIM::N] / cm_params_.block_batch) * out_ch_size;
 
         assert(gws_x % cm_params_.lws[0] == 0);
         assert(gws_y % cm_params_.lws[1] == 0);

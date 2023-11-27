@@ -118,29 +118,17 @@ public:
         outputs_.resize(1);
         if (type_ == GemmType::GemmType_AB)
         {
-            dml::TensorDesc::Dimensions dimensions_0;
-            dimensions_0.push_back(shape_a.n);
-            dimensions_0.push_back(shape_a.c);
-            dimensions_0.push_back(shape_a.h);
-            dimensions_0.push_back(shape_a.w);
+            dml::TensorDesc::Dimensions dimensions_0 = shape_a.dims;
             dml::TensorDesc desc_input_0 = { data_type, dimensions_0 };
             input_0_ = dml::InputTensor(graph_, 0, desc_input_0);
 
-            dml::TensorDesc::Dimensions dimensions_1;
-            dimensions_1.push_back(shape_b.n);
-            dimensions_1.push_back(shape_b.c);
-            dimensions_1.push_back(shape_b.h);
-            dimensions_1.push_back(shape_b.w);
+            dml::TensorDesc::Dimensions dimensions_1 = shape_b.dims;
             dml::TensorDesc desc_input_1 = { data_type, b_managed ? DML_TENSOR_FLAG_OWNED_BY_DML : DML_TENSOR_FLAG_NONE, dimensions_1 };
             input_1_ = dml::InputTensor(graph_, 1, desc_input_1);
 
             if (shape_c.get_elements_count() > 0)
             {
-                dml::TensorDesc::Dimensions dimensions_2;
-                dimensions_2.push_back(shape_a.n);
-                dimensions_2.push_back(shape_a.c);
-                dimensions_2.push_back(shape_a.h);
-                dimensions_2.push_back(b_transposed ? shape_b.h : shape_b.w);
+                dml::TensorDesc::Dimensions dimensions_2 = shape_c.dims;
                 dml::TensorDesc desc_input_2 = { data_type, dimensions_2 };
                 input_2_ = dml::InputTensor(graph_, 2, desc_input_2);
             }
@@ -152,12 +140,7 @@ public:
         }
         else if (type_ == GemmType::GemmType_QK_QKV)
         {
-            dml::TensorDesc::Dimensions dimensions_0;
-            dimensions_0.push_back(shape_a.n);
-            dimensions_0.push_back(shape_a.c);
-            dimensions_0.push_back(shape_a.d);
-            dimensions_0.push_back(shape_a.h);
-            dimensions_0.push_back(shape_a.w);
+            dml::TensorDesc::Dimensions dimensions_0 = shape_a.dims;
             dml::TensorDesc desc_input_0 = { data_type, dimensions_0 };
             input_0_ = dml::InputTensor(graph_, 0, desc_input_0);
 
@@ -166,7 +149,7 @@ public:
             auto split_outputs = dml::Split(input_0_, 3, after_split_dims);
 
             // reshape, we care only about Q and K for this case
-            dml::TensorDimensions reshaped_dimss{ shape_a.n, shape_a.c, shape_a.d, shape_a.w };
+            dml::TensorDimensions reshaped_dimss{ shape_a[DIM::N], shape_a[DIM::C], shape_a[DIM::D], shape_a[DIM::W] };
             decltype(split_outputs) reshaped_splits(2);
             for (auto i = 0; i < reshaped_splits.size(); i++)
             {
@@ -192,20 +175,11 @@ public:
         }
         else if (type_ == GemmType::GemmType_SV_S_QKV)
         {
-            dml::TensorDesc::Dimensions dimensions_0;
-            dimensions_0.push_back(shape_a.n);
-            dimensions_0.push_back(shape_a.c);
-            dimensions_0.push_back(shape_a.h);
-            dimensions_0.push_back(shape_a.w);
+            dml::TensorDesc::Dimensions dimensions_0 = shape_a.dims;
             dml::TensorDesc desc_input_0 = { data_type, dimensions_0 };
             input_0_ = dml::InputTensor(graph_, 0, desc_input_0);
 
-            dml::TensorDesc::Dimensions dimensions_1;
-            dimensions_1.push_back(shape_b.n);
-            dimensions_1.push_back(shape_b.c);
-            dimensions_1.push_back(shape_b.d);
-            dimensions_1.push_back(shape_b.h);
-            dimensions_1.push_back(shape_b.w);
+            dml::TensorDesc::Dimensions dimensions_1 = shape_b.dims;
             dml::TensorDesc desc_input_1 = { data_type, dimensions_1 };
             input_1_ = dml::InputTensor(graph_, 1, desc_input_1);
 
@@ -214,7 +188,7 @@ public:
             auto split_outputs = dml::Split(input_1_, 3, after_split_dims);
 
             // reshape, we care only about V for this case
-            dml::TensorDimensions reshaped_dims{ shape_b.n, shape_b.c, shape_b.d, shape_b.w };
+            dml::TensorDimensions reshaped_dims{ shape_b[DIM::N], shape_b[DIM::C], shape_b[DIM::D], shape_b[DIM::W] };
             auto reshaped_split = dml::Reinterpret(split_outputs[2], reshaped_dims, dml::NullOpt);
 
             const auto batch = reshaped_dims[0];
@@ -236,28 +210,20 @@ public:
         }
         else if (type_ == GemmType::GemmType_QK_Q_KV)
         {
-            dml::TensorDesc::Dimensions dimensions_0;
-            dimensions_0.push_back(shape_a.n);
-            dimensions_0.push_back(shape_a.c);
-            dimensions_0.push_back(shape_a.h);
+            dml::TensorDesc::Dimensions dimensions_0 = shape_a.dims;
             dimensions_0.push_back(1);
             dml::TensorDesc desc_input_0 = { data_type, dimensions_0 };
             input_0_ = dml::InputTensor(graph_, 0, desc_input_0);
 
-            dml::TensorDesc::Dimensions dimensions_1;
-            dimensions_1.push_back(shape_b.n);
-            dimensions_1.push_back(shape_b.c);
-            dimensions_1.push_back(shape_b.d);
-            dimensions_1.push_back(shape_b.h);
-            dimensions_1.push_back(shape_b.w);
+            dml::TensorDesc::Dimensions dimensions_1 = shape_b.dims;
             dml::TensorDesc desc_input_1 = { data_type, dimensions_1 };
             input_1_ = dml::InputTensor(graph_, 1, desc_input_1);
 
-            const auto batch = shape_a.n;
-            const auto seq = shape_a.c;
-            const auto head_count = shape_b.d;
-            const auto head_size = shape_a.h / head_count;
-            const auto N = shape_b.c;
+            const auto batch = shape_a[DIM::N];
+            const auto seq = shape_a[DIM::C];
+            const auto head_count = shape_b[DIM::D];
+            const auto head_size = shape_a[DIM::H] / head_count;
+            const auto N = shape_b[DIM::C];
 
             // reshape and transpose first input
             const auto head_size_stride = 1;
@@ -282,27 +248,18 @@ public:
         }
         else if (type_ == GemmType::GemmType_SV_S_KV)
         {
-            dml::TensorDesc::Dimensions dimensions_0;
-            dimensions_0.push_back(shape_a.n);
-            dimensions_0.push_back(shape_a.c);
-            dimensions_0.push_back(shape_a.h);
-            dimensions_0.push_back(shape_a.w);
+            dml::TensorDesc::Dimensions dimensions_0 = shape_a.dims;
             dml::TensorDesc desc_input_0 = { data_type, dimensions_0 };
             input_0_ = dml::InputTensor(graph_, 0, desc_input_0);
 
-            dml::TensorDesc::Dimensions dimensions_1;
-            dimensions_1.push_back(shape_b.n);
-            dimensions_1.push_back(shape_b.c);
-            dimensions_1.push_back(shape_b.d);
-            dimensions_1.push_back(shape_b.h);
-            dimensions_1.push_back(shape_b.w);
+            dml::TensorDesc::Dimensions dimensions_1 = shape_b.dims;
             dml::TensorDesc desc_input_1 = { data_type, dimensions_1 };
             input_1_ = dml::InputTensor(graph_, 1, desc_input_1);
 
-            const auto batch = shape_b.n;
-            const auto seq = shape_b.c;
-            const auto head_count = shape_b.d;
-            const auto head_size = shape_b.w;
+            const auto batch = shape_b[DIM::N];
+            const auto seq = shape_b[DIM::C];
+            const auto head_count = shape_b[DIM::D];
+            const auto head_size = shape_b[DIM::W];
 
             // split the 2nd input
             std::vector<std::uint32_t> after_split_dims = { 1, 1 };
@@ -524,8 +481,8 @@ public:
 
         if (params_.type == GemmType::GemmType_AB)
         {
-            assert(params_.shape_a.get_dims_count() == 4);
-            assert(params_.shape_b.get_dims_count() == 4);
+            assert(params_.shape_a.get_dims_count() == 4 || params_.shape_a.get_dims_count() == 3);
+            assert(params_.shape_b.get_dims_count() == 4 || params_.shape_a.get_dims_count() == 3);
   
             assert(!input_data_a_.empty());
             assert(!input_data_b_.empty());
@@ -554,7 +511,7 @@ public:
             assert(!input_data_a_.empty());
             assert(!input_data_b_.empty());
 
-            assert(params_.shape_a.h == params_.shape_b.d * params_.shape_b.w); // K SIZE
+            assert(params_.shape_a[DIM::H] == params_.shape_b[DIM::D] * params_.shape_b[DIM::W]); // K SIZE
         }
         else if (params_.type == GemmType::GemmType_SV_S_KV)
         {
@@ -564,7 +521,7 @@ public:
             assert(!input_data_a_.empty());
             assert(!input_data_b_.empty());
 
-            assert(params_.shape_a.w == params_.shape_b.c); // K SIZE
+            assert(params_.shape_a[DIM::W] == params_.shape_b[DIM::C]); // K SIZE
         }
         else
         {
@@ -779,31 +736,34 @@ protected:
     TensorShape get_shape_output() const
     {
         TensorShape ret{};
-        ret.n = get_batch();
-        ret.c = get_channels();
-        ret.h = get_M();
-        ret.w = get_N();
+        ret.dims.push_back(get_batch());
+        if (params_.shape_a.get_elements_count() == 4)
+        {
+            ret.dims.push_back(get_channels());
+        }
+        ret.dims.push_back(get_M());
+        ret.dims.push_back(get_N());
         return ret;
     }
 
     std::uint32_t get_batch() const
     {
-        return params_.shape_a.n;
+        return params_.shape_a[DIM::N];
     }
 
     std::uint32_t get_channels() const
     {
         if (params_.type == GemmType::GemmType_AB || params_.type == GemmType::GemmType_SV_S_QKV || params_.type == GemmType::GemmType_SV_S_KV)
         {
-            return params_.shape_a.c;
+            return params_.shape_a[DIM::D];
         }
         else if (params_.type == GemmType::GemmType_QK_Q_KV)
         {
-            return params_.shape_b.d;
+            return params_.shape_b[DIM::D];
         }
         else
         {
-            return params_.shape_a.d;
+            return params_.shape_a[DIM::D];
         }
         assert(false && "Not supported");
     }
@@ -812,11 +772,11 @@ protected:
     {
         if (params_.type == GemmType::GemmType_AB || params_.type == GemmType::GemmType_SV_S_QKV || params_.type == GemmType::GemmType_SV_S_KV)
         {
-            return params_.shape_a.h;
+            return params_.shape_a[DIM::H];
         }
         else if (params_.type == GemmType::GemmType_QK_QKV || params_.type == GemmType::GemmType_QK_Q_KV)
         {
-            return params_.shape_a.c;
+            return params_.shape_a[DIM::C];
         }
         assert(false && "Not supported");
         return 0;
@@ -826,15 +786,15 @@ protected:
     {
         if (params_.type == GemmType::GemmType_AB || params_.type == GemmType::GemmType_SV_S_QKV || params_.type == GemmType::GemmType_SV_S_KV)
         {
-            return params_.shape_a.w;
+            return params_.shape_a[DIM::W];
         }
         else if (params_.type == GemmType::GemmType_QK_QKV)
         {
-            return params_.shape_a.w;
+            return params_.shape_a[DIM::W];
         }
         else if (params_.type == GemmType::GemmType_QK_Q_KV)
         {
-            return params_.shape_b.w;
+            return params_.shape_b[DIM::W];
         }
         assert(false && "Not supported");
         return 0;
@@ -844,15 +804,15 @@ protected:
     {
         if (params_.type == GemmType::GemmType_AB || params_.type == GemmType::GemmType_SV_S_QKV || params_.type == GemmType::GemmType_SV_S_KV)
         {
-            return params_.b_transposed ? params_.shape_b.h : params_.shape_b.w;
+            return params_.b_transposed ? params_.shape_b[DIM::H] : params_.shape_b[DIM::W];
         }
         else if (params_.type == GemmType::GemmType_QK_QKV)
         {
-            return params_.shape_a.c;
+            return params_.shape_a[DIM::C];
         }
         else if (params_.type == GemmType::GemmType_QK_Q_KV)
         {
-            return params_.shape_b.c;
+            return params_.shape_b[DIM::C];
         }
         assert(false && "Not supported");
         return 0;
@@ -923,6 +883,35 @@ public:
         , dnnl_engine_(dnnl::iumd_interop::make_engine(&device_))
     {
         using namespace dnnl_utils;
+
+        /*
+            OneDNN GEMM:
+            output = alpha * (A * B + C) + beta * output;
+
+            DirectML GEMM:
+            output = alpha * (A * B) + beta * C
+
+            Because of this differences we need to limit support of GEMMs until OneDNN aligns with DirecTML.
+            OneDNNL has to extended sum post-op to support seperate C tensor
+                #if WITH_SUM
+                        temp += (POST_OP_DATA_T)(beta * C_TO_REF(c[off_c]));
+                #endif
+        */
+
+        // this below asserts can be removed when OneDNNL GEMM support will be aligned with DirectML GEMM spec
+        if (input_buffer_c_)
+        {
+            if (params_.alpha != 1.0f)
+            {
+                assert(!"Currently not supported path by OneDNNL. If C tensor is used than alpha has to be 1.0f");
+            }
+
+            if (params_.beta != 1.0f && !params_.c_managed)
+            {
+                assert(!"Support for beta != 1.0f only if C tensor is managed!");
+            }
+        }
+
         const dnnl::primitive_attr attr = [](bool scale_source, bool allow_half_computation)
         {
             // create a post-op with relu
@@ -1434,19 +1423,19 @@ public:
 
         if (params_.type == GemmType::GemmType_QK_QKV)
         {
-            add_define("SIZE_BATCH", params_.shape_a.n);
-            add_define("SIZE_SEQ_LEN", params_.shape_a.c);
-            add_define("SIZE_NUM_HEADS", params_.shape_a.d);
-            add_define("SIZE_STACKED_TENSORS", params_.shape_a.h);
-            add_define("SIZE_HEAD_SIZE", params_.shape_a.w);
+            add_define("SIZE_BATCH", params_.shape_a[DIM::N]);
+            add_define("SIZE_SEQ_LEN", params_.shape_a[DIM::C]);
+            add_define("SIZE_NUM_HEADS", params_.shape_a[DIM::D]);
+            add_define("SIZE_STACKED_TENSORS", params_.shape_a[DIM::H]);
+            add_define("SIZE_HEAD_SIZE", params_.shape_a[DIM::W]);
         } 
         else if (params_.type == GemmType::GemmType_SV_S_QKV || params_.type == GemmType::GemmType_QK_Q_KV || params_.type == GemmType::GemmType_SV_S_KV)
         {
-            add_define("SIZE_BATCH", params_.shape_b.n);
-            add_define("SIZE_SEQ_LEN", params_.shape_b.c);
-            add_define("SIZE_NUM_HEADS", params_.shape_b.d);
-            add_define("SIZE_STACKED_TENSORS", params_.shape_b.h);
-            add_define("SIZE_HEAD_SIZE", params_.shape_b.w);
+            add_define("SIZE_BATCH", params_.shape_b[DIM::N]);
+            add_define("SIZE_SEQ_LEN", params_.shape_b[DIM::C]);
+            add_define("SIZE_NUM_HEADS", params_.shape_b[DIM::D]);
+            add_define("SIZE_STACKED_TENSORS", params_.shape_b[DIM::H]);
+            add_define("SIZE_HEAD_SIZE", params_.shape_b[DIM::W]);
         }
 
         add_define("SCALE", params_.alpha);

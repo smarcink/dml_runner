@@ -24,22 +24,21 @@ inline dnnl::memory::dims to_dnnl_dims(const TensorShape& shape)
 {
     // nchw
     const auto dc = shape.get_dims_count();
-    assert(dc != 3);
-    assert(dc != 5);
     dnnl::memory::dims dims;
-    if (dc >= 1)
+    if (shape.get_dims_count() == 4)
     {
-        dims.push_back(shape.n);
+        dims.push_back(shape[DIM::N]);
+        dims.push_back(shape[DIM::C]);
+        dims.push_back(shape[DIM::H]);
+        dims.push_back(shape[DIM::W]);
     }
-    if (dc >= 2)
+    else if (shape.get_dims_count() == 3)
     {
-        dims.push_back(shape.c);
+        dims.push_back(shape[DIM::N] * shape[DIM::C]);
+        dims.push_back(shape[DIM::H]);
+        dims.push_back(shape[DIM::W]);
     }
-    if (dc == 4)
-    {
-        dims.push_back(shape.h);
-        dims.push_back(shape.w);
-    }
+
 
     return dims;
 }
@@ -50,6 +49,7 @@ inline dnnl::memory::format_tag to_dnnl_format(const DataLayout l)
     {
     case DataLayout::eNCHW: return dnnl::memory::format_tag::nchw;
     case DataLayout::eNHWC: return dnnl::memory::format_tag::nhwc;
+    case DataLayout::eCHW: return dnnl::memory::format_tag::abc;
     case DataLayout::eO: return dnnl::memory::format_tag::a;
     case DataLayout::eWeightsLayoutStart: return dnnl::memory::format_tag::any; break;
     default:
