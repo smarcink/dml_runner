@@ -13,7 +13,7 @@ public:
         IDMLDevice* dml_device, ID3D12Device* d3d12_device, bool disable_mc = false)
         : DirectMlBaseNode(dml_device, d3d12_device)
     {
-        const dml::TensorDimensions input_dims = shape.dims;
+        const dml::TensorDimensions input_dims{ shape.n, shape.c, shape.h, shape.w };
 
 
         tensor_input_desc_.DataType = data_type;
@@ -31,7 +31,7 @@ public:
         inp_desc.Desc = &tensor_input_desc_;
         inp_desc.Type = DML_TENSOR_TYPE_BUFFER;
 
-        const dml::TensorDimensions scale_bias_dims{ 1, shape[DIM::C], 1, 1};
+        const dml::TensorDimensions scale_bias_dims{ 1, shape.c, 1, 1};
         DML_TENSOR_DESC scale_desc{};
         dml::TensorProperties scale_tensor_properites{};
         if (!no_scale)
@@ -202,11 +202,11 @@ public:
     {
         if (use_bias())
         {
-            bias_data_.resize(params_.shape[DIM::C] * get_data_type_bytes_width(params_.dt));
+            bias_data_.resize(params_.shape.c * get_data_type_bytes_width(params_.dt));
         }
         if (use_scale())
         {
-            scale_data_.resize(params_.shape[DIM::C] * get_data_type_bytes_width(params_.dt));
+            scale_data_.resize(params_.shape.c * get_data_type_bytes_width(params_.dt));
         }
 
         // randomize data
@@ -469,7 +469,7 @@ public:
         , intc_ext_(intc_ext)
         , cm_params_(std::move(cm_params))
     {
-        const auto dataset_size = params_.shape[DIM::H] * params_.shape[DIM::W];
+        const auto dataset_size = params_.shape.h * params_.shape.w;
         const auto dataset_groups = dataset_size / cm_params_.items_per_hw_th;
         cm_params_.lws[2] = dataset_groups;
 
@@ -572,10 +572,10 @@ public:
             build_options += pre_jit + name + between_name_and_value + value_str + post_jit;
         };
 
-        add_define("INOUT_WIDTH", params_.shape[DIM::W]);
-        add_define("INOUT_HEIGHT", params_.shape[DIM::H]);
-        add_define("INOUT_CHANNELS", params_.shape[DIM::C]);
-        add_define("INOUT_BATCH", params_.shape[DIM::N]);
+        add_define("INOUT_WIDTH", params_.shape.w);
+        add_define("INOUT_HEIGHT", params_.shape.h);
+        add_define("INOUT_CHANNELS", params_.shape.c);
+        add_define("INOUT_BATCH", params_.shape.n);
 
         add_define("USE_BIAS", use_bias());
         add_define("USE_SCALE", use_scale());
@@ -711,10 +711,10 @@ public:
             cmd_list->SetComputeRootDescriptorTable(root_index++, gpu_heap_handle);
         }
 
-        const auto dataset_size = params_.shape[DIM::W] * params_.shape[DIM::H];
+        const auto dataset_size = params_.shape.w * params_.shape.h;
 
-        const auto gws_x = params_.shape[DIM::N];
-        const auto gws_y = params_.shape[DIM::C];
+        const auto gws_x = params_.shape.n;
+        const auto gws_y = params_.shape.c;
         const auto gws_z = dataset_size / cm_params_.items_per_hw_th;
 
         assert(gws_x % cm_params_.lws[0] == 0);

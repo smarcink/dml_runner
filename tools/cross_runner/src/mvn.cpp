@@ -40,7 +40,7 @@ std::vector<std::byte> dnnl_mvn_op::mvn(const TensorShape& in_out_shape, DataLay
         {
             return dnnl::memory{};
         }
-        const auto dims = dnnl::memory::dims{ in_out_shape[DIM::C] };
+        const auto dims = dnnl::memory::dims{ in_out_shape.c };
         const auto dt = to_dnnl_data_type(in_out_datatype);
         const auto ft = dnnl::memory::format_tag::a;
         auto ret = dnnl::memory({ dims, dt, ft }, engine);
@@ -54,7 +54,7 @@ std::vector<std::byte> dnnl_mvn_op::mvn(const TensorShape& in_out_shape, DataLay
         {
             return dnnl::memory{};
         }
-        const auto dims = dnnl::memory::dims{ in_out_shape[DIM::C] };
+        const auto dims = dnnl::memory::dims{ in_out_shape.c };
         const auto dt = to_dnnl_data_type(in_out_datatype);
         const auto ft = dnnl::memory::format_tag::a;
         auto ret = dnnl::memory({ dims, dt, ft }, engine);

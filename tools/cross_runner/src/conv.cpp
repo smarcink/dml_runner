@@ -61,7 +61,7 @@ std::vector<std::byte> dnnl_conv_op::convolution(const bindings_t& bindings, opt
         {
             return dnnl::memory{};
         }
-        const auto dims = dnnl::memory::dims{ binding.shape[DIM::N] };
+        const auto dims = dnnl::memory::dims{ binding.shape.n };
         const auto dt = to_dnnl_data_type(binding.dt);
         const auto ft = dnnl::memory::format_tag::a;
         auto ret = dnnl::memory({ dims, dt, ft }, engine);
@@ -77,7 +77,7 @@ std::vector<std::byte> dnnl_conv_op::convolution(const bindings_t& bindings, opt
 
 
     const dnnl::memory::dims pad{ opts.inp_pad, opts.inp_pad };
-    const dnnl::memory::dims stride{ opts.stride[DIM::H], opts.stride[DIM::W]};
+    const dnnl::memory::dims stride{ opts.stride.h, opts.stride.w };
     const dnnl::primitive_attr attr = CreateEltwisePostOps(static_cast<dnnl::algorithm>(opts.activation_type), opts.activation_alpha, opts.activation_beta, opts.accumulator_dt);
     const dnnl::convolution_forward::primitive_desc conv_desc(engine,
         dnnl::prop_kind::forward_inference, 

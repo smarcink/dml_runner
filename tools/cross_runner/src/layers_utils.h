@@ -16,98 +16,68 @@ inline bool is_power_of_2(std::size_t n)
     return (n & (n - 1)) == 0;
 }
 
-enum class DIM
-{
-    N,
-    C,
-    D,
-    H,
-    W,
-};
-
 struct TensorShape
 {
-    std::vector<std::uint32_t> dims;
+    std::uint32_t n = 0;
+    std::uint32_t c = 0;
+    std::uint32_t d = 0; // for 5d tensors
+    std::uint32_t h = 0;
+    std::uint32_t w = 0;
 
     TensorShape() = default;
 
     TensorShape(std::uint32_t n, std::uint32_t c, std::uint32_t h, std::uint32_t w)
+        : n(n), c(c), h(h), w(w)
     {
-        dims.push_back(n);
-        dims.push_back(c);
-        dims.push_back(h);
-        dims.push_back(w);
     }
 
     TensorShape(std::span<std::uint32_t> in_v)
     {
-        for (const auto& v : in_v)
+        assert(!(in_v.size() <3 || in_v.size() > 5) && "Not supported shape!");
+        std::int32_t current_idx = static_cast<std::int32_t>(in_v.size()) - 1;
+        if (in_v.size() > 3)
         {
-            dims.push_back(v);
+            w = in_v[current_idx--];
         }
+        h = in_v[current_idx--];
+        if (in_v.size() == 5)
+        {
+            d = in_v[current_idx--];
+        }
+        if (in_v.size() > 2)
+        {
+            c = in_v[current_idx--];
+            n = in_v[current_idx--];
+        }
+        assert(current_idx == -1 && "Current idex should be equal -1 (parsed all dimensions).");
     }
 
-    std::uint32_t operator [] (enum class DIM d) const { return dims[at(d)]; }
-    std::uint32_t& operator [] (enum class DIM d) { return dims[at(d)]; }
-
-    inline std::uint32_t get_elements_count() const
+    inline std::size_t get_elements_count() const
     {
-        return std::accumulate(dims.begin(), dims.end(), 1u, std::multiplies<std::uint32_t>());
+        if (get_dims_count() == 0)
+        {
+            return 0;
+        }
+        std::size_t acc = 1;
+        acc *= n ? n : 1;
+        acc *= c ? c : 1;
+        acc *= d ? d : 1;
+        acc *= h ? h : 1;
+        acc *= w ? w : 1;
+        return acc;
     }
 
     inline std::uint8_t get_dims_count() const
     {
-        return static_cast<std::uint8_t>(dims.size());
+        std::uint8_t ret = 0;
+        if (n) ret++;
+        if (c) ret++;
+        if (d) ret++;
+        if (h) ret++;
+        if (w) ret++;
+
+        return ret;
     }
-
-private:
-    std::uint32_t at(enum class DIM d) const
-    {
-        assert(dims.size() <= 5);
-        const auto idx = static_cast<std::uint32_t>(d);
-        std::map<DIM, std::uint32_t> map =
-        {
-            {DIM::N, 0},
-            {DIM::C, 1},
-            {DIM::D, 2},
-            {DIM::H, 3},
-            {DIM::W, 4},
-        };
-
-        //ToDo: refactor below code, should be doable in better way (in single loop?)
-        if (get_dims_count() == 4)
-        {
-            map[DIM::D] = -1;
-            map[DIM::H] = 2;
-            map[DIM::W] = 3;
-        }
-        else if (get_dims_count() == 3)
-        {
-            map[DIM::C] = -1;
-            map[DIM::D] = -1;
-            map[DIM::H] = 1;
-            map[DIM::W] = 2;
-        }
-        else if (get_dims_count() == 2)
-        {
-            map[DIM::N] = -1;
-            map[DIM::C] = -1;
-            map[DIM::D] = -1;
-            map[DIM::H] = 0;
-            map[DIM::W] = 1;
-        }
-        else if (get_dims_count() == 1)
-        {
-            map[DIM::N] = -1;
-            map[DIM::C] = -1;
-            map[DIM::D] = -1;
-            map[DIM::H] = -1;
-            map[DIM::W] = 0;
-        }
-
-        return map[d];
-    }
-
 };
 
 
