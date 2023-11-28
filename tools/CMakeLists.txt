@@ -1,1 +1,2 @@
+add_subdirectory(common_lib)
 add_subdirectory(cross_runner)

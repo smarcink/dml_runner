@@ -1,11 +1,12 @@
-#include "dx12_utils.h"
-#include "gemm.h"
-#include "conv.h"
-#include "softmax.h"
-#include "mvn.h"
-#include "mha.h"
-#include "memory_bandwidth.h"
-#include "layers_utils.h"
+#include <dx12_utils.h>
+#include <gemm.h>
+#include <conv.h>
+#include <softmax.h>
+#include <mvn.h>
+#include <mha.h>
+#include <memory_bandwidth.h>
+#include <layers_utils.h>
+
 
 #include <iostream>
 #include <optional>
