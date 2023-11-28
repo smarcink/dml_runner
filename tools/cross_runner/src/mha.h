@@ -71,7 +71,7 @@ namespace gpu_op
                 DML_MULTIHEAD_ATTENTION_OPERATOR_DESC desc = {};
                 desc.StackedQueryKeyValueTensor = &stacked_qkv_tensor_desc;
                 desc.OutputTensor = &output_desc;
-                desc.Scale = 0.001;
+                desc.Scale = 0.001f;
                 desc.MaskFilterValue = -10000000;
                 desc.HeadCount = 8;
                 desc.MaskType = DML_MULTIHEAD_ATTENTION_MASK_TYPE_NONE;

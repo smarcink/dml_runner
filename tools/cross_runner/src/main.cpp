@@ -90,7 +90,14 @@ int main()
     CliOptions opts;
     CLI::App dml_runner_app{ "App to microbenchmark and developer dml kernels.", "DirectML runner." };
     dml_runner_app.add_option("--type", opts.node_type, "Name of the type of layer to run.")
-
+    ->required()->check(CLI::IsMember({ 
+        NodeType::eConvDml, NodeType::eConvCm, NodeType::eConvUmdD3d12,
+        NodeType::eGemmDml, NodeType::eGemmCm, NodeType::eGemmUmdD3d12,
+        NodeType::eSoftmaxDml, NodeType::eSoftmaxCm,
+        NodeType::eMvnDml, NodeType::eMvnCm,
+        NodeType::eMhaDml,
+        NodeType::eMemoryBandwidth
+        }))->
         transform(CLI::Transformer(std::map<std::string, NodeType>{
             { "conv_dml", NodeType::eConvDml },
             { "conv_cm", NodeType::eConvCm },
