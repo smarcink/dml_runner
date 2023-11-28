@@ -1,3 +1,0 @@
-# ignore build64 directory for git check-in
-/build32/
-/build64/
