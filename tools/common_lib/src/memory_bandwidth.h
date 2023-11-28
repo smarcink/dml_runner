@@ -194,7 +194,7 @@ public:
     }
 
     ConformanceResult validate_conformance(ID3D12CommandQueue* command_queue,
-        ID3D12CommandAllocator* command_allocator, ID3D12GraphicsCommandList* command_list) override
+        ID3D12CommandAllocator* command_allocator, ID3D12GraphicsCommandList* command_list, bool print_mismatches) override
     {
         const auto tensor_out_bytes_width = output_buffer_->GetDesc().Width;
 
@@ -222,11 +222,11 @@ public:
 
         if (params_.dt == DataType::eFp32)
         {
-            return run_conformance_check<float>(data_out, input_data_, 0.0f);
+            return run_conformance_check<float>(data_out, input_data_, 0.0f, print_mismatches);
         }
         else if (params_.dt == DataType::eFp16)
         {
-            return run_conformance_check<Half>(data_out, input_data_, 0.0f);
+            return run_conformance_check<Half>(data_out, input_data_, 0.0f, print_mismatches);
         }
         ConformanceResult ret{};
         return ret;

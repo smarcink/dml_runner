@@ -13,7 +13,16 @@ enum META_COMMAND_CUSTOM_SHADER_LANGUAGE : UINT64
 {
     META_COMMAND_CUSTOM_SHADER_LANGUAGE_NONE = 0,
     META_COMMAND_CUSTOM_SHADER_LANGUAGE_OCL,
-    META_COMMAND_CUSTOM_SHADER_LANGUAGE_OCL_STATELESS
+    META_COMMAND_CUSTOM_SHADER_LANGUAGE_OCL_STATELESS,
+    META_COMMAND_CUSTOM_SHADER_LANGUAGE_ZEBIN_ELF,
+};
+
+//////////////////////////////////////////////////////////////////////////
+enum META_COMMAND_CUSTOM_RESOURCE_BIND_TYPE : UINT64
+{
+    META_COMMAND_CUSTOM_RESOURCE_BIND_TYPE_NONE = 0,
+    META_COMMAND_CUSTOM_RESOURCE_BIND_TYPE_HANDLE,
+    META_COMMAND_CUSTOM_RESOURCE_BIND_TYPE_ADDRESS
 };
 
 //////////////////////////////////////////////////////////////////////////
@@ -36,9 +45,12 @@ struct META_COMMAND_INITIALIZE_CUSTOM_DESC
     //////////////////////////////////////////////////////////////////////////
 struct META_COMMAND_EXECUTE_CUSTOM_DESC
 {
-    D3D12_GPU_DESCRIPTOR_HANDLE Resources[50];
-    UINT64                      ResourcesByteOffsets[50];  // works only in stateless mode
-    UINT64 ResourceCount;
+    UINT64                      ResourceCount;
+    META_COMMAND_CUSTOM_RESOURCE_BIND_TYPE ResourceBindType[50];
+    UINT64                      ResourceBindOffset[50];
+    D3D12_GPU_DESCRIPTOR_HANDLE Resources[50];            // use address or handles
+    D3D12_GPU_VIRTUAL_ADDRESS   ResourcesAddress[50];     // use address or handles
+    UINT64                      ResourcesByteOffset[50];  // works only in stateless mode
 
     UINT64 RuntimeConstants;      // buffer with constants
     UINT64 RuntimeConstantsCount; // how many runtime constants in total
@@ -47,6 +59,8 @@ struct META_COMMAND_EXECUTE_CUSTOM_DESC
     UINT64 RuntimeConstantsMemoryOffsets[40]; // bytes offset into "RuntimeConstants" buffer
 
     UINT64 DispatchThreadGroup[3];
+    UINT64 DispatchGlobalWorkSize[3];
+    UINT64 DispatchLocalWorkSize[3];
 };
 
 
@@ -97,17 +111,62 @@ iumd::custom_metacommand::UmdD3d12Device::UmdD3d12Device(ID3D12Device* device, I
     }
 }
 
-iumd::custom_metacommand::UmdD3d12PipelineStateObject::UmdD3d12PipelineStateObject(iumd::custom_metacommand::UmdD3d12Device* device, const char* kernel_name, const char* code_string, const char* build_options, UMD_SHADER_LANGUAGE language)
+
+bool iumd::custom_metacommand::UmdD3d12Device::fill_memory(IUMDCommandList* cmd_list, const IUMDMemory* dst_mem, std::size_t size, const void* pattern, std::size_t pattern_size,
+    const std::vector<IUMDEvent*>& deps, std::shared_ptr<IUMDEvent>* out)
+{
+    if (!cmd_list || !dst_mem || !pattern || (pattern_size == 0))
+    {
+        return false;
+    }
+    if (size == 0)
+    {
+        // no work to do, but it's not cosidered error
+        return true;
+    }
+
+    // compile copy kernel, if it's first time hitting this function
+    if (!buffer_filler_) {
+        const char* code_string
+            = "__attribute__((reqd_work_group_size(1,1, 1))) "
+            "__kernel void buffer_pattern_filler(__global unsigned char* output, unsigned char pattern)"
+            "{"
+            "const uint id = get_global_id(0);"
+            "output[id] = pattern;"
+            "}";
+
+        buffer_filler_ = create_pipeline_state_object("buffer_pattern_filler", code_string, std::strlen(code_string), "", UMD_SHADER_LANGUAGE_OCL_STATELESS);
+    }
+    assert(buffer_filler_);
+
+    auto typed_cmd_list = dynamic_cast<iumd::custom_metacommand::UmdD3d12CommandList*>(cmd_list);
+    
+    buffer_filler_->set_kernel_arg(0, dst_mem);
+    buffer_filler_->set_kernel_arg(1, IUMDPipelineStateObject::ScalarArgType{pattern_size, pattern});
+    const auto lws = std::array<std::size_t, 3>{1, 1, 1};
+    const auto gws = std::array<std::size_t, 3>{size, 1, 1};
+
+    return typed_cmd_list->dispatch(buffer_filler_.get(), gws, lws, deps, out);
+}
+
+iumd::custom_metacommand::UmdD3d12PipelineStateObject::UmdD3d12PipelineStateObject(iumd::custom_metacommand::UmdD3d12Device* device, const char* kernel_name, const void* kernel_code, std::size_t kernel_code_size, const char* build_options, UMD_SHADER_LANGUAGE language)
+    : name_(kernel_name)
+    , device_(device)
 {
     auto d3d12_dev = device->get_d3d12_device();
     ID3D12Device5* dev5 = nullptr;
     throw_if_failed(d3d12_dev->QueryInterface(&dev5), "cant cast d3d12 device to ID3D12Device5");
 
+    if (kernel_code == nullptr || kernel_code_size == 0)
+    {
+        throw std::runtime_error("Code string is empty. Please provide valid kernel/binary data.\n");
+    }
+
     META_COMMAND_CREATE_CUSTOM_DESC create_desc{};
-    create_desc.ShaderSourceCode = reinterpret_cast<UINT64>(code_string);
-    create_desc.ShaderSourceCodeSize = std::strlen(code_string);
+    create_desc.ShaderSourceCode = reinterpret_cast<UINT64>(kernel_code);
+    create_desc.ShaderSourceCodeSize = kernel_code_size;
     create_desc.BuildOptionString = reinterpret_cast<UINT64>(build_options);
-    create_desc.BuildOptionStringSize = std::strlen(build_options);
+    create_desc.BuildOptionStringSize = build_options ? std::strlen(build_options) : 0ull;
     switch (language)
     {
     case UMD_SHADER_LANGUAGE_OCL:
@@ -116,6 +175,9 @@ iumd::custom_metacommand::UmdD3d12PipelineStateObject::UmdD3d12PipelineStateObje
     case UMD_SHADER_LANGUAGE_OCL_STATELESS:
         create_desc.ShaderLanguage = META_COMMAND_CUSTOM_SHADER_LANGUAGE_OCL_STATELESS;
         break;
+    case UMD_SHADER_LANGUAGE_ZEBIN_ELF:
+        create_desc.ShaderLanguage = META_COMMAND_CUSTOM_SHADER_LANGUAGE_ZEBIN_ELF;
+        break;
     default:
         create_desc.ShaderLanguage = META_COMMAND_CUSTOM_SHADER_LANGUAGE_NONE;
         
@@ -123,21 +185,28 @@ iumd::custom_metacommand::UmdD3d12PipelineStateObject::UmdD3d12PipelineStateObje
     assert(create_desc.ShaderLanguage != META_COMMAND_CUSTOM_SHADER_LANGUAGE_NONE);
 
     throw_if_failed(dev5->CreateMetaCommand(GUID_CUSTOM, 0, &create_desc, sizeof(create_desc), IID_PPV_ARGS(mc_.ReleaseAndGetAddressOf())), "cant create custom metacommand");
+}
 
-    //D3D12_FEATURE_DATA_QUERY_META_COMMAND query{};
-    //dev5->CheckFeatureSupport(D3D12_FEATURE_QUERY_META_COMMAND, &query, sizeof(query));
+const char* iumd::custom_metacommand::UmdD3d12PipelineStateObject::get_name() const
+{
+    return name_.c_str();
+}
+
+iumd::IUMDDevice* iumd::custom_metacommand::UmdD3d12PipelineStateObject::get_parent_device()
+{
+    return device_;
 }
 
 bool iumd::custom_metacommand::UmdD3d12PipelineStateObject::set_kernel_arg(std::size_t index, const IUMDMemory* memory, std::size_t offset)
 {
     auto typed_mem = memory ? dynamic_cast<const iumd::custom_metacommand::UmdD3d12Memory*>(memory) : nullptr;
-    resources[index] = { typed_mem, offset };
+    resources_[index] = { typed_mem, offset };
     return true;
 }
 
 bool iumd::custom_metacommand::UmdD3d12PipelineStateObject::set_kernel_arg(std::size_t index, IUMDPipelineStateObject::ScalarArgType scalar)
 {
-    scalars[index] = scalar;
+    scalars_[index] = scalar;
     return true;
 }
 
@@ -154,28 +223,52 @@ bool iumd::custom_metacommand::UmdD3d12PipelineStateObject::execute(ID3D12Graphi
             return false;
         }
         exec_desc.DispatchThreadGroup[i] = gws[i] / lws[i];
+        exec_desc.DispatchGlobalWorkSize[i] = gws[i];
+        exec_desc.DispatchLocalWorkSize[i] = lws[i];
+    }
+    exec_desc.ResourceCount = resources_.size();
+    if (exec_desc.ResourceCount >= std::size(exec_desc.Resources))
+    {
+        assert(!"Please extend number of supported resources for custom metacommand!");
+        return false;
     }
 
-    // [1] Prepare resoruces pointer handles
-    for (const auto& [idx, memory] : resources)
+    // [1] Prepare resoruces pointer handles 
+    for (std::size_t idx = 0; const auto& [bind_indx, memory] : resources_)
     {
-        if (idx >= std::size(exec_desc.Resources))
-        {
-            assert(!"Please extend number of supported resources for custom metacommand!");
-            return false;
-        }
+        exec_desc.ResourceBindOffset[idx] = bind_indx;
+
         const auto& [mem_ptr, base_offset] = memory;
         if (mem_ptr)
         {
-            exec_desc.Resources[idx] = mem_ptr->get_gpu_descriptor_handle();
-            exec_desc.ResourcesByteOffsets[idx] = base_offset;
+            // set offset no matter what type of resource
+            exec_desc.ResourcesByteOffset[idx] = base_offset;
+
+            // use type of binding based on memory type
+            const auto type = mem_ptr->get_type();
+            if (UmdD3d12Memory::Type::eHandle == type)
+            {
+                exec_desc.ResourceBindType[idx] = META_COMMAND_CUSTOM_RESOURCE_BIND_TYPE_HANDLE;
+                exec_desc.Resources[idx] = mem_ptr->get_gpu_descriptor_handle();
+            }
+            else if (UmdD3d12Memory::Type::eResource == type)
+            {
+                exec_desc.ResourceBindType[idx] = META_COMMAND_CUSTOM_RESOURCE_BIND_TYPE_ADDRESS;
+                exec_desc.ResourcesAddress[idx] = mem_ptr->get_resource()->GetGPUVirtualAddress();
+            }
+            else
+            {
+                assert(!"Unsupported memory type!");
+                return false;
+            }
         }
-        exec_desc.ResourceCount++;
+        idx++;
     }
+
 
     // [2] Build execution time constants 
     std::vector<std::byte> execution_time_constants;
-    for (std::size_t i = 0; const auto& [idx, scalar] : scalars)
+    for (std::size_t i = 0; const auto& [idx, scalar] : scalars_)
     {
         exec_desc.RuntimeConstantsBindOffsets[i] = idx;
         exec_desc.RuntimeConstantsMemorySizes[i] = scalar.size;
@@ -183,18 +276,14 @@ bool iumd::custom_metacommand::UmdD3d12PipelineStateObject::execute(ID3D12Graphi
         execution_time_constants.resize(execution_time_constants.size() + scalar.size);
         i++;
     }
-    if (execution_time_constants.size() % 4 != 0)
-    {
-        assert(!"Please use 4 byte aligned scalars for metacommand. ToDo: This can be workaround with proper padding and alignments!");
-        return false;
-    }
+
     auto* ptr_to_copy_data = execution_time_constants.data();
-    for (const auto& [idx, scalar] : scalars)
+    for (const auto& [idx, scalar] : scalars_)
     {
         std::memcpy(ptr_to_copy_data, scalar.data, scalar.size);
         ptr_to_copy_data += scalar.size;
     }
-    exec_desc.RuntimeConstantsCount = scalars.size();
+    exec_desc.RuntimeConstantsCount = scalars_.size();
     exec_desc.RuntimeConstants = reinterpret_cast<UINT64>(execution_time_constants.data());
 
     cmd_list->ExecuteMetaCommand(mc_.Get(), &exec_desc, sizeof(exec_desc));
@@ -203,11 +292,23 @@ bool iumd::custom_metacommand::UmdD3d12PipelineStateObject::execute(ID3D12Graphi
 
 bool iumd::custom_metacommand::UmdD3d12CommandList::dispatch(iumd::IUMDPipelineStateObject* pso, const std::array<std::size_t, 3>& gws, const std::array<std::size_t, 3>& lws, const std::vector<iumd::IUMDEvent*>& deps, std::shared_ptr<iumd::IUMDEvent>* out)
 {
+    wait_for_deps(deps);
+
+    auto typed_pso = dynamic_cast<iumd::custom_metacommand::UmdD3d12PipelineStateObject*>(pso);
+    const auto result = typed_pso->execute(impl_, gws, lws);
+ 
+    put_barrier(out);
+    return result;
+}
+
+
+void iumd::custom_metacommand::UmdD3d12CommandList::wait_for_deps(const std::vector<IUMDEvent*>& deps)
+{
     if (!deps.empty())
     {
         // Single global barrier is enough for now, because we use b.UAV.pResource = nullptr;
         // If we would support concrete resources barriers, than we need a way to specify resource pointer to b.UAV.pResource
-        constexpr const bool single_barrier_is_enough = true;  
+        constexpr const bool single_barrier_is_enough = true;
         std::vector<D3D12_RESOURCE_BARRIER> barriers(single_barrier_is_enough ? 1u : deps.size());
         for (auto& b : barriers)
         {
@@ -217,13 +318,12 @@ bool iumd::custom_metacommand::UmdD3d12CommandList::dispatch(iumd::IUMDPipelineS
         }
         impl_->ResourceBarrier(static_cast<std::uint32_t>(barriers.size()), barriers.data());
     }
+}
 
-    auto typed_pso = dynamic_cast<iumd::custom_metacommand::UmdD3d12PipelineStateObject*>(pso);
-    const auto result = typed_pso->execute(impl_, gws, lws);
- 
+void iumd::custom_metacommand::UmdD3d12CommandList::put_barrier(std::shared_ptr<IUMDEvent>* out)
+{
     if (out)
     {
         *out = std::make_shared<iumd::custom_metacommand::UmdD3d12Event>();
     }
-    return result;
 }

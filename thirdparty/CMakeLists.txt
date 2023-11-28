@@ -42,3 +42,6 @@ set_property(TARGET dml PROPERTY IMPORTED_IMPLIB "${CMAKE_CURRENT_SOURCE_DIR}/dm
 
 #cli
 add_subdirectory(CLI11)
+
+#gtests
+add_subdirectory(googletest)

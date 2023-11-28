@@ -44,6 +44,9 @@ struct opts_t
     DataType out_dt = DataType::eCount;
     DataLayout out_layout = DataLayout::eCount;
     bool force_fp32_accumulator = false;
+
+    float alpha = 1.0f;
+    float beta = 1.0f;
 };
 std::vector<std::byte> gemm(const bindings_t& bindings, opts_t opts);
 }
@@ -589,15 +592,13 @@ public:
         {
             randomize_linear_container_float(random_generator, uniform_distribution, input_data_a_);
             randomize_linear_container_float(random_generator, uniform_distribution, input_data_b_);
-            fill_with_constant_linear_container_float(input_data_c_, 1.0f);
-            //randomize_linear_container_float(random_generator, uniform_distribution, input_data_c_);
+            randomize_linear_container_float(random_generator, uniform_distribution, input_data_c_);
         }
         else if (params_.dt == DataType::eFp16)
         {
             randomize_linear_container_half(random_generator, uniform_distribution, input_data_a_);
             randomize_linear_container_half(random_generator, uniform_distribution, input_data_b_);
-            fill_with_constant_linear_container_float(input_data_c_, 1.0f);
-            //randomize_linear_container_half(random_generator, uniform_distribution, input_data_c_);
+            randomize_linear_container_half(random_generator, uniform_distribution, input_data_c_);
         }
         else
         {
@@ -676,7 +677,7 @@ public:
         cmd_list->ResourceBarrier(static_cast<std::uint32_t>(barriers.size()), barriers.data());
     }
 
-    virtual ConformanceResult validate_conformance(ID3D12CommandQueue* command_queue, ID3D12CommandAllocator* command_allocator, ID3D12GraphicsCommandList* command_list)
+    virtual ConformanceResult validate_conformance(ID3D12CommandQueue* command_queue, ID3D12CommandAllocator* command_allocator, ID3D12GraphicsCommandList* command_list, bool print_mismatches)
     {
         const auto out_shape = get_shape_output();
         const auto tensor_out_bytes_width = out_shape.get_elements_count() * get_data_type_bytes_width(params_.dt);
@@ -729,6 +730,8 @@ public:
             opts.out_layout = params_.layout;
             opts.output_shape = get_shape_output();
             opts.force_fp32_accumulator = params_.dt == DataType::eFp16 && !params_.allow_fp16_computations;
+            opts.alpha = params_.alpha;
+            opts.beta = params_.beta;
             ref_untyped_result = dnnl_gemm_op::gemm(bindings, opts);
         }
         else   
@@ -766,11 +769,11 @@ public:
 
         if (params_.dt == DataType::eFp32)
         {
-            return run_conformance_check<float>(data_out, ref_untyped_result, 0.05f);
+            return run_conformance_check<float>(data_out, ref_untyped_result, 0.05f, print_mismatches);
         }
         else if (params_.dt == DataType::eFp16)
         {
-            return run_conformance_check<Half>(data_out, ref_untyped_result, 0.05f);
+            return run_conformance_check<Half>(data_out, ref_untyped_result, 0.05f, print_mismatches);
         }
         assert(false && "Unsupported output data type!");
         ConformanceResult ret{};
@@ -952,15 +955,23 @@ public:
             {
                 attr.set_accumulation_mode(dnnl::accumulation_mode::f32);
             }
-            // alpha and beta
+
+            // alpha
             if (has_scaling_factors())
             {
-                attr.set_scales_mask(DNNL_ARG_WEIGHTS, 0);  // alpha
+                attr.set_scales_mask(DNNL_ARG_WEIGHTS, 0);  // alpha / beta
             }
 
             if (has_c_tensor())
             {
                 ops.append_binary(dnnl::algorithm::binary_add, input_c_memory_desc_.value());
+            }
+
+            // beta
+            if (has_scaling_factors())
+            {
+                ops.append_binary(dnnl::algorithm::binary_mul, 
+                    to_dnnl_mem_desc(TensorShape{ 1, 0, 0, 0 }, DataLayout::eW, DataType::eFp32));
             }
 
             attr.set_post_ops(ops);
@@ -980,6 +991,11 @@ public:
         const auto persistent_resource_size = [&]()
         {
             std::size_t ret = 0ull;
+            if (has_scaling_factors())
+            {
+                ret += 2 * sizeof(float);
+            }
+
             if (params_.b_managed)
             {
                 ret += input_b_memory_desc_.get_size();
@@ -987,6 +1003,7 @@ public:
 
             if (params_.c_managed)
             {
+                assert(!"params_.c_managed is nt not tested option, most likely bugs hidden somewhere!");
                 assert(input_c_memory_desc_.has_value());
                 ret += input_c_memory_desc_->get_size();
             }
@@ -1003,13 +1020,7 @@ public:
         scratchpad_memory_desc_.emplace(matmul_desc.query_md(dnnl::query::scratchpad_md));
         const auto temporary_resoruce_size = [&]()
         {
-            auto ret = scratchpad_memory_desc_->get_size();
-            if (has_scaling_factors())
-            {
-                assert(ret == 0 && "Not tested path: scratchpad + copy alpha and beta yet! Potential bugs ahead.");
-                ret += 2 * sizeof(float);
-            }
-            return ret;
+            return scratchpad_memory_desc_->get_size();
         }(); 
         if (temporary_resoruce_size != 0)
         {
@@ -1038,13 +1049,14 @@ public:
         if (has_scaling_factors())
         {
             const char* code_string =
-                "__attribute__((reqd_work_group_size(1,1, 1))) "
-                "__kernel void copy_alphabeta(__global float* output, float alpha) "
+                "__attribute__((reqd_work_group_size(1, 1, 1))) "
+                "__kernel void copy_alphabeta(__global float* output, float alpha, float beta) "
                 "{"
                 "output[0] = alpha;"
+                "output[1] = beta;"
                 "}";
 
-            copy_alpha_shader_ = device_.create_pipeline_state_object("copy_alphabeta", code_string, "", UMD_SHADER_LANGUAGE_OCL_STATELESS);
+            copy_alpha_shader_ = device_.create_pipeline_state_object("copy_alphabeta", code_string, std::strlen(code_string), "", UMD_SHADER_LANGUAGE_OCL_STATELESS);
             assert(copy_alpha_shader_);
         }
     }
@@ -1085,14 +1097,25 @@ public:
         {
             resources_list.push_back({ DescType::eUav, input_buffer_c_.Get() });
         }
-        if (has_scaling_factors())
-        {
-            resources_list.push_back({ DescType::eUav, temporary_buffer_.Get() });
-        }
         const auto gpu_handles = create_resource_views_and_handles(d3d12_device_, resources_list, base_cpu_handle_, base_gpu_handle_);
         
         std::size_t rsc_idx = 0;
         auto umd_persistent_mem = persistent_buffer_ ? iumd::custom_metacommand::UmdD3d12Memory(gpu_handles[rsc_idx++]) : iumd::custom_metacommand::UmdD3d12Memory{};
+        std::size_t persistent_mem_offset = 0;
+
+        if (has_scaling_factors())
+        {
+            // hack for oneDNNL to have OneDNNL aligned with DirectML!
+            const float beta = has_c_tensor() ? params_.beta : 1.0f;
+            const float alpha = params_.alpha / beta;
+
+            copy_alpha_shader_->set_kernel_arg(0, &umd_persistent_mem);
+            copy_alpha_shader_->set_kernel_arg(1, iumd::IUMDPipelineStateObject::ScalarArgType{ sizeof(float), &alpha });
+            copy_alpha_shader_->set_kernel_arg(2, iumd::IUMDPipelineStateObject::ScalarArgType{ sizeof(float), &beta });
+            cmd.dispatch(copy_alpha_shader_.get(), { 1, 1, 1 }, { 1, 1, 1 });
+
+            persistent_mem_offset += 2 * sizeof(float);
+        }
 
         // weights reorder
         if (reorder_input_b_)
@@ -1100,13 +1123,15 @@ public:
             auto umd_input_mem = iumd::custom_metacommand::UmdD3d12Memory(gpu_handles[rsc_idx++]);
 
             dnnl::memory input_memory = create_dnnl_memory(dnnl_utils::to_dnnl_mem_desc(params_.shape_b, params_.layout, params_.dt), umd_input_mem);
-            dnnl::memory reorder_memory = create_dnnl_memory(input_b_memory_desc_, umd_persistent_mem);
+            dnnl::memory reorder_memory = create_dnnl_memory(input_b_memory_desc_, umd_persistent_mem, persistent_mem_offset);
 
             std::unordered_map<int, dnnl::memory> args;
             args.insert({ DNNL_ARG_SRC, input_memory });
             args.insert({ DNNL_ARG_DST, reorder_memory });
 
             reorder_input_b_.execute(stream, args);
+            persistent_mem_offset += input_b_memory_desc_.get_size();
+
         }
 
         // weights reorder
@@ -1116,7 +1141,7 @@ public:
             auto umd_input_mem = iumd::custom_metacommand::UmdD3d12Memory(gpu_handles[rsc_idx++]);
 
             dnnl::memory input_memory = create_dnnl_memory(input_c_memory_desc_.value(), umd_input_mem);
-            dnnl::memory reorder_memory = create_dnnl_memory(input_c_memory_desc_.value(), umd_persistent_mem, reorder_input_b_ ? input_b_memory_desc_.get_size() : 0ull);
+            dnnl::memory reorder_memory = create_dnnl_memory(input_c_memory_desc_.value(), umd_persistent_mem, persistent_mem_offset);
 
             std::unordered_map<int, dnnl::memory> args;
             args.insert({ DNNL_ARG_SRC, input_memory });
@@ -1124,20 +1149,6 @@ public:
 
             reorder_input_c_.execute(stream, args);
         }
-
-        if (has_scaling_factors())
-        {
-            // hack for oneDNNL to have OneDNNL aligned with DirectML!
-            const float beta = has_c_tensor() ? params_.beta : 1.0f;
-            const float alpha = params_.alpha / beta;
-
-            auto umd_scratchpad_memory = iumd::custom_metacommand::UmdD3d12Memory(gpu_handles[rsc_idx++]);
-            copy_alpha_shader_->set_kernel_arg(0, &umd_scratchpad_memory);  
-            copy_alpha_shader_->set_kernel_arg(1, iumd::IUMDPipelineStateObject::ScalarArgType{ 4, &alpha });
-            //copy_alpha_shader_->set_kernel_arg(2, IUMDPipelineStateObject::ScalarArgType{ 4, &beta });
-            cmd.dispatch(copy_alpha_shader_.get(), {1, 1, 1}, {1, 1, 1});
-        }
-
     }
 
     void execute(ID3D12GraphicsCommandList* cmd_list) override
@@ -1145,7 +1156,15 @@ public:
         std::vector<std::pair<DescType, ID3D12Resource*>> resources_list;
         resources_list.reserve(get_total_descriptor_count());
         resources_list.push_back({ DescType::eUav, input_buffer_a_.Get() });
-        resources_list.push_back({ DescType::eUav, reorder_input_b_ ? persistent_buffer_.Get() : input_buffer_b_.Get()});
+        if (persistent_buffer_)
+        {
+            resources_list.push_back({ DescType::eUav, persistent_buffer_.Get() });
+        }
+        if (!reorder_input_b_)
+        {
+            resources_list.push_back({ DescType::eUav, input_buffer_b_.Get()});
+        }
+
         resources_list.push_back({ DescType::eUav, output_buffer_.Get() });
         if (input_buffer_c_ && !reorder_input_c_)
         {
@@ -1159,7 +1178,8 @@ public:
 
         std::size_t res_idx = 0;
         auto umd_input_a_memory_ = iumd::custom_metacommand::UmdD3d12Memory(gpu_handles[res_idx++]);
-        auto umd_input_b_memory_ = iumd::custom_metacommand::UmdD3d12Memory(gpu_handles[res_idx++]);
+        auto umd_persitent_memory = persistent_buffer_ ? iumd::custom_metacommand::UmdD3d12Memory(gpu_handles[res_idx++]) : iumd::custom_metacommand::UmdD3d12Memory();
+        auto umd_input_b_memory_ = reorder_input_b_ ? umd_persitent_memory : iumd::custom_metacommand::UmdD3d12Memory(gpu_handles[res_idx++]);
         auto umd_output_memory_ = iumd::custom_metacommand::UmdD3d12Memory(gpu_handles[res_idx++]);
         auto umd_input_c_memory_ = [&]()
         {
@@ -1169,12 +1189,12 @@ public:
             }
             else if (reorder_input_c_)
             {
-                return umd_input_b_memory_;
+                return umd_persitent_memory;
             }
             return iumd::custom_metacommand::UmdD3d12Memory{};
         }();
 
-
+        auto umd_alpha_beta_memory_ = umd_persitent_memory;
         auto umd_scratchpad_memory_ = temporary_buffer_ ? iumd::custom_metacommand::UmdD3d12Memory(gpu_handles[res_idx++]) : iumd::custom_metacommand::UmdD3d12Memory();
 
         // stream is created in execute(...), because in MetaCommand cmd list object can be different from execute-to-execute
@@ -1185,28 +1205,58 @@ public:
         
         // memory resources are created in execute(...), because in MetaCommand these objects can be different from execute-to-execute
         dnnl::memory input_memory = create_dnnl_memory(input_a_memory_desc_, umd_input_a_memory_);
-        dnnl::memory input_b_memory = create_dnnl_memory(input_b_memory_desc_, umd_input_b_memory_);
-        dnnl::memory input_c_memory = has_c_tensor() ?
-            create_dnnl_memory(input_c_memory_desc_.value(), umd_input_c_memory_, (reorder_input_b_ && reorder_input_c_) ? input_b_memory_desc_.get_size() : 0ull) :
-            dnnl::memory{};
+
+        std::size_t persistent_mem_offset = 0;
+        dnnl::memory alpha_factor_memory{};
+        dnnl::memory beta_factor_memory{};
+        if (has_scaling_factors())
+        {
+            alpha_factor_memory = create_dnnl_memory(dnnl_utils::to_dnnl_mem_desc(TensorShape(1, 0, 0, 0), DataLayout::eW, params_.dt), umd_alpha_beta_memory_, 0ull);
+            beta_factor_memory = create_dnnl_memory(dnnl_utils::to_dnnl_mem_desc(TensorShape(1, 0, 0, 0), DataLayout::eW, params_.dt), umd_alpha_beta_memory_, sizeof(float));
+            persistent_mem_offset += 2 * sizeof(float);
+        }
+        dnnl::memory input_b_memory = [&]()
+        {
+            std::size_t offset = 0ull;
+            if (reorder_input_b_ && has_scaling_factors())
+            {
+                offset = persistent_mem_offset;
+                persistent_mem_offset += input_b_memory_desc_.get_size();
+            }
+            return create_dnnl_memory(input_b_memory_desc_, umd_input_b_memory_, offset);
+        }();
+
+        dnnl::memory input_c_memory = [&]()
+        {
+            if (has_c_tensor())
+            {
+                return create_dnnl_memory(input_c_memory_desc_.value(), umd_input_c_memory_, reorder_input_c_ ? persistent_mem_offset : 0ull);
+            }
+            return dnnl::memory{};
+        }();
+
         dnnl::memory scratchpad_memory = has_scratchpad_tensor() ?
-            create_dnnl_memory(scratchpad_memory_desc_.value(), umd_scratchpad_memory_, has_scaling_factors() ? 2 * sizeof(float) : 0) :
+            create_dnnl_memory(scratchpad_memory_desc_.value(), umd_scratchpad_memory_) :
             dnnl::memory{};
-        dnnl::memory alpha_factor_memory = has_scaling_factors() ?
-            create_dnnl_memory(dnnl_utils::to_dnnl_mem_desc(TensorShape(1, 0, 0, 0), DataLayout::eW, params_.dt), umd_scratchpad_memory_) :
-            dnnl::memory{};
-        dnnl::memory beta_factor_memory = has_scaling_factors() ?
-            create_dnnl_memory(dnnl_utils::to_dnnl_mem_desc(TensorShape(1, 0, 0, 0), DataLayout::eW, params_.dt), umd_scratchpad_memory_) :
-            dnnl::memory{};
+
         dnnl::memory output_memory = create_dnnl_memory(output_memory_desc_, umd_output_memory_);
 
         std::unordered_map<int, dnnl::memory> args;
         args.insert({ DNNL_ARG_SRC, input_memory });
         args.insert({ DNNL_ARG_WEIGHTS, input_b_memory });
-        //args.insert({ DNNL_ARG_BIAS, input_c_memory });
-        args.insert({ DNNL_ARG_ATTR_MULTIPLE_POST_OP(0) | DNNL_ARG_SRC_1, input_c_memory });
-        args.insert({ DNNL_ARG_ATTR_SCALES | DNNL_ARG_WEIGHTS, alpha_factor_memory });
-        //args.insert({ DNNL_ARG_ATTR_SCALES | DNNL_ARG_DST, beta_factor_memory });
+        std::size_t post_ops_idx = 0ull;
+        if (input_c_memory)
+        {
+            args.insert({ DNNL_ARG_ATTR_MULTIPLE_POST_OP(post_ops_idx) | DNNL_ARG_SRC_1, input_c_memory });
+            post_ops_idx++;
+        }
+        if (has_scaling_factors())
+        {
+            args.insert({ DNNL_ARG_ATTR_SCALES | DNNL_ARG_WEIGHTS, alpha_factor_memory });
+            args.insert({ DNNL_ARG_ATTR_MULTIPLE_POST_OP(post_ops_idx) | DNNL_ARG_SRC_1, beta_factor_memory });
+            post_ops_idx++;
+        }
+
         args.insert({ DNNL_ARG_DST, output_memory });
 
         gemm_.execute(stream, args);
@@ -1223,9 +1273,7 @@ private:
     {
         // OneDNNL has a bit different GEMM API defintion
         // we will pass alpha as alpha/beta, so here we need to check for both params
-        //return params_.alpha != 1.0f || params_.beta != 1.0f;
-        //return true;
-        return false;
+        return params_.alpha != 1.0f || params_.beta != 1.0f;
     }
 
     bool has_c_tensor() const

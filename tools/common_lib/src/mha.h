@@ -277,7 +277,7 @@ class MhaBaseDispatcher: public NodeDispatcher
     }
 
     
-    virtual ConformanceResult validate_conformance(ID3D12CommandQueue* command_queue, ID3D12CommandAllocator* command_allocator, ID3D12GraphicsCommandList* command_list)
+    virtual ConformanceResult validate_conformance(ID3D12CommandQueue* command_queue, ID3D12CommandAllocator* command_allocator, ID3D12GraphicsCommandList* command_list, bool print_mismatches)
     {
         const auto out_shape = get_shape_output();
         const auto tensor_out_bytes_width = out_shape.get_elements_count() * get_data_type_bytes_width(params_.dt);
@@ -336,11 +336,11 @@ class MhaBaseDispatcher: public NodeDispatcher
 
         if (params_.dt == DataType::eFp32)
         {
-            return run_conformance_check<float>(data_out, ref_untyped_result, 0.05f);
+            return run_conformance_check<float>(data_out, ref_untyped_result, 0.05f, print_mismatches);
         }
         else if (params_.dt == DataType::eFp16)
         {
-            return run_conformance_check<Half>(data_out, ref_untyped_result, 0.05f);
+            return run_conformance_check<Half>(data_out, ref_untyped_result, 0.05f, print_mismatches);
         }
         assert(false && "Unsupported output data type!");
         ConformanceResult ret{};

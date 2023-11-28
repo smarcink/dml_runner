@@ -11,6 +11,7 @@
 
 #include <cassert>
 #include <string>
+#include <variant>
 
 namespace iumd
 {
@@ -19,21 +20,45 @@ namespace custom_metacommand
     class UmdD3d12Memory : public IUMDMemory
     {
     public:
+        enum class Type
+        {
+            eHandle,
+            eResource,
+            eUnknown,
+        };
+    public:
         UmdD3d12Memory() = default;
         UmdD3d12Memory(D3D12_GPU_DESCRIPTOR_HANDLE handle)
-            : handle_(handle)
+            : v_(handle)
+            , type_(Type::eHandle)
         {
         }
 
-        D3D12_GPU_DESCRIPTOR_HANDLE get_gpu_descriptor_handle() const { return handle_; }
+        UmdD3d12Memory(ComPtr<ID3D12Resource> rsc)
+            : v_(rsc)
+            , type_(Type::eResource)
+        {
+        }
+
+        D3D12_GPU_DESCRIPTOR_HANDLE get_gpu_descriptor_handle() const { return std::get<static_cast<std::size_t>(Type::eHandle)>(v_); }
+        ID3D12Resource* get_resource() const { return std::get<static_cast<std::size_t>(Type::eResource)>(v_).Get(); }
+
+        Type get_type() const
+        {
+            return type_;
+        }
     private:
-        D3D12_GPU_DESCRIPTOR_HANDLE handle_;
+        Type type_ = Type::eUnknown;
+        std::variant<D3D12_GPU_DESCRIPTOR_HANDLE, ComPtr<ID3D12Resource>> v_;
     };
 
     class UmdD3d12PipelineStateObject : public IUMDPipelineStateObject
     {
     public:
         friend class UmdD3d12Device;
+
+        const char* get_name() const override;
+        IUMDDevice* get_parent_device() override;
 
         bool set_kernel_arg(std::size_t index, const IUMDMemory* memory, std::size_t offset) override;
         bool set_kernel_arg(std::size_t index, IUMDPipelineStateObject::ScalarArgType scalar) override;
@@ -42,14 +67,15 @@ namespace custom_metacommand
 
     private:
         UmdD3d12PipelineStateObject(class UmdD3d12Device* device, const char* kernel_name,
-            const char* code_string, const char* build_options,
+            const void* kernel_code, std::size_t kernel_code_size, const char* build_options,
             UMD_SHADER_LANGUAGE language);
 
     private:
         UmdD3d12Device* device_ = nullptr;
         ComPtr<ID3D12MetaCommand> mc_ = nullptr;
-        std::unordered_map<std::size_t, std::pair<const UmdD3d12Memory*, std::size_t>> resources;
-        std::unordered_map<std::size_t, ScalarArgType> scalars;
+        std::unordered_map<std::size_t, std::pair<const UmdD3d12Memory*, std::size_t>> resources_;
+        std::unordered_map<std::size_t, ScalarArgType> scalars_;
+        std::string name_;
     };
 
     class UmdD3d12Event : public IUMDEvent
@@ -65,11 +91,31 @@ namespace custom_metacommand
 
         IUMDPipelineStateObject::Ptr
             create_pipeline_state_object(const char* kernel_name,
-                const char* code_string, const char* build_options,
+                const void* kernel_code, std::size_t kernel_code_size, const char* build_options,
                 UMD_SHADER_LANGUAGE language) override
         {
-            return std::unique_ptr<UmdD3d12PipelineStateObject>(new UmdD3d12PipelineStateObject(this, kernel_name, code_string, build_options, language));
+            return std::unique_ptr<UmdD3d12PipelineStateObject>(new UmdD3d12PipelineStateObject(this, kernel_name, kernel_code, kernel_code_size, build_options, language));
         }
+
+        IUMDMemory::Ptr allocate_memory(std::size_t size) override
+        {
+            ComPtr<ID3D12Resource> ret;
+            const auto heap_props = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
+            const auto buffer_desc = CD3DX12_RESOURCE_DESC::Buffer(size, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+            throw_if_failed(impl_->CreateCommittedResource(
+                &heap_props,
+                D3D12_HEAP_FLAG_NONE,
+                &buffer_desc,
+                D3D12_RESOURCE_STATE_COMMON,
+                nullptr, IID_PPV_ARGS(ret.ReleaseAndGetAddressOf())), "create commited resource");
+            return std::make_unique<UmdD3d12Memory>(ret);
+        }
+
+
+        bool fill_memory(IUMDCommandList* cmd_list, const IUMDMemory* dst_mem, std::size_t size,
+            const void* pattern, std::size_t pattern_size,
+            const std::vector<IUMDEvent*>& deps = {},
+            std::shared_ptr<IUMDEvent>* out = nullptr) override;
 
         std::uint32_t get_eu_count() const override
         {
@@ -170,7 +216,7 @@ namespace custom_metacommand
         ID3D12Device* impl_;
         IDXGIAdapter* adapter_;
         SKU sku_{};
-
+        iumd::IUMDPipelineStateObject::Ptr buffer_filler_ = nullptr;
     };
 
     class UmdD3d12CommandList : public IUMDCommandList
@@ -180,10 +226,19 @@ namespace custom_metacommand
             : impl_(cmd_list)
         {}
 
+        UmdD3d12CommandList(ID3D12GraphicsCommandList* cmd_list)
+        {
+            throw_if_failed(cmd_list->QueryInterface(&impl_), "cant cast d3d12 device to ID3D12Device5");
+        }
+
         bool dispatch(IUMDPipelineStateObject* pso, const std::array<std::size_t, 3>& gws, const std::array<std::size_t, 3>& lws, const std::vector<IUMDEvent*>& deps = {}, std::shared_ptr<IUMDEvent>* out = nullptr) override;
 
         bool supports_out_of_order() const { return false; }
         bool supports_profiling() const { return false; }
+
+    private:
+        void wait_for_deps(const std::vector<IUMDEvent*>& deps);
+        void put_barrier(std::shared_ptr<IUMDEvent>* out = nullptr);
 
     private:
         ID3D12GraphicsCommandList4* impl_;
