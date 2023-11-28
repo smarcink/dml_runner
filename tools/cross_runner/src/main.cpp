@@ -7,9 +7,6 @@
 #include "memory_bandwidth.h"
 #include "layers_utils.h"
 
-#include <dml_types.hpp>
-#include <dml_convolution.hpp>
-
 #include <iostream>
 #include <optional>
 #include <span>
@@ -78,13 +75,6 @@ struct CliOptions
 
 int main()
 {
-    libdml::DeviceInfo device_info{};
-    device_info.platform = libdml::HwPlatform::eDG2;
-    device_info.eu_count = 512;
-
-    libdml::ConvolutionDescriptor conv_desc{};
-    const auto convs_impls = libdml::get_convolution_implementation_list(device_info, conv_desc);
-
     constexpr const std::uint32_t MAX_ITERATIONS = 10'000;
 
     CliOptions opts;

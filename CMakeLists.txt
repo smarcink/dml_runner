@@ -11,5 +11,4 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 project(${PROJECT_NAME})
 
 add_subdirectory(thirdparty)
-add_subdirectory(libdml)
 add_subdirectory(tools)
