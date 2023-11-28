@@ -36,8 +36,8 @@ struct META_COMMAND_INITIALIZE_CUSTOM_DESC
     //////////////////////////////////////////////////////////////////////////
 struct META_COMMAND_EXECUTE_CUSTOM_DESC
 {
-    D3D12_GPU_DESCRIPTOR_HANDLE Resources[40];
-    UINT64                      ResourcesByteOffsets[40];  // works only in stateless mode
+    D3D12_GPU_DESCRIPTOR_HANDLE Resources[50];
+    UINT64                      ResourcesByteOffsets[50];  // works only in stateless mode
     UINT64 ResourceCount;
 
     UINT64 RuntimeConstants;      // buffer with constants

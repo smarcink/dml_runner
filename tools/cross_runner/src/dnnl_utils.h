@@ -50,6 +50,7 @@ inline dnnl::memory::format_tag to_dnnl_format(const DataLayout l)
     {
     case DataLayout::eNCHW: return dnnl::memory::format_tag::nchw;
     case DataLayout::eNHWC: return dnnl::memory::format_tag::nhwc;
+    case DataLayout::eW:
     case DataLayout::eO: return dnnl::memory::format_tag::a;
     case DataLayout::eWeightsLayoutStart: return dnnl::memory::format_tag::any; break;
     default:
