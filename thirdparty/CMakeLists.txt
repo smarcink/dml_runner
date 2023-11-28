@@ -17,7 +17,7 @@ set(ONEDNN_BUILD_EXAMPLES OFF)
 set(ONEDNN_BUILD_TESTS OFF)
 set(ONEDNN_ENABLE_WORKLOAD INFERENCE)
 set(ONEDNN_BUILD_GRAPH OFF)
-add_subdirectory(libraries.performance.math.onednn)
+add_subdirectory(drivers.gpu.compute.ai.dnnlpluginnext)
 
 #igdext
 add_library(cfgmgr UNKNOWN IMPORTED)
