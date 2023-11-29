@@ -99,6 +99,8 @@ inline void initalize_d3d12(ComPtr<ID3D12Device>& d3D12_device, ComPtr<ID3D12Com
 class IntelExtension
 {
 public:
+    IntelExtension() = default;
+
     IntelExtension(ID3D12Device* d3d12_device)
         :ext_ctx_(nullptr)
     {
@@ -144,6 +146,7 @@ public:
     IntelExtension(IntelExtension&& rhs) 
     {
         std::swap(ext_ctx_, rhs.ext_ctx_);
+        std::swap(intc_extension_info_, rhs.intc_extension_info_);
     }
     IntelExtension& operator=(const IntelExtension& rhs) = delete;
     IntelExtension& operator=(IntelExtension&& rhs)
@@ -151,6 +154,7 @@ public:
         if (this != &rhs)
         {
             std::swap(ext_ctx_, rhs.ext_ctx_);
+            std::swap(intc_extension_info_, rhs.intc_extension_info_);
         }
         return *this;
     }

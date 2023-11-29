@@ -1,18 +1,108 @@
+#include <tuple>
 
 #include <gtest/gtest.h>
 
-struct TestShapes
+#include <gemm.h>
+
+
+struct Dx12Engine
 {
-    std::size_t B;
-    std::size_t M;
-    std::size_t K;
-    std::size_t N;
+    ComPtr<ID3D12Device> d3d12_device;
+    ComPtr<ID3D12CommandQueue> command_queue;
+    ComPtr<ID3D12CommandAllocator> command_allocator;
+    ComPtr<ID3D12GraphicsCommandList> command_list;
+
+    IntelExtension intel_extension_d3d12;
+
+    ComPtr<IDMLDevice> dml_device;
+    ComPtr<IDMLCommandRecorder> dml_command_recorder;
+
+    void wait_for_execution()
+    {
+        close_execute_reset_wait(d3d12_device.Get(), command_queue.Get(), command_allocator.Get(), command_list.Get());
+    }
 };
 
+static inline Dx12Engine create_engine()
+{
+    Dx12Engine ret{};
+    // init general dx12
+    initalize_d3d12(ret.d3d12_device, ret.command_queue, ret.command_allocator, ret.command_list);
+    assert(ret.d3d12_device && ret.command_queue && ret.command_allocator && ret.command_list);
+    // init extension
+    ret.intel_extension_d3d12 = IntelExtension(ret.d3d12_device.Get());
+    // init dml objects
+    ret.dml_device = create_dml_device(ret.d3d12_device.Get());
+    throw_if_failed(ret.dml_device->CreateCommandRecorder(IID_PPV_ARGS(ret.dml_command_recorder.ReleaseAndGetAddressOf())), "create dml command recorder");
+    return ret;
+}
+// create single engine to be reused across tests!
+inline Dx12Engine g_dx12_engine = create_engine();
+
+
+class NodeDispatcherBase
+{
+public:
+    virtual bool run()
+    {
+        auto node = create_dispatcher_impl();
+
+        // wait for any potential uploads
+        g_dx12_engine.wait_for_execution();
+
+        // bind descriptor heap
+        const auto descriptors_count = node->get_total_descriptor_count();
+        auto descriptor_heap = create_descriptor_heap(g_dx12_engine.d3d12_device.Get(), descriptors_count);
+        ID3D12DescriptorHeap* d3d12_descriptor_heaps[] = { descriptor_heap.Get() };
+        g_dx12_engine.command_list->SetDescriptorHeaps(1, d3d12_descriptor_heaps);
+
+        // initalize
+        node->initialize(g_dx12_engine.command_list.Get(), descriptor_heap->GetCPUDescriptorHandleForHeapStart(), descriptor_heap->GetGPUDescriptorHandleForHeapStart());
+        g_dx12_engine.wait_for_execution();
+        
+        // Bind and execute node
+        g_dx12_engine.command_list->SetDescriptorHeaps(1, d3d12_descriptor_heaps);
+        node->execute(g_dx12_engine.command_list.Get());
+        g_dx12_engine.wait_for_execution();
+
+        // finally validate conformance
+        const auto conformance_result = node->validate_conformance(g_dx12_engine.command_queue.Get(), g_dx12_engine.command_allocator.Get(), g_dx12_engine.command_list.Get());
+        
+        // we expect perfect match
+        // comaprision have to be done vs dnnl!
+        // vs HLSL there can be differences
+        const auto perfect_match = conformance_result.biggest_difference == 0.0f;
+        if (!perfect_match && conformance_result.passed)
+        {
+            std::cout << "Conformance has passed, but it wasn't perfect match. Was the tested validate vs dnnl?" << std::endl;
+        }
+        return perfect_match;
+    }
+
+protected:
+    virtual std::unique_ptr<NodeDispatcher> create_dispatcher_impl() = 0;
+};
 
 // The fixture for testing class Foo.
-class DnnlPluginNext_GEMM : public testing::TestWithParam<int>
+class DnnlPluginNext_GEMM : public NodeDispatcherBase, public testing::TestWithParam<std::tuple<
+    std::int32_t, // batch
+    std::int32_t, // M
+    std::int32_t, // K
+    std::int32_t, // N
+    DataType
+    >>
 {
+protected:
+    enum TupleID
+    {
+        TUPLE_ID_BATCH = 0,
+        TUPLE_ID_M     = 1,
+        TUPLE_ID_K,
+        TUPLE_ID_N,
+        TUPLE_ID_DT,
+    };
+
+
 protected:
     DnnlPluginNext_GEMM() {
         // You can do set-up work for each test here.
@@ -22,20 +112,77 @@ protected:
         // You can do clean-up work that doesn't throw exceptions here.
     }
 
-    bool run()
+    void set_use_c_tensor() { use_c_tensor_ = true; }
+    void set_alpha_value(float v) { alpha_ = v; }
+    void set_beta_value(float v) { beta_ = v; }
+
+protected:
+    std::unique_ptr<NodeDispatcher> create_dispatcher_impl() override
     {
-        return true;
+        const auto params = GetParam();
+        const auto batch = std::get<TUPLE_ID_BATCH>(params);
+        const auto M = std::get<TUPLE_ID_M>(params);
+        const auto K = std::get<TUPLE_ID_K>(params);
+        const auto N = std::get<TUPLE_ID_N>(params);
+        const auto dt = std::get<TUPLE_ID_DT>(params);
+
+        GemmBaseDispatcher::create_params_t opts{};
+
+        opts.shape_a = TensorShape(batch, 1, M, K);
+        opts.shape_b = TensorShape(batch, 1, K, N);
+        opts.shape_c = use_c_tensor_ ? TensorShape(batch, 1, M, N) : TensorShape();
+        opts.allow_fp16_computations = dt == DataType::eFp16;
+        opts.type = GemmType::GemmType_AB;
+        opts.use_dnnl_for_reference_calculations = true; // we expect perfect match!
+        opts.layout = DataLayout::eNCHW;
+        opts.dt = dt;
+        opts.alpha = alpha_;
+        opts.beta = beta_;
+        opts.b_managed = false;
+        opts.c_managed = false;
+        opts.b_transposed = false;
+        auto node = std::make_unique<GemmUmdD3d12Dispatcher>(std::move(opts),
+            g_dx12_engine.intel_extension_d3d12,
+            g_dx12_engine.d3d12_device.Get(),
+            g_dx12_engine.dml_device.Get(),
+            g_dx12_engine.dml_command_recorder.Get(),
+            g_dx12_engine.command_list.Get());
+        return node;
     }
 
 private:
-
+    bool use_c_tensor_ = false;
+    bool alpha_ = 1.0f;
+    bool beta_ = 1.0f;
 };
 
 
-TEST_P(DnnlPluginNext_GEMM, TestParametrized)
+TEST_P(DnnlPluginNext_GEMM, TestsBasic)
 {
+    const auto params = GetParam();
+    const auto dt = std::get<TUPLE_ID_DT>(params);
+    if (dt == DataType::eFp16)
+    {
+        GTEST_SKIP() << "Skipping FLOAT16 tests as it has known conformance issues in D3D12 MetaCommand driver.";
+    }
+
     EXPECT_TRUE(run());
 }
 
-//INSTANTIATE_TEST_SUITE_P(TestsFP32, DnnlPluginNext_GEMM, testing::Range(0, 10),
-//    testing::PrintToStringParamName());
+INSTANTIATE_TEST_SUITE_P(
+    GemmTestsGenericGroup, DnnlPluginNext_GEMM,
+    testing::Combine(
+        testing::Values(1, 8, 16),
+        testing::Values(32, 64, 128),
+        testing::Values(8,  64, 256),
+        testing::Values(64, 128),
+        testing::Values(DataType::eFp32, DataType::eFp16)));
+
+INSTANTIATE_TEST_SUITE_P(
+    GemmTestsGenericNonPowerOfTwoGroup, DnnlPluginNext_GEMM,
+    testing::Combine(
+        testing::Values(7, 13),
+        testing::Values(5, 69),
+        testing::Values(7, 19),
+        testing::Values(9, 125),
+        testing::Values(DataType::eFp32, DataType::eFp16)));
