@@ -98,16 +98,29 @@ iumd::custom_metacommand::UmdD3d12Device::UmdD3d12Device(ID3D12Device* device, I
 }
 
 iumd::custom_metacommand::UmdD3d12PipelineStateObject::UmdD3d12PipelineStateObject(iumd::custom_metacommand::UmdD3d12Device* device, const char* kernel_name, const char* code_string, const char* build_options, UMD_SHADER_LANGUAGE language)
+    : name_(kernel_name)
+    , device_(device)
 {
     auto d3d12_dev = device->get_d3d12_device();
     ID3D12Device5* dev5 = nullptr;
     throw_if_failed(d3d12_dev->QueryInterface(&dev5), "cant cast d3d12 device to ID3D12Device5");
 
+    if (code_string == nullptr)
+    {
+        throw std::runtime_error("Code string is empty. Please provide valid kernel/binary data.\n");
+    }
+
+    if (language == UMD_SHADER_LANGUAGE_ZEBIN_ELF)
+    {
+        printf("Need to add support for ZEBIN_ELF. Returning invalid PSO. Pleae add support for ZEBIN_ELF (NGEN)\n and remove this line of code");
+        return;
+    }
+
     META_COMMAND_CREATE_CUSTOM_DESC create_desc{};
     create_desc.ShaderSourceCode = reinterpret_cast<UINT64>(code_string);
     create_desc.ShaderSourceCodeSize = std::strlen(code_string);
     create_desc.BuildOptionString = reinterpret_cast<UINT64>(build_options);
-    create_desc.BuildOptionStringSize = std::strlen(build_options);
+    create_desc.BuildOptionStringSize = build_options ? std::strlen(build_options) : 0ull;
     switch (language)
     {
     case UMD_SHADER_LANGUAGE_OCL:
@@ -126,6 +139,16 @@ iumd::custom_metacommand::UmdD3d12PipelineStateObject::UmdD3d12PipelineStateObje
 
     //D3D12_FEATURE_DATA_QUERY_META_COMMAND query{};
     //dev5->CheckFeatureSupport(D3D12_FEATURE_QUERY_META_COMMAND, &query, sizeof(query));
+}
+
+const char* iumd::custom_metacommand::UmdD3d12PipelineStateObject::get_name() const
+{
+    return name_.c_str();
+}
+
+iumd::IUMDDevice* iumd::custom_metacommand::UmdD3d12PipelineStateObject::get_parent_device()
+{
+    return device_;
 }
 
 bool iumd::custom_metacommand::UmdD3d12PipelineStateObject::set_kernel_arg(std::size_t index, const IUMDMemory* memory, std::size_t offset)
