@@ -226,11 +226,62 @@ bool iumd::custom_metacommand::UmdD3d12PipelineStateObject::execute(ID3D12Graphi
 
 bool iumd::custom_metacommand::UmdD3d12CommandList::dispatch(iumd::IUMDPipelineStateObject* pso, const std::array<std::size_t, 3>& gws, const std::array<std::size_t, 3>& lws, const std::vector<iumd::IUMDEvent*>& deps, std::shared_ptr<iumd::IUMDEvent>* out)
 {
+    wait_for_deps(deps);
+
+    auto typed_pso = dynamic_cast<iumd::custom_metacommand::UmdD3d12PipelineStateObject*>(pso);
+    const auto result = typed_pso->execute(impl_, gws, lws);
+ 
+    put_barrier();
+    return result;
+}
+
+bool iumd::custom_metacommand::UmdD3d12CommandList::fill_memory(IUMDMemory* dst_mem, const void* pattern, std::size_t pattern_size,
+    const std::vector<IUMDEvent*>& deps = {},
+    std::shared_ptr<IUMDEvent>* out = nullptr)
+{
+    if(!dst_mem || !pattern || (pattern_size == 0))
+    {
+        return false;
+    }
+    wait_for_deps(deps);
+
+    /*
+    ToDo: implement here
+
+
+    iumd::IUMDPipelineStateObject::Ptr buffer_filler_ = nullptr;
+    umd_engine_t *umd_engine = utils::downcast<umd_engine_t *>(engine());
+    if (!buffer_filler_) {
+        const char *code_string
+                = "__attribute__((reqd_work_group_size(1,1, 1))) "
+                  "__kernel void buffer_pattern_filler(__global unsigned char* output, unsigned char pattern)"
+                  "{"
+                  "const auto id = get_global_id(0);"
+                  "output[id] = pattern;"
+                  "}";
+
+        buffer_filler_ = umd_engine->device()->create_pipeline_state_object("buffer_pattern_filler", code_string, "",
+                UMD_SHADER_LANGUAGE_OCL_STATELESS);
+    }
+    assert(buffer_filler_);
+
+    //buffer_filler_->set_kernel_arg(0, &umd_scratchpad_memory);
+    //buffer_filler_->set_kernel_arg(1, iumd::IUMDPipelineStateObject::ScalarArgType {sizeof(pattern), &pattern});
+    ////copy_alpha_shader_->set_kernel_arg(2, IUMDPipelineStateObject::ScalarArgType{ 4, &beta });
+    //cmd_list_->dispatch(buffer_filler_.get(), {1, 1, 1}, {1, 1, 1});
+
+    */
+
+    put_barrier();
+}
+
+void iumd::custom_metacommand::UmdD3d12CommandList::wait_for_deps(const std::vector<IUMDEvent*>& deps)
+{
     if (!deps.empty())
     {
         // Single global barrier is enough for now, because we use b.UAV.pResource = nullptr;
         // If we would support concrete resources barriers, than we need a way to specify resource pointer to b.UAV.pResource
-        constexpr const bool single_barrier_is_enough = true;  
+        constexpr const bool single_barrier_is_enough = true;
         std::vector<D3D12_RESOURCE_BARRIER> barriers(single_barrier_is_enough ? 1u : deps.size());
         for (auto& b : barriers)
         {
@@ -240,13 +291,12 @@ bool iumd::custom_metacommand::UmdD3d12CommandList::dispatch(iumd::IUMDPipelineS
         }
         impl_->ResourceBarrier(static_cast<std::uint32_t>(barriers.size()), barriers.data());
     }
+}
 
-    auto typed_pso = dynamic_cast<iumd::custom_metacommand::UmdD3d12PipelineStateObject*>(pso);
-    const auto result = typed_pso->execute(impl_, gws, lws);
- 
+void iumd::custom_metacommand::UmdD3d12CommandList::put_barrier(std::shared_ptr<IUMDEvent>* out)
+{
     if (out)
     {
         *out = std::make_shared<iumd::custom_metacommand::UmdD3d12Event>();
     }
-    return result;
 }

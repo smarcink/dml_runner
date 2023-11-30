@@ -217,8 +217,17 @@ namespace custom_metacommand
 
         bool dispatch(IUMDPipelineStateObject* pso, const std::array<std::size_t, 3>& gws, const std::array<std::size_t, 3>& lws, const std::vector<IUMDEvent*>& deps = {}, std::shared_ptr<IUMDEvent>* out = nullptr) override;
 
+        bool fill_memory(IUMDMemory* dst_mem, std::size_t size,
+            const void* pattern, std::size_t pattern_size,
+            const std::vector<IUMDEvent*>& deps = {},
+            std::shared_ptr<IUMDEvent>* out = nullptr) override;
+
         bool supports_out_of_order() const { return false; }
         bool supports_profiling() const { return false; }
+
+    private:
+        void wait_for_deps(const std::vector<IUMDEvent*>& deps);
+        void put_barrier(std::shared_ptr<IUMDEvent>* out = nullptr);
 
     private:
         ID3D12GraphicsCommandList4* impl_;
