@@ -1,7 +1,7 @@
 #include "conv.h"
 #include "dnnl_utils.h"
 
-inline dnnl::primitive_attr CreateEltwisePostOps(dnnl::algorithm Activation, float alpha, float beta, DataType accu_dt)
+inline dnnl::primitive_attr CreateEltwisePostOps(dnnl::algorithm Activation, float alpha, float beta, bool use_fp32_accu)
 {
     // create a post-op with relu
     dnnl::post_ops ops;
@@ -12,12 +12,9 @@ inline dnnl::primitive_attr CreateEltwisePostOps(dnnl::algorithm Activation, flo
     // set scratchpad mode to user provided
     attr.set_scratchpad_mode(dnnl::scratchpad_mode::user);
 
-    switch (accu_dt)
+    if (use_fp32_accu)
     {
-    case DataType::eFp16:
-        attr.set_accumulation_mode(dnnl::accumulation_mode::f16);
-    default:
-        attr.set_accumulation_mode(dnnl::accumulation_mode::strict);
+        attr.set_accumulation_mode(dnnl::accumulation_mode::f32);
     }
 
     if (Activation != dnnl::algorithm::undef)
@@ -75,7 +72,7 @@ std::vector<std::byte> dnnl_conv_op::convolution(const bindings_t& bindings, opt
 
     const dnnl::memory::dims pad{ opts.inp_pad, opts.inp_pad };
     const dnnl::memory::dims stride{ opts.stride.h, opts.stride.w };
-    const dnnl::primitive_attr attr = CreateEltwisePostOps(static_cast<dnnl::algorithm>(opts.activation_type), opts.activation_alpha, opts.activation_beta, opts.accumulator_dt);
+    const dnnl::primitive_attr attr = CreateEltwisePostOps(static_cast<dnnl::algorithm>(opts.activation_type), opts.activation_alpha, opts.activation_beta, opts.use_fp32_accu);
     const dnnl::convolution_forward::primitive_desc conv_desc(engine,
         dnnl::prop_kind::forward_inference, 
         opts.force_winograd ? dnnl::algorithm::convolution_winograd : dnnl::algorithm::convolution_direct,

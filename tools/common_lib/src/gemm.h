@@ -43,7 +43,7 @@ struct opts_t
     TensorShape output_shape;
     DataType out_dt = DataType::eCount;
     DataLayout out_layout = DataLayout::eCount;
-    DataType accumulator_dt = DataType::eCount;
+    bool force_fp32_accumulator = false;
 };
 std::vector<std::byte> gemm(const bindings_t& bindings, opts_t opts);
 }
@@ -728,7 +728,7 @@ public:
             opts.out_dt = params_.dt;
             opts.out_layout = params_.layout;
             opts.output_shape = get_shape_output();
-            opts.accumulator_dt = (params_.allow_fp16_computations && params_.dt == DataType::eFp16) ? DataType::eFp16 : DataType::eFp32;
+            opts.force_fp32_accumulator = params_.dt == DataType::eFp16 && !params_.allow_fp16_computations;
             ref_untyped_result = dnnl_gemm_op::gemm(bindings, opts);
         }
         else   
@@ -947,10 +947,10 @@ public:
             // set scratchpad mode to user provided
             attr.set_scratchpad_mode(dnnl::scratchpad_mode::user);
 
-            const bool allow_half_computation = params_.dt == DataType::eFp16;
-            if (allow_half_computation)
+            const bool force_fp32_accu = params_.dt == DataType::eFp16 && !params_.allow_fp16_computations;
+            if (force_fp32_accu)
             {
-                attr.set_accumulation_mode(dnnl::accumulation_mode::f16);
+                attr.set_accumulation_mode(dnnl::accumulation_mode::f32);
             }
             // alpha and beta
             if (has_scaling_factors())

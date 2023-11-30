@@ -27,7 +27,7 @@ struct opts_t
     TensorShape stride;
     TensorShape output_shape;
     DataType out_dt = DataType::eCount;
-    DataType accumulator_dt = DataType::eCount;
+    bool use_fp32_accu = false;
     std::uint32_t activation_type;
     float activation_alpha;
     float activation_beta;
@@ -524,7 +524,7 @@ protected:
         opts.force_winograd = params_.algo_winograd;
         opts.dump_weights = dump_weights();
         opts.dump_scratchpad = dump_weights();
-        opts.accumulator_dt = (params_.allow_fp16_computations && params_.dt == DataType::eFp16) ? DataType::eFp16 : DataType::eFp32;
+        opts.use_fp32_accu = (!params_.allow_fp16_computations && params_.dt == DataType::eFp16);
         return dnnl_conv_op::convolution(bindings, opts);
     }
 
@@ -613,7 +613,7 @@ public:
         const dnnl::memory::dims pad{ params.in_pad, params.in_pad };
         const dnnl::memory::dims stride{ params.stride.h, params.stride.w };
 
-        const dnnl::primitive_attr attr = [](dnnl::algorithm act, float alpha, float beta, bool allow_half_computation)
+        const dnnl::primitive_attr attr = [](dnnl::algorithm act, float alpha, float beta, bool use_fp32_accu)
         {
             // create a post-op with relu
             dnnl::post_ops ops;
@@ -624,9 +624,9 @@ public:
             // set scratchpad mode to user provided
             attr.set_scratchpad_mode(dnnl::scratchpad_mode::user);
 
-            if (allow_half_computation)
+            if (use_fp32_accu)
             {
-                attr.set_accumulation_mode(dnnl::accumulation_mode::f16);
+                attr.set_accumulation_mode(dnnl::accumulation_mode::f32);
             }
 
 
@@ -638,7 +638,7 @@ public:
             }
 
             return attr;
-        }(static_cast<dnnl::algorithm>(params.act_type), params.act_alpha, params.act_beta, params_.allow_fp16_computations&& params_.dt == DataType::eFp16);
+        }(static_cast<dnnl::algorithm>(params.act_type), params.act_alpha, params.act_beta, !params_.allow_fp16_computations && params_.dt == DataType::eFp16);
 
         input_memory_desc_ = to_dnnl_mem_desc(params_.input_shape, params_.input_layout, params_.dt);
         output_memory_desc_ = to_dnnl_mem_desc(get_output_shape(), params_.output_layout, params_.dt);

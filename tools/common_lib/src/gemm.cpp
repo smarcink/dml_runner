@@ -30,6 +30,7 @@ std::vector<std::byte> dnnl_gemm_op::gemm(const bindings_t& bindings, opts_t opt
         return ret;
     }(bindings.input_b);
    
+    assert(bindings.input_c.data == nullptr && "Not enabled yet!");
     dnnl::memory bias_memory = [&](const auto& binding)
     {
         if (!binding.data)
@@ -50,22 +51,15 @@ std::vector<std::byte> dnnl_gemm_op::gemm(const bindings_t& bindings, opts_t opt
     }();
 
     dnnl::primitive_attr attrs{};
-    switch (opts.accumulator_dt)
+    if (opts.force_fp32_accumulator)
     {
-    case DataType::eFp32:
         attrs.set_accumulation_mode(dnnl::accumulation_mode::f32);
-        break;
-    case DataType::eFp16:
-        attrs.set_accumulation_mode(dnnl::accumulation_mode::f16);
-    default:
-        attrs.set_accumulation_mode(dnnl::accumulation_mode::strict);
     }
-
 
     dnnl::matmul::primitive_desc matmul_desc(engine,
         input_memory.get_desc(),
         weights_memory.get_desc(),
-        bias_memory ? bias_memory.get_desc() : dnnl::memory::desc{},
+        dnnl::memory::desc{},
         output_memory.get_desc(),
         attrs
     );
