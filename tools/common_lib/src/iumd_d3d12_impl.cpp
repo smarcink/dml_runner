@@ -97,6 +97,40 @@ iumd::custom_metacommand::UmdD3d12Device::UmdD3d12Device(ID3D12Device* device, I
     }
 }
 
+
+bool iumd::custom_metacommand::UmdD3d12Device::fill_memory(IUMDCommandList* cmd_list, const IUMDMemory* dst_mem, std::size_t size, const void* pattern, std::size_t pattern_size,
+    const std::vector<IUMDEvent*>& deps, std::shared_ptr<IUMDEvent>* out)
+{
+    if (!cmd_list || !dst_mem || !pattern || (pattern_size == 0))
+    {
+        return false;
+    }
+    if (size == 0)
+    {
+        // no work to do, but it's not cosidered error
+        return true;
+    }
+
+    // compile copy kernel, if it's first time hitting this function
+    if (!buffer_filler_) {
+        const char* code_string
+            = "__attribute__((reqd_work_group_size(1,1, 1))) "
+            "__kernel void buffer_pattern_filler(__global unsigned char* output, unsigned char pattern)"
+            "{"
+            "const auto id = get_global_id(0);"
+            "output[id] = pattern;"
+            "}";
+
+        buffer_filler_ = create_pipeline_state_object("buffer_pattern_filler", code_string, "", UMD_SHADER_LANGUAGE_OCL_STATELESS);
+    }
+    assert(buffer_filler_);
+
+    auto typed_cmd_list = dynamic_cast<iumd::custom_metacommand::UmdD3d12CommandList*>(cmd_list);
+    const auto lws = std::array<std::size_t, 3>{1, 1, 1};
+    const auto gws = std::array<std::size_t, 3>{size, 1, 1};
+    return typed_cmd_list->dispatch(buffer_filler_.get(), gws, lws, deps, out);
+}
+
 iumd::custom_metacommand::UmdD3d12PipelineStateObject::UmdD3d12PipelineStateObject(iumd::custom_metacommand::UmdD3d12Device* device, const char* kernel_name, const char* code_string, const char* build_options, UMD_SHADER_LANGUAGE language)
     : name_(kernel_name)
     , device_(device)
@@ -231,49 +265,10 @@ bool iumd::custom_metacommand::UmdD3d12CommandList::dispatch(iumd::IUMDPipelineS
     auto typed_pso = dynamic_cast<iumd::custom_metacommand::UmdD3d12PipelineStateObject*>(pso);
     const auto result = typed_pso->execute(impl_, gws, lws);
  
-    put_barrier();
+    put_barrier(out);
     return result;
 }
 
-bool iumd::custom_metacommand::UmdD3d12CommandList::fill_memory(IUMDMemory* dst_mem, const void* pattern, std::size_t pattern_size,
-    const std::vector<IUMDEvent*>& deps = {},
-    std::shared_ptr<IUMDEvent>* out = nullptr)
-{
-    if(!dst_mem || !pattern || (pattern_size == 0))
-    {
-        return false;
-    }
-    wait_for_deps(deps);
-
-    /*
-    ToDo: implement here
-
-
-    iumd::IUMDPipelineStateObject::Ptr buffer_filler_ = nullptr;
-    umd_engine_t *umd_engine = utils::downcast<umd_engine_t *>(engine());
-    if (!buffer_filler_) {
-        const char *code_string
-                = "__attribute__((reqd_work_group_size(1,1, 1))) "
-                  "__kernel void buffer_pattern_filler(__global unsigned char* output, unsigned char pattern)"
-                  "{"
-                  "const auto id = get_global_id(0);"
-                  "output[id] = pattern;"
-                  "}";
-
-        buffer_filler_ = umd_engine->device()->create_pipeline_state_object("buffer_pattern_filler", code_string, "",
-                UMD_SHADER_LANGUAGE_OCL_STATELESS);
-    }
-    assert(buffer_filler_);
-
-    //buffer_filler_->set_kernel_arg(0, &umd_scratchpad_memory);
-    //buffer_filler_->set_kernel_arg(1, iumd::IUMDPipelineStateObject::ScalarArgType {sizeof(pattern), &pattern});
-    ////copy_alpha_shader_->set_kernel_arg(2, IUMDPipelineStateObject::ScalarArgType{ 4, &beta });
-    //cmd_list_->dispatch(buffer_filler_.get(), {1, 1, 1}, {1, 1, 1});
-
-    */
-
-    put_barrier();
-}
 
 void iumd::custom_metacommand::UmdD3d12CommandList::wait_for_deps(const std::vector<IUMDEvent*>& deps)
 {

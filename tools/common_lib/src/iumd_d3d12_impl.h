@@ -106,6 +106,12 @@ namespace custom_metacommand
             return std::make_unique<UmdD3d12Memory>(ret);
         }
 
+
+        bool fill_memory(IUMDCommandList* cmd_list, const IUMDMemory* dst_mem, std::size_t size,
+            const void* pattern, std::size_t pattern_size,
+            const std::vector<IUMDEvent*>& deps = {},
+            std::shared_ptr<IUMDEvent>* out = nullptr) override;
+
         std::uint32_t get_eu_count() const override
         {
             return sku_.eu_count;
@@ -205,7 +211,7 @@ namespace custom_metacommand
         ID3D12Device* impl_;
         IDXGIAdapter* adapter_;
         SKU sku_{};
-
+        iumd::IUMDPipelineStateObject::Ptr buffer_filler_ = nullptr;
     };
 
     class UmdD3d12CommandList : public IUMDCommandList
@@ -216,11 +222,6 @@ namespace custom_metacommand
         {}
 
         bool dispatch(IUMDPipelineStateObject* pso, const std::array<std::size_t, 3>& gws, const std::array<std::size_t, 3>& lws, const std::vector<IUMDEvent*>& deps = {}, std::shared_ptr<IUMDEvent>* out = nullptr) override;
-
-        bool fill_memory(IUMDMemory* dst_mem, std::size_t size,
-            const void* pattern, std::size_t pattern_size,
-            const std::vector<IUMDEvent*>& deps = {},
-            std::shared_ptr<IUMDEvent>* out = nullptr) override;
 
         bool supports_out_of_order() const { return false; }
         bool supports_profiling() const { return false; }
