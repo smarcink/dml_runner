@@ -36,11 +36,11 @@ struct META_COMMAND_INITIALIZE_CUSTOM_DESC
     //////////////////////////////////////////////////////////////////////////
 struct META_COMMAND_EXECUTE_CUSTOM_DESC
 {
-    D3D12_GPU_DESCRIPTOR_HANDLE Resources[50]; // use address or handled
-    D3D12_GPU_VIRTUAL_ADDRESS   ResourcesAddress[50]; // use address or handled
-
+    UINT64                      ResourceCount;
+    UINT64                      ResourceBindOffsets[50];
+    D3D12_GPU_DESCRIPTOR_HANDLE Resources[50];            // use address or handles
+    D3D12_GPU_VIRTUAL_ADDRESS   ResourcesAddress[50];     // use address or handles
     UINT64                      ResourcesByteOffsets[50];  // works only in stateless mode
-    UINT64 ResourceCount;
 
     UINT64 RuntimeConstants;      // buffer with constants
     UINT64 RuntimeConstantsCount; // how many runtime constants in total
