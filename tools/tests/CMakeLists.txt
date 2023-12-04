@@ -14,6 +14,9 @@ set(TEST_CASES_DIR      "${CMAKE_CURRENT_SOURCE_DIR}/test_cases")
 set(TEST_CASES_LABEL    "test cases")
 set(TEST_CASES_SOURCES
     ${TEST_CASES_DIR}/test_gemm.cpp
+    ${TEST_CASES_DIR}/test_api.cpp
+    
+    ${TEST_CASES_DIR}/utils.h
 )
 
 

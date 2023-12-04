@@ -4,40 +4,7 @@
 
 #include <gemm.h>
 
-
-struct Dx12Engine
-{
-    ComPtr<ID3D12Device> d3d12_device;
-    ComPtr<ID3D12CommandQueue> command_queue;
-    ComPtr<ID3D12CommandAllocator> command_allocator;
-    ComPtr<ID3D12GraphicsCommandList> command_list;
-
-    IntelExtension intel_extension_d3d12;
-
-    ComPtr<IDMLDevice> dml_device;
-    ComPtr<IDMLCommandRecorder> dml_command_recorder;
-
-    void wait_for_execution()
-    {
-        close_execute_reset_wait(d3d12_device.Get(), command_queue.Get(), command_allocator.Get(), command_list.Get());
-    }
-};
-
-static inline Dx12Engine create_engine()
-{
-    Dx12Engine ret{};
-    // init general dx12
-    initalize_d3d12(ret.d3d12_device, ret.command_queue, ret.command_allocator, ret.command_list);
-    assert(ret.d3d12_device && ret.command_queue && ret.command_allocator && ret.command_list);
-    // init extension
-    ret.intel_extension_d3d12 = IntelExtension(ret.d3d12_device.Get());
-    // init dml objects
-    ret.dml_device = create_dml_device(ret.d3d12_device.Get());
-    throw_if_failed(ret.dml_device->CreateCommandRecorder(IID_PPV_ARGS(ret.dml_command_recorder.ReleaseAndGetAddressOf())), "create dml command recorder");
-    return ret;
-}
-// create single engine to be reused across tests!
-inline Dx12Engine g_dx12_engine = create_engine();
+#include "utils.h"
 
 
 class NodeDispatcherBase
@@ -80,6 +47,7 @@ public:
     }
 
 protected:
+    inline static Dx12Engine g_dx12_engine = Dx12Engine(); // create single engine to be reused across tests!
     virtual std::unique_ptr<NodeDispatcher> create_dispatcher_impl() = 0;
 };
 

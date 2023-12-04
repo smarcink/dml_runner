@@ -36,7 +36,9 @@ struct META_COMMAND_INITIALIZE_CUSTOM_DESC
     //////////////////////////////////////////////////////////////////////////
 struct META_COMMAND_EXECUTE_CUSTOM_DESC
 {
-    D3D12_GPU_DESCRIPTOR_HANDLE Resources[50];
+    D3D12_GPU_DESCRIPTOR_HANDLE Resources[50]; // use address or handled
+    D3D12_GPU_VIRTUAL_ADDRESS   ResourcesAddress[50]; // use address or handled
+
     UINT64                      ResourcesByteOffsets[50];  // works only in stateless mode
     UINT64 ResourceCount;
 
@@ -117,7 +119,7 @@ bool iumd::custom_metacommand::UmdD3d12Device::fill_memory(IUMDCommandList* cmd_
             = "__attribute__((reqd_work_group_size(1,1, 1))) "
             "__kernel void buffer_pattern_filler(__global unsigned char* output, unsigned char pattern)"
             "{"
-            "const auto id = get_global_id(0);"
+            "const uint id = get_global_id(0);"
             "output[id] = pattern;"
             "}";
 
@@ -126,8 +128,12 @@ bool iumd::custom_metacommand::UmdD3d12Device::fill_memory(IUMDCommandList* cmd_
     assert(buffer_filler_);
 
     auto typed_cmd_list = dynamic_cast<iumd::custom_metacommand::UmdD3d12CommandList*>(cmd_list);
+    
+    buffer_filler_->set_kernel_arg(0, dst_mem);
+    buffer_filler_->set_kernel_arg(1, IUMDPipelineStateObject::ScalarArgType{pattern_size, pattern});
     const auto lws = std::array<std::size_t, 3>{1, 1, 1};
     const auto gws = std::array<std::size_t, 3>{size, 1, 1};
+
     return typed_cmd_list->dispatch(buffer_filler_.get(), gws, lws, deps, out);
 }
 
@@ -188,13 +194,13 @@ iumd::IUMDDevice* iumd::custom_metacommand::UmdD3d12PipelineStateObject::get_par
 bool iumd::custom_metacommand::UmdD3d12PipelineStateObject::set_kernel_arg(std::size_t index, const IUMDMemory* memory, std::size_t offset)
 {
     auto typed_mem = memory ? dynamic_cast<const iumd::custom_metacommand::UmdD3d12Memory*>(memory) : nullptr;
-    resources[index] = { typed_mem, offset };
+    resources_[index] = { typed_mem, offset };
     return true;
 }
 
 bool iumd::custom_metacommand::UmdD3d12PipelineStateObject::set_kernel_arg(std::size_t index, IUMDPipelineStateObject::ScalarArgType scalar)
 {
-    scalars[index] = scalar;
+    scalars_[index] = scalar;
     return true;
 }
 
@@ -214,7 +220,7 @@ bool iumd::custom_metacommand::UmdD3d12PipelineStateObject::execute(ID3D12Graphi
     }
 
     // [1] Prepare resoruces pointer handles
-    for (const auto& [idx, memory] : resources)
+    for (const auto& [idx, memory] : resources_)
     {
         if (idx >= std::size(exec_desc.Resources))
         {
@@ -224,15 +230,30 @@ bool iumd::custom_metacommand::UmdD3d12PipelineStateObject::execute(ID3D12Graphi
         const auto& [mem_ptr, base_offset] = memory;
         if (mem_ptr)
         {
-            exec_desc.Resources[idx] = mem_ptr->get_gpu_descriptor_handle();
+            // set offset no matter what type of resource
             exec_desc.ResourcesByteOffsets[idx] = base_offset;
+            // use type of binding based on memory type
+            const auto type = mem_ptr->get_type();
+            if (UmdD3d12Memory::Type::eHandle == type)
+            {
+                exec_desc.Resources[idx] = mem_ptr->get_gpu_descriptor_handle();
+            }
+            else if (UmdD3d12Memory::Type::eResource == type)
+            {
+                exec_desc.ResourcesAddress[idx] = mem_ptr->get_resource()->GetGPUVirtualAddress();
+            }
+            else
+            {
+                assert(!"Unsupported memory type!");
+                return false;
+            }
         }
         exec_desc.ResourceCount++;
     }
 
     // [2] Build execution time constants 
     std::vector<std::byte> execution_time_constants;
-    for (std::size_t i = 0; const auto& [idx, scalar] : scalars)
+    for (std::size_t i = 0; const auto& [idx, scalar] : scalars_)
     {
         exec_desc.RuntimeConstantsBindOffsets[i] = idx;
         exec_desc.RuntimeConstantsMemorySizes[i] = scalar.size;
@@ -240,18 +261,14 @@ bool iumd::custom_metacommand::UmdD3d12PipelineStateObject::execute(ID3D12Graphi
         execution_time_constants.resize(execution_time_constants.size() + scalar.size);
         i++;
     }
-    if (execution_time_constants.size() % 4 != 0)
-    {
-        assert(!"Please use 4 byte aligned scalars for metacommand. ToDo: This can be workaround with proper padding and alignments!");
-        return false;
-    }
+
     auto* ptr_to_copy_data = execution_time_constants.data();
-    for (const auto& [idx, scalar] : scalars)
+    for (const auto& [idx, scalar] : scalars_)
     {
         std::memcpy(ptr_to_copy_data, scalar.data, scalar.size);
         ptr_to_copy_data += scalar.size;
     }
-    exec_desc.RuntimeConstantsCount = scalars.size();
+    exec_desc.RuntimeConstantsCount = scalars_.size();
     exec_desc.RuntimeConstants = reinterpret_cast<UINT64>(execution_time_constants.data());
 
     cmd_list->ExecuteMetaCommand(mc_.Get(), &exec_desc, sizeof(exec_desc));

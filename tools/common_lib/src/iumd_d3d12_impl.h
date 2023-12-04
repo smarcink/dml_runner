@@ -42,6 +42,11 @@ namespace custom_metacommand
 
         D3D12_GPU_DESCRIPTOR_HANDLE get_gpu_descriptor_handle() const { return std::get<static_cast<std::size_t>(Type::eHandle)>(v_); }
         ID3D12Resource* get_resource() const { return std::get<static_cast<std::size_t>(Type::eResource)>(v_).Get(); }
+
+        Type get_type() const
+        {
+            return type_;
+        }
     private:
         Type type_ = Type::eUnknown;
         std::variant<D3D12_GPU_DESCRIPTOR_HANDLE, ComPtr<ID3D12Resource>> v_;
@@ -68,8 +73,8 @@ namespace custom_metacommand
     private:
         UmdD3d12Device* device_ = nullptr;
         ComPtr<ID3D12MetaCommand> mc_ = nullptr;
-        std::unordered_map<std::size_t, std::pair<const UmdD3d12Memory*, std::size_t>> resources;
-        std::unordered_map<std::size_t, ScalarArgType> scalars;
+        std::unordered_map<std::size_t, std::pair<const UmdD3d12Memory*, std::size_t>> resources_;
+        std::unordered_map<std::size_t, ScalarArgType> scalars_;
         std::string name_;
     };
 
@@ -220,6 +225,11 @@ namespace custom_metacommand
         UmdD3d12CommandList(ID3D12GraphicsCommandList4* cmd_list)
             : impl_(cmd_list)
         {}
+
+        UmdD3d12CommandList(ID3D12GraphicsCommandList* cmd_list)
+        {
+            throw_if_failed(cmd_list->QueryInterface(&impl_), "cant cast d3d12 device to ID3D12Device5");
+        }
 
         bool dispatch(IUMDPipelineStateObject* pso, const std::array<std::size_t, 3>& gws, const std::array<std::size_t, 3>& lws, const std::vector<IUMDEvent*>& deps = {}, std::shared_ptr<IUMDEvent>* out = nullptr) override;
 
