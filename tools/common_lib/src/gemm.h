@@ -1044,7 +1044,7 @@ public:
                 "output[0] = alpha;"
                 "}";
 
-            copy_alpha_shader_ = device_.create_pipeline_state_object("copy_alphabeta", code_string, "", UMD_SHADER_LANGUAGE_OCL_STATELESS);
+            copy_alpha_shader_ = device_.create_pipeline_state_object("copy_alphabeta", code_string, std::strlen(code_string), "", UMD_SHADER_LANGUAGE_OCL_STATELESS);
             assert(copy_alpha_shader_);
         }
     }

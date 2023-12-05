@@ -67,7 +67,7 @@ namespace custom_metacommand
 
     private:
         UmdD3d12PipelineStateObject(class UmdD3d12Device* device, const char* kernel_name,
-            const char* code_string, const char* build_options,
+            const void* kernel_code, std::size_t kernel_code_size, const char* build_options,
             UMD_SHADER_LANGUAGE language);
 
     private:
@@ -91,10 +91,10 @@ namespace custom_metacommand
 
         IUMDPipelineStateObject::Ptr
             create_pipeline_state_object(const char* kernel_name,
-                const char* code_string, const char* build_options,
+                const void* kernel_code, std::size_t kernel_code_size, const char* build_options,
                 UMD_SHADER_LANGUAGE language) override
         {
-            return std::unique_ptr<UmdD3d12PipelineStateObject>(new UmdD3d12PipelineStateObject(this, kernel_name, code_string, build_options, language));
+            return std::unique_ptr<UmdD3d12PipelineStateObject>(new UmdD3d12PipelineStateObject(this, kernel_name, kernel_code, kernel_code_size, build_options, language));
         }
 
         IUMDMemory::Ptr allocate_memory(std::size_t size) override
