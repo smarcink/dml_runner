@@ -17,6 +17,14 @@ enum META_COMMAND_CUSTOM_SHADER_LANGUAGE : UINT64
 };
 
 //////////////////////////////////////////////////////////////////////////
+enum META_COMMAND_CUSTOM_RESOURCE_BIND_TYPE : UINT64
+{
+    META_COMMAND_CUSTOM_RESOURCE_BIND_TYPE_NONE = 0,
+    META_COMMAND_CUSTOM_RESOURCE_BIND_TYPE_HANDLE,
+    META_COMMAND_CUSTOM_RESOURCE_BIND_TYPE_ADDRESS
+};
+
+//////////////////////////////////////////////////////////////////////////
 struct META_COMMAND_CREATE_CUSTOM_DESC
 {
     UINT64 ShaderSourceCode;
@@ -37,10 +45,11 @@ struct META_COMMAND_INITIALIZE_CUSTOM_DESC
 struct META_COMMAND_EXECUTE_CUSTOM_DESC
 {
     UINT64                      ResourceCount;
-    UINT64                      ResourceBindOffsets[50];
+    META_COMMAND_CUSTOM_RESOURCE_BIND_TYPE ResourceBindType[50];
+    UINT64                      ResourceBindOffset[50];
     D3D12_GPU_DESCRIPTOR_HANDLE Resources[50];            // use address or handles
     D3D12_GPU_VIRTUAL_ADDRESS   ResourcesAddress[50];     // use address or handles
-    UINT64                      ResourcesByteOffsets[50];  // works only in stateless mode
+    UINT64                      ResourcesByteOffset[50];  // works only in stateless mode
 
     UINT64 RuntimeConstants;      // buffer with constants
     UINT64 RuntimeConstantsCount; // how many runtime constants in total
@@ -218,28 +227,34 @@ bool iumd::custom_metacommand::UmdD3d12PipelineStateObject::execute(ID3D12Graphi
         }
         exec_desc.DispatchThreadGroup[i] = gws[i] / lws[i];
     }
-
-    // [1] Prepare resoruces pointer handles
-    for (const auto& [idx, memory] : resources_)
+    exec_desc.ResourceCount = resources_.size();
+    if (exec_desc.ResourceCount >= std::size(exec_desc.Resources))
     {
-        if (idx >= std::size(exec_desc.Resources))
-        {
-            assert(!"Please extend number of supported resources for custom metacommand!");
-            return false;
-        }
+        assert(!"Please extend number of supported resources for custom metacommand!");
+        return false;
+    }
+
+    // [1] Prepare resoruces pointer handles 
+    for (std::size_t idx = 0; const auto& [bind_indx, memory] : resources_)
+    {
+        exec_desc.ResourceBindOffset[idx] = bind_indx;
+
         const auto& [mem_ptr, base_offset] = memory;
         if (mem_ptr)
         {
             // set offset no matter what type of resource
-            exec_desc.ResourcesByteOffsets[idx] = base_offset;
+            exec_desc.ResourcesByteOffset[idx] = base_offset;
+
             // use type of binding based on memory type
             const auto type = mem_ptr->get_type();
             if (UmdD3d12Memory::Type::eHandle == type)
             {
+                exec_desc.ResourceBindType[idx] = META_COMMAND_CUSTOM_RESOURCE_BIND_TYPE_HANDLE;
                 exec_desc.Resources[idx] = mem_ptr->get_gpu_descriptor_handle();
             }
             else if (UmdD3d12Memory::Type::eResource == type)
             {
+                exec_desc.ResourceBindType[idx] = META_COMMAND_CUSTOM_RESOURCE_BIND_TYPE_ADDRESS;
                 exec_desc.ResourcesAddress[idx] = mem_ptr->get_resource()->GetGPUVirtualAddress();
             }
             else
@@ -248,8 +263,9 @@ bool iumd::custom_metacommand::UmdD3d12PipelineStateObject::execute(ID3D12Graphi
                 return false;
             }
         }
-        exec_desc.ResourceCount++;
+        idx++;
     }
+
 
     // [2] Build execution time constants 
     std::vector<std::byte> execution_time_constants;
