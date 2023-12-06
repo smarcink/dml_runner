@@ -167,6 +167,7 @@ public:
         {
             exec_flags |= DML_EXECUTION_FLAG_ALLOW_HALF_PRECISION_COMPUTATION;
         }
+
         if (disable_mc)
         {
             exec_flags |= DML_EXECUTION_FLAG_DISABLE_META_COMMANDS;

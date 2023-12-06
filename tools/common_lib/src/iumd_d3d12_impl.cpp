@@ -183,9 +183,6 @@ iumd::custom_metacommand::UmdD3d12PipelineStateObject::UmdD3d12PipelineStateObje
     assert(create_desc.ShaderLanguage != META_COMMAND_CUSTOM_SHADER_LANGUAGE_NONE);
 
     throw_if_failed(dev5->CreateMetaCommand(GUID_CUSTOM, 0, &create_desc, sizeof(create_desc), IID_PPV_ARGS(mc_.ReleaseAndGetAddressOf())), "cant create custom metacommand");
-
-    //D3D12_FEATURE_DATA_QUERY_META_COMMAND query{};
-    //dev5->CheckFeatureSupport(D3D12_FEATURE_QUERY_META_COMMAND, &query, sizeof(query));
 }
 
 const char* iumd::custom_metacommand::UmdD3d12PipelineStateObject::get_name() const
