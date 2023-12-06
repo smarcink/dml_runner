@@ -167,7 +167,6 @@ public:
         {
             exec_flags |= DML_EXECUTION_FLAG_ALLOW_HALF_PRECISION_COMPUTATION;
         }
-        disable_mc = true; // PR5 : Remove this before check-in
         if (disable_mc)
         {
             exec_flags |= DML_EXECUTION_FLAG_DISABLE_META_COMMANDS;
