@@ -44,6 +44,9 @@ struct opts_t
     DataType out_dt = DataType::eCount;
     DataLayout out_layout = DataLayout::eCount;
     bool force_fp32_accumulator = false;
+
+    float alpha = 1.0f;
+    float beta = 1.0f;
 };
 std::vector<std::byte> gemm(const bindings_t& bindings, opts_t opts);
 }
@@ -729,6 +732,8 @@ public:
             opts.out_layout = params_.layout;
             opts.output_shape = get_shape_output();
             opts.force_fp32_accumulator = params_.dt == DataType::eFp16 && !params_.allow_fp16_computations;
+            opts.alpha = params_.alpha;
+            opts.beta = params_.beta;
             ref_untyped_result = dnnl_gemm_op::gemm(bindings, opts);
         }
         else   
@@ -952,6 +957,7 @@ public:
             {
                 attr.set_accumulation_mode(dnnl::accumulation_mode::f32);
             }
+
             // alpha and beta
             if (has_scaling_factors())
             {

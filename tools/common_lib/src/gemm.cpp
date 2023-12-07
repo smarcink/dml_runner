@@ -49,11 +49,33 @@ std::vector<std::byte> dnnl_gemm_op::gemm(const bindings_t& bindings, opts_t opt
         return create_dnnl_memory(binding_t{ nullptr, opts.out_dt, opts.out_layout, opts.output_shape }, engine);
     }();
 
+    dnnl::memory alpha_scale_memory = [&]()
+    {
+        const float alpha = opts.alpha / (opts.beta == 0.0f ? 1.0f : opts.beta);
+        return create_dnnl_memory(binding_t{ reinterpret_cast<const std::byte*>(&opts.alpha), DataType::eFp32, DataLayout::eW, TensorShape{1, 0, 0, 0} }, engine);
+    }();
+
+    dnnl::memory beta_scale_memory = [&]()
+    {
+        return create_dnnl_memory(binding_t{ reinterpret_cast<const std::byte*>(&opts.beta), DataType::eFp32, DataLayout::eW, TensorShape{1, 0, 0, 0} }, engine);
+    }();
+
     dnnl::post_ops po{};
     dnnl::primitive_attr attrs{};
     if (opts.force_fp32_accumulator)
     {
         attrs.set_accumulation_mode(dnnl::accumulation_mode::f32);
+    }
+
+    auto has_scaling_factors = [&]()
+    {
+        return opts.alpha != 1.0f || opts.beta != 1.0f;
+    };
+
+    if (has_scaling_factors())
+    {
+        attrs.set_scales_mask(DNNL_ARG_WEIGHTS, 0);
+        attrs.set_scales_mask(DNNL_ARG_DST, 0);
     }
 
     if (input_c_memory)
@@ -81,6 +103,12 @@ std::vector<std::byte> dnnl_gemm_op::gemm(const bindings_t& bindings, opts_t opt
     if (input_c_memory)
     {
         args.insert({DNNL_ARG_ATTR_MULTIPLE_POST_OP(0) | DNNL_ARG_SRC_1, input_c_memory});
+    }
+
+    if (has_scaling_factors())
+    {
+        args.insert({ DNNL_ARG_ATTR_SCALES | DNNL_ARG_WEIGHTS, alpha_scale_memory });
+        args.insert({ DNNL_ARG_ATTR_SCALES | DNNL_ARG_DST, beta_scale_memory });
     }
 
     matmul.execute(stream, args);
