@@ -295,7 +295,7 @@ inline auto add_data_layout_cli_option(CLI::App* opts, std::string_view opt_name
 
 
 template<typename Dt>
-inline ConformanceResult run_conformance_check(const std::vector<std::byte>& gpu_untyped_result, const std::vector<std::byte>& dnnl_untyped_result, float epsilon)
+inline ConformanceResult run_conformance_check(const std::vector<std::byte>& gpu_untyped_result, const std::vector<std::byte>& dnnl_untyped_result, float epsilon, bool print_mismatches)
 {
     const auto* gpu_typed_result = reinterpret_cast<const Dt*>(gpu_untyped_result.data());
     const auto* dnnl_typed_result = reinterpret_cast<const Dt*>(dnnl_untyped_result.data());
@@ -314,7 +314,11 @@ inline ConformanceResult run_conformance_check(const std::vector<std::byte>& gpu
         {
             ret.passed = false;
 
-            std::cout << std::format("Mismatch, gpu: {}, cpu: {}, at index: {}. Absolute differece: {} \n", ret.node_value, ret.reference_value, i, abs_diff);
+            if (print_mismatches)
+            {
+                std::cout << std::format("Mismatch, gpu: {}, cpu: {}, at index: {}. Absolute differece: {} \n", ret.node_value, ret.reference_value, i, abs_diff);
+            }
+
         }
         ret.biggest_difference = std::max(ret.biggest_difference, abs_diff);
         ret.tested_samples_count++;
@@ -330,7 +334,7 @@ public:
     virtual void execute(ID3D12GraphicsCommandList* cmd_list) = 0;
 
     virtual ConformanceResult validate_conformance(ID3D12CommandQueue* command_queue,
-        ID3D12CommandAllocator* command_allocator, ID3D12GraphicsCommandList* command_list) = 0;
+        ID3D12CommandAllocator* command_allocator, ID3D12GraphicsCommandList* command_list, bool print_mismatches) = 0;
 
     virtual ~NodeDispatcher() = default;
 };

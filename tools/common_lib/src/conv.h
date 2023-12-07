@@ -414,7 +414,7 @@ public:
     }
 
     ConformanceResult validate_conformance(ID3D12CommandQueue* command_queue,
-        ID3D12CommandAllocator* command_allocator, ID3D12GraphicsCommandList* command_list) override
+        ID3D12CommandAllocator* command_allocator, ID3D12GraphicsCommandList* command_list, bool print_mismatches) override
     {
         const auto tensor_out_bytes_width = output_buffer_->GetDesc().Width;
 
@@ -436,11 +436,11 @@ public:
 
         if (params_.dt == DataType::eFp32)
         {
-            return run_conformance_check<float>(data_out, dnnl_untyped_result, 0.001f);
+            return run_conformance_check<float>(data_out, dnnl_untyped_result, 0.001f, print_mismatches);
         }
         else if (params_.dt == DataType::eFp16)
         {
-            return run_conformance_check<Half>(data_out, dnnl_untyped_result, 0.05f);
+            return run_conformance_check<Half>(data_out, dnnl_untyped_result, 0.05f, print_mismatches);
         }
         assert(false && "Unsupported output data type!");
         ConformanceResult ret{};
@@ -876,7 +876,7 @@ private:
     };
 
     ConformanceResult validate_conformance(ID3D12CommandQueue* command_queue,
-        ID3D12CommandAllocator* command_allocator, ID3D12GraphicsCommandList* command_list) override
+        ID3D12CommandAllocator* command_allocator, ID3D12GraphicsCommandList* command_list, bool print_mismatche) override
     {
         auto dump_buffer_to_file = [&](const auto& buffer, const auto& file_name)
         {
@@ -915,7 +915,7 @@ private:
             dump_buffer_to_file(temporary_buffer_, "umd_scratchpad_data.dat");
         }
 
-        const auto ret = ConvolutionBaseDispatcher::validate_conformance(command_queue, command_allocator, command_list);
+        const auto ret = ConvolutionBaseDispatcher::validate_conformance(command_queue, command_allocator, command_list, print_mismatche);
         return ret;
     }
 
@@ -1209,13 +1209,13 @@ public:
     }
 
     ConformanceResult validate_conformance(ID3D12CommandQueue* command_queue,
-        ID3D12CommandAllocator* command_allocator, ID3D12GraphicsCommandList* command_list) override
+        ID3D12CommandAllocator* command_allocator, ID3D12GraphicsCommandList* command_list, bool print_mismatches) override
     {
         if (weights_reorder_.has_value())
         {
-            weights_reorder_->validate_conformance(command_queue, command_allocator, command_list);
+            weights_reorder_->validate_conformance(command_queue, command_allocator, command_list, print_mismatches);
         }
-        const auto ret = ConvolutionBaseDispatcher::validate_conformance(command_queue, command_allocator, command_list);
+        const auto ret = ConvolutionBaseDispatcher::validate_conformance(command_queue, command_allocator, command_list, print_mismatches);
         return ret;
     }
 
@@ -1443,7 +1443,7 @@ private:
 
 
         ConformanceResult validate_conformance(ID3D12CommandQueue* command_queue,
-            ID3D12CommandAllocator* command_allocator, ID3D12GraphicsCommandList* command_list) override
+            ID3D12CommandAllocator* command_allocator, ID3D12GraphicsCommandList* command_list, bool print_mismatches) override
         {
             // optional weights conformance check
             if (false)

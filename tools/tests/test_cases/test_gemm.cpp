@@ -33,7 +33,7 @@ public:
         g_dx12_engine.wait_for_execution();
 
         // finally validate conformance
-        const auto conformance_result = node->validate_conformance(g_dx12_engine.command_queue.Get(), g_dx12_engine.command_allocator.Get(), g_dx12_engine.command_list.Get());
+        const auto conformance_result = node->validate_conformance(g_dx12_engine.command_queue.Get(), g_dx12_engine.command_allocator.Get(), g_dx12_engine.command_list.Get(), false);
         
         // we expect perfect match
         // comaprision have to be done vs dnnl!
@@ -137,8 +137,8 @@ protected:
 
 private:
     bool use_c_tensor_ = false;
-    bool alpha_ = 1.0f;
-    bool beta_ = 1.0f;
+    float alpha_ = 1.0f;
+    float beta_ = 1.0f;
 };
 
 
