@@ -592,15 +592,13 @@ public:
         {
             randomize_linear_container_float(random_generator, uniform_distribution, input_data_a_);
             randomize_linear_container_float(random_generator, uniform_distribution, input_data_b_);
-            fill_with_constant_linear_container_float(input_data_c_, 1.0f);
-            //randomize_linear_container_float(random_generator, uniform_distribution, input_data_c_);
+            randomize_linear_container_float(random_generator, uniform_distribution, input_data_c_);
         }
         else if (params_.dt == DataType::eFp16)
         {
             randomize_linear_container_half(random_generator, uniform_distribution, input_data_a_);
             randomize_linear_container_half(random_generator, uniform_distribution, input_data_b_);
-            fill_with_constant_linear_container_float(input_data_c_, 1.0f);
-            //randomize_linear_container_half(random_generator, uniform_distribution, input_data_c_);
+            randomize_linear_container_half(random_generator, uniform_distribution, input_data_c_);
         }
         else
         {
@@ -958,16 +956,22 @@ public:
                 attr.set_accumulation_mode(dnnl::accumulation_mode::f32);
             }
 
-            // alpha and beta
+            // alpha
             if (has_scaling_factors())
             {
                 attr.set_scales_mask(DNNL_ARG_WEIGHTS, 0);  // alpha / beta
-                attr.set_scales_mask(DNNL_ARG_DST, 0);      // alpha
             }
 
             if (has_c_tensor())
             {
                 ops.append_binary(dnnl::algorithm::binary_add, input_c_memory_desc_.value());
+            }
+
+            // beta
+            if (has_scaling_factors())
+            {
+                ops.append_binary(dnnl::algorithm::binary_mul, 
+                    to_dnnl_mem_desc(TensorShape{ 1, 0, 0, 0 }, DataLayout::eW, DataType::eFp32));
             }
 
             attr.set_post_ops(ops);
@@ -1148,7 +1152,15 @@ public:
         std::vector<std::pair<DescType, ID3D12Resource*>> resources_list;
         resources_list.reserve(get_total_descriptor_count());
         resources_list.push_back({ DescType::eUav, input_buffer_a_.Get() });
-        resources_list.push_back({ DescType::eUav, reorder_input_b_ ? persistent_buffer_.Get() : input_buffer_b_.Get()});
+        if (persistent_buffer_)
+        {
+            resources_list.push_back({ DescType::eUav, persistent_buffer_.Get() });
+        }
+        if (!reorder_input_b_)
+        {
+            resources_list.push_back({ DescType::eUav, input_buffer_b_.Get()});
+        }
+
         resources_list.push_back({ DescType::eUav, output_buffer_.Get() });
         if (input_buffer_c_ && !reorder_input_c_)
         {
@@ -1162,8 +1174,8 @@ public:
 
         std::size_t res_idx = 0;
         auto umd_input_a_memory_ = iumd::custom_metacommand::UmdD3d12Memory(gpu_handles[res_idx++]);
-        auto umd_input_b_memory_ = iumd::custom_metacommand::UmdD3d12Memory(gpu_handles[res_idx++]);
-        auto umd_persitent_memory = persistent_buffer_ ? umd_input_b_memory_ : iumd::custom_metacommand::UmdD3d12Memory();
+        auto umd_persitent_memory = persistent_buffer_ ? iumd::custom_metacommand::UmdD3d12Memory(gpu_handles[res_idx++]) : iumd::custom_metacommand::UmdD3d12Memory();
+        auto umd_input_b_memory_ = reorder_input_b_ ? umd_persitent_memory : iumd::custom_metacommand::UmdD3d12Memory(gpu_handles[res_idx++]);
         auto umd_output_memory_ = iumd::custom_metacommand::UmdD3d12Memory(gpu_handles[res_idx++]);
         auto umd_input_c_memory_ = [&]()
         {
@@ -1173,11 +1185,10 @@ public:
             }
             else if (reorder_input_c_)
             {
-                return umd_input_b_memory_;
+                return umd_persitent_memory;
             }
             return iumd::custom_metacommand::UmdD3d12Memory{};
         }();
-
 
         auto umd_alpha_beta_memory_ = umd_persitent_memory;
         auto umd_scratchpad_memory_ = temporary_buffer_ ? iumd::custom_metacommand::UmdD3d12Memory(gpu_handles[res_idx++]) : iumd::custom_metacommand::UmdD3d12Memory();
@@ -1190,7 +1201,7 @@ public:
         
         // memory resources are created in execute(...), because in MetaCommand these objects can be different from execute-to-execute
         dnnl::memory input_memory = create_dnnl_memory(input_a_memory_desc_, umd_input_a_memory_);
-        dnnl::memory input_b_memory = create_dnnl_memory(input_b_memory_desc_, umd_input_b_memory_);
+        dnnl::memory input_b_memory = create_dnnl_memory(input_b_memory_desc_, umd_input_b_memory_, reorder_input_b_ && has_scaling_factors() ? 2 * sizeof(float) : 0ull);
         dnnl::memory input_c_memory = has_c_tensor() ?
             create_dnnl_memory(input_c_memory_desc_.value(), umd_input_c_memory_, (reorder_input_b_ && reorder_input_c_) ? input_b_memory_desc_.get_size() : 0ull) :
             dnnl::memory{};
@@ -1208,11 +1219,17 @@ public:
         std::unordered_map<int, dnnl::memory> args;
         args.insert({ DNNL_ARG_SRC, input_memory });
         args.insert({ DNNL_ARG_WEIGHTS, input_b_memory });
-        args.insert({ DNNL_ARG_ATTR_MULTIPLE_POST_OP(0) | DNNL_ARG_SRC_1, input_c_memory });
+        std::size_t post_ops_idx = 0ull;
+        if (input_c_memory)
+        {
+            args.insert({ DNNL_ARG_ATTR_MULTIPLE_POST_OP(post_ops_idx) | DNNL_ARG_SRC_1, input_c_memory });
+            post_ops_idx++;
+        }
         if (has_scaling_factors())
         {
             args.insert({ DNNL_ARG_ATTR_SCALES | DNNL_ARG_WEIGHTS, alpha_factor_memory });
-            args.insert({ DNNL_ARG_ATTR_SCALES | DNNL_ARG_DST, beta_factor_memory });
+            args.insert({ DNNL_ARG_ATTR_MULTIPLE_POST_OP(post_ops_idx) | DNNL_ARG_SRC_1, beta_factor_memory });
+            post_ops_idx++;
         }
 
         args.insert({ DNNL_ARG_DST, output_memory });

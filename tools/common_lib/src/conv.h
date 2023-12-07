@@ -624,10 +624,10 @@ public:
             // set scratchpad mode to user provided
             attr.set_scratchpad_mode(dnnl::scratchpad_mode::user);
 
-            if (allow_half_computation)
-            {
-                attr.set_accumulation_mode(dnnl::accumulation_mode::f16);
-            }
+            //if (allow_half_computation)
+            //{
+            //    attr.set_accumulation_mode(dnnl::accumulation_mode::f16);
+            //}
 
 
             if (act != dnnl::algorithm::undef)

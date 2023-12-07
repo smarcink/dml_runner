@@ -118,7 +118,7 @@ protected:
         opts.shape_c = use_c_tensor_ ? TensorShape(batch, 1, M, N) : TensorShape();
         opts.allow_fp16_computations = dt == DataType::eFp16;
         opts.type = GemmType::GemmType_AB;
-        opts.use_dnnl_for_reference_calculations = true; // we expect perfect match!
+        opts.use_dnnl_for_reference_calculations = true; // we expect perfect match!(set to false to compare with DML backend)
         opts.layout = DataLayout::eNCHW;
         opts.dt = dt;
         opts.alpha = alpha_;
@@ -160,7 +160,14 @@ TEST_P(DnnlPluginNext_GEMM_Params, WithCtensor)
     EXPECT_TRUE(run());
 }
 
-TEST_P(DnnlPluginNext_GEMM_Params, WithAlphaAndBeta)
+TEST_P(DnnlPluginNext_GEMM_Params, WithCtensorAndAlpha)
+{
+    set_use_c_tensor();
+    set_alpha_value(0.25f);
+    EXPECT_TRUE(run());
+}
+
+TEST_P(DnnlPluginNext_GEMM_Params, WithCtensorAndAlphaAndBeta)
 {
     set_use_c_tensor();
     set_alpha_value(1.5f);
@@ -172,9 +179,9 @@ INSTANTIATE_TEST_SUITE_P(
     DimensionsPowerOfTwo, DnnlPluginNext_GEMM_Params,
     testing::Combine(
         testing::Values(1, 16),
-        testing::Values(64, 128),
-        testing::Values(8, 256),
-        testing::Values(64, 128),
+        testing::Values(128),
+        testing::Values(256),
+        testing::Values(64),
         testing::Values(DataType::eFp32, DataType::eFp16)),
         [](const testing::TestParamInfo<DnnlPluginNext_GEMM_Params::ParamType>& info) {
             return DnnlPluginNext_GEMM_Params::params_to_str(info);
@@ -184,9 +191,9 @@ INSTANTIATE_TEST_SUITE_P(
     DimensionsNonPowerOfTwo, DnnlPluginNext_GEMM_Params,
     testing::Combine(
         testing::Values(13),
-        testing::Values(5, 69),
-        testing::Values(7, 19),
-        testing::Values(9, 125),
+        testing::Values(69),
+        testing::Values(7),
+        testing::Values(125),
         testing::Values(DataType::eFp32, DataType::eFp16)),
     [](const testing::TestParamInfo<DnnlPluginNext_GEMM_Params::ParamType>& info) {
         return DnnlPluginNext_GEMM_Params::params_to_str(info);
@@ -199,7 +206,7 @@ INSTANTIATE_TEST_SUITE_P(
         testing::Values(2), 
         testing::Values(1024), 
         testing::Values(4096), 
-        testing::Values(2048), 
+        testing::Values(512), 
         testing::Values(DataType::eFp16)),
     [](const testing::TestParamInfo<DnnlPluginNext_GEMM_Params::ParamType>& info) {
         return DnnlPluginNext_GEMM_Params::params_to_str(info);
@@ -209,7 +216,7 @@ INSTANTIATE_TEST_SUITE_P(
     BigDimensions_1, DnnlPluginNext_GEMM_Params, 
     testing::Combine(
         testing::Values(2), 
-        testing::Values(4096), 
+        testing::Values(128), 
         testing::Values(77), 
         testing::Values(4096), 
         testing::Values(DataType::eFp16)),

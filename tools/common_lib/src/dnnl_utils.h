@@ -110,7 +110,12 @@ inline dnnl::memory create_dnnl_memory(const dnnl_utils::binding_t binding, dnnl
     const auto dims = dnnl_utils::to_dnnl_dims(binding.shape);
     const auto dt = dnnl_utils::to_dnnl_data_type(binding.dt);
     const auto ft = dnnl_utils::to_dnnl_format(binding.layout);
-    return dnnl::memory({ dims, dt, ft }, engine);
+    auto ret = dnnl::memory({ dims, dt, ft }, engine);
+    if (binding.data)
+    {
+        copy_to_dnnl_memory(ret, binding.data);
+    }
+    return ret;
 }
 
 }// namespace dnnl_utils

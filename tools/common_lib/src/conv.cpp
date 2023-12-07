@@ -12,13 +12,13 @@ inline dnnl::primitive_attr CreateEltwisePostOps(dnnl::algorithm Activation, flo
     // set scratchpad mode to user provided
     attr.set_scratchpad_mode(dnnl::scratchpad_mode::user);
 
-    switch (accu_dt)
-    {
-    case DataType::eFp16:
-        attr.set_accumulation_mode(dnnl::accumulation_mode::f16);
-    default:
-        attr.set_accumulation_mode(dnnl::accumulation_mode::strict);
-    }
+    //switch (accu_dt)
+    //{
+    //case DataType::eFp16:
+    //    attr.set_accumulation_mode(dnnl::accumulation_mode::f16);
+    //default:
+    //    attr.set_accumulation_mode(dnnl::accumulation_mode::strict);
+    //}
 
     if (Activation != dnnl::algorithm::undef)
     {
