@@ -51,8 +51,10 @@ protected:
     virtual std::unique_ptr<NodeDispatcher> create_dispatcher_impl() = 0;
 };
 
+
+
 // The fixture for testing class Foo.
-class DnnlPluginNext_GEMM : public NodeDispatcherBase, public testing::TestWithParam<std::tuple<
+class DnnlPluginNext_GEMM_Params : public NodeDispatcherBase, public testing::TestWithParam<std::tuple<
     std::int32_t, // batch
     std::int32_t, // M
     std::int32_t, // K
@@ -61,7 +63,7 @@ class DnnlPluginNext_GEMM : public NodeDispatcherBase, public testing::TestWithP
     >>
 {
 public:
-    static std::string params_to_str(const testing::TestParamInfo<DnnlPluginNext_GEMM::ParamType>& info)
+    static std::string params_to_str(const testing::TestParamInfo<DnnlPluginNext_GEMM_Params::ParamType>& info)
     {
         const auto& params = info.param;
 
@@ -87,11 +89,11 @@ protected:
 
 
 protected:
-    DnnlPluginNext_GEMM() {
+    DnnlPluginNext_GEMM_Params() {
         // You can do set-up work for each test here.
     }
 
-    ~DnnlPluginNext_GEMM() override {
+    ~DnnlPluginNext_GEMM_Params() override {
         // You can do clean-up work that doesn't throw exceptions here.
     }
 
@@ -140,33 +142,79 @@ private:
 };
 
 
-TEST_P(DnnlPluginNext_GEMM, TestsBasic)
+TEST_P(DnnlPluginNext_GEMM_Params, Basic)
 {
-    const auto params = GetParam();
-    const auto dt = std::get<TUPLE_ID_DT>(params);
+    EXPECT_TRUE(run());
+}
+
+TEST_P(DnnlPluginNext_GEMM_Params, WithAlpha)
+{
+    set_alpha_value(0.1337f);
+    EXPECT_TRUE(run());
+}
+
+
+TEST_P(DnnlPluginNext_GEMM_Params, WithCtensor)
+{
+    set_use_c_tensor();
+    EXPECT_TRUE(run());
+}
+
+TEST_P(DnnlPluginNext_GEMM_Params, WithAlphaAndBeta)
+{
+    set_use_c_tensor();
+    set_alpha_value(1.5f);
+    set_beta_value(0.25f);
     EXPECT_TRUE(run());
 }
 
 INSTANTIATE_TEST_SUITE_P(
-    GemmTestsGenericGroup, DnnlPluginNext_GEMM,
+    DimensionsPowerOfTwo, DnnlPluginNext_GEMM_Params,
     testing::Combine(
-        testing::Values(1, 8, 16),
-        testing::Values(32, 64, 128),
-        testing::Values(8, 64, 256),
+        testing::Values(1, 16),
+        testing::Values(64, 128),
+        testing::Values(8, 256),
         testing::Values(64, 128),
         testing::Values(DataType::eFp32, DataType::eFp16)),
-        [](const testing::TestParamInfo<DnnlPluginNext_GEMM::ParamType>& info) {   
-            return DnnlPluginNext_GEMM::params_to_str(info);
+        [](const testing::TestParamInfo<DnnlPluginNext_GEMM_Params::ParamType>& info) {
+            return DnnlPluginNext_GEMM_Params::params_to_str(info);
         });
 
 INSTANTIATE_TEST_SUITE_P(
-    GemmTestsGenericNonPowerOfTwoGroup, DnnlPluginNext_GEMM,
+    DimensionsNonPowerOfTwo, DnnlPluginNext_GEMM_Params,
     testing::Combine(
-        testing::Values(7, 13),
+        testing::Values(13),
         testing::Values(5, 69),
         testing::Values(7, 19),
         testing::Values(9, 125),
         testing::Values(DataType::eFp32, DataType::eFp16)),
-    [](const testing::TestParamInfo<DnnlPluginNext_GEMM::ParamType>& info) {
-        return DnnlPluginNext_GEMM::params_to_str(info);
+    [](const testing::TestParamInfo<DnnlPluginNext_GEMM_Params::ParamType>& info) {
+        return DnnlPluginNext_GEMM_Params::params_to_str(info);
     });
+
+
+INSTANTIATE_TEST_SUITE_P(
+    BigDimensions_0, DnnlPluginNext_GEMM_Params, 
+    testing::Combine(
+        testing::Values(2), 
+        testing::Values(1024), 
+        testing::Values(4096), 
+        testing::Values(2048), 
+        testing::Values(DataType::eFp16)),
+    [](const testing::TestParamInfo<DnnlPluginNext_GEMM_Params::ParamType>& info) {
+        return DnnlPluginNext_GEMM_Params::params_to_str(info);
+    });
+
+INSTANTIATE_TEST_SUITE_P(
+    BigDimensions_1, DnnlPluginNext_GEMM_Params, 
+    testing::Combine(
+        testing::Values(2), 
+        testing::Values(4096), 
+        testing::Values(77), 
+        testing::Values(4096), 
+        testing::Values(DataType::eFp16)),
+    [](const testing::TestParamInfo<DnnlPluginNext_GEMM_Params::ParamType>& info) {
+        return DnnlPluginNext_GEMM_Params::params_to_str(info);
+    });
+
+
