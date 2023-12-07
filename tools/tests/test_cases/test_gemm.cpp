@@ -60,6 +60,21 @@ class DnnlPluginNext_GEMM : public NodeDispatcherBase, public testing::TestWithP
     DataType
     >>
 {
+public:
+    static std::string params_to_str(const testing::TestParamInfo<DnnlPluginNext_GEMM::ParamType>& info)
+    {
+        const auto& params = info.param;
+
+        const auto batch = std::get<TUPLE_ID_BATCH>(params);
+        const auto M = std::get<TUPLE_ID_M>(params);
+        const auto K = std::get<TUPLE_ID_K>(params);
+        const auto N = std::get<TUPLE_ID_N>(params);
+        const auto dt = std::get<TUPLE_ID_DT>(params);
+
+        const auto fmt = std::format("batch_{}__M_{}__K_{}__N_{}__datatype_{}", batch, M, K, N, get_data_type_str(dt));
+        return fmt;
+    }
+
 protected:
     enum TupleID
     {
@@ -129,11 +144,6 @@ TEST_P(DnnlPluginNext_GEMM, TestsBasic)
 {
     const auto params = GetParam();
     const auto dt = std::get<TUPLE_ID_DT>(params);
-    if (dt == DataType::eFp16)
-    {
-        GTEST_SKIP() << "Skipping FLOAT16 tests as it has known conformance issues in D3D12 MetaCommand driver.";
-    }
-
     EXPECT_TRUE(run());
 }
 
@@ -142,9 +152,12 @@ INSTANTIATE_TEST_SUITE_P(
     testing::Combine(
         testing::Values(1, 8, 16),
         testing::Values(32, 64, 128),
-        testing::Values(8,  64, 256),
+        testing::Values(8, 64, 256),
         testing::Values(64, 128),
-        testing::Values(DataType::eFp32, DataType::eFp16)));
+        testing::Values(DataType::eFp32, DataType::eFp16)),
+        [](const testing::TestParamInfo<DnnlPluginNext_GEMM::ParamType>& info) {   
+            return DnnlPluginNext_GEMM::params_to_str(info);
+        });
 
 INSTANTIATE_TEST_SUITE_P(
     GemmTestsGenericNonPowerOfTwoGroup, DnnlPluginNext_GEMM,
@@ -153,4 +166,7 @@ INSTANTIATE_TEST_SUITE_P(
         testing::Values(5, 69),
         testing::Values(7, 19),
         testing::Values(9, 125),
-        testing::Values(DataType::eFp32, DataType::eFp16)));
+        testing::Values(DataType::eFp32, DataType::eFp16)),
+    [](const testing::TestParamInfo<DnnlPluginNext_GEMM::ParamType>& info) {
+        return DnnlPluginNext_GEMM::params_to_str(info);
+    });

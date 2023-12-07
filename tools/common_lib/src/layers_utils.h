@@ -115,6 +115,19 @@ inline std::uint8_t get_data_type_bytes_width(DataType dt)
     return 0;
 }
 
+
+inline std::string get_data_type_str(DataType dt)
+{
+    switch (dt)
+    {
+    case DataType::eFp32: return "FP32";
+    case DataType::eFp16: return "FP16";
+    default:
+        assert(false && "Unknown data type.");
+    }
+    return "UNKNOWN";
+}
+
 enum class DataLayout
 {
     eNCHW = 0,
