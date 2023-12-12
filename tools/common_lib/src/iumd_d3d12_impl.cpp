@@ -59,6 +59,8 @@ struct META_COMMAND_EXECUTE_CUSTOM_DESC
     UINT64 RuntimeConstantsMemoryOffsets[40]; // bytes offset into "RuntimeConstants" buffer
 
     UINT64 DispatchThreadGroup[3];
+    UINT64 DispatchGlobalWorkSize[3];
+    UINT64 DispatchLocalWorkSize[3];
 };
 
 
@@ -221,6 +223,8 @@ bool iumd::custom_metacommand::UmdD3d12PipelineStateObject::execute(ID3D12Graphi
             return false;
         }
         exec_desc.DispatchThreadGroup[i] = gws[i] / lws[i];
+        exec_desc.DispatchGlobalWorkSize[i] = gws[i];
+        exec_desc.DispatchLocalWorkSize[i] = lws[i];
     }
     exec_desc.ResourceCount = resources_.size();
     if (exec_desc.ResourceCount >= std::size(exec_desc.Resources))
