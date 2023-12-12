@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <istream>
 #include <vector>
+#include <random>
 
 #include "CLI/App.hpp"
 #include "CLI/Formatter.hpp"
