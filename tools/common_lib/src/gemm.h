@@ -729,7 +729,7 @@ public:
             opts.out_dt = params_.dt;
             opts.out_layout = params_.layout;
             opts.output_shape = get_shape_output();
-            opts.force_fp32_accumulator = false;
+            opts.force_fp32_accumulator = params_.dt == DataType::eFp16 && !params_.allow_fp16_computations;
             opts.alpha = params_.alpha;
             opts.beta = params_.beta;
             ref_untyped_result = dnnl_gemm_op::gemm(bindings, opts);
@@ -950,7 +950,7 @@ public:
             // set scratchpad mode to user provided
             attr.set_scratchpad_mode(dnnl::scratchpad_mode::user);
 
-            const bool force_fp32_accu = false;
+            const bool force_fp32_accu = params_.dt == DataType::eFp16 && !params_.allow_fp16_computations;
             if (force_fp32_accu)
             {
                 attr.set_accumulation_mode(dnnl::accumulation_mode::f32);

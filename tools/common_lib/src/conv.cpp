@@ -14,7 +14,7 @@ inline dnnl::primitive_attr CreateEltwisePostOps(dnnl::algorithm Activation, flo
 
     if (use_fp32_accu)
     {
-        attr.set_accumulation_mode(dnnl::accumulation_mode::f32);
+        attr.set_accumulation_mode(dnnl::accumulation_mode::strict);
     }
 
     if (Activation != dnnl::algorithm::undef)

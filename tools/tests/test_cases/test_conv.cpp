@@ -41,6 +41,7 @@ protected:
 TEST_F(DnnlPluginNext_Convolution, SD_dims_0)
 {
     params_.dt = DataType::eFp16;
+    params_.allow_fp16_computations = true;
     params_.input_layout = DataLayout::eNCHW;
     params_.output_layout = DataLayout::eNCHW;
     params_.filter_layout = DataLayout::eNCHW;
@@ -54,6 +55,7 @@ TEST_F(DnnlPluginNext_Convolution, SD_dims_0)
 TEST_F(DnnlPluginNext_Convolution, SD_dims_1)
 {
     params_.dt = DataType::eFp16;
+    params_.allow_fp16_computations = true;
     params_.input_layout = DataLayout::eNCHW;
     params_.output_layout = DataLayout::eNCHW;
     params_.filter_layout = DataLayout::eNCHW;
@@ -67,6 +69,7 @@ TEST_F(DnnlPluginNext_Convolution, SD_dims_1)
 TEST_F(DnnlPluginNext_Convolution, SD_dims_2)
 {
     params_.dt = DataType::eFp16;
+    params_.allow_fp16_computations = true;
     params_.input_layout = DataLayout::eNCHW;
     params_.output_layout = DataLayout::eNCHW;
     params_.filter_layout = DataLayout::eNCHW;
@@ -80,6 +83,7 @@ TEST_F(DnnlPluginNext_Convolution, SD_dims_2)
 TEST_F(DnnlPluginNext_Convolution, SD_dims_3)
 {
     params_.dt = DataType::eFp16;
+    params_.allow_fp16_computations = true;
     params_.input_layout = DataLayout::eNCHW;
     params_.output_layout = DataLayout::eNCHW;
     params_.filter_layout = DataLayout::eNCHW;

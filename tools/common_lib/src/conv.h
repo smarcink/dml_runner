@@ -524,7 +524,7 @@ protected:
         opts.force_winograd = params_.algo_winograd;
         opts.dump_weights = dump_weights();
         opts.dump_scratchpad = dump_weights();
-        opts.use_fp32_accu = false;
+        opts.use_fp32_accu = params_.dt == DataType::eFp16 && !params_.allow_fp16_computations;
         return dnnl_conv_op::convolution(bindings, opts);
     }
 
@@ -626,7 +626,7 @@ public:
 
             if (use_fp32_accu)
             {
-                attr.set_accumulation_mode(dnnl::accumulation_mode::f32);
+                attr.set_accumulation_mode(dnnl::accumulation_mode::strict);
             }
 
 
@@ -638,7 +638,7 @@ public:
             }
 
             return attr;
-        }(static_cast<dnnl::algorithm>(params.act_type), params.act_alpha, params.act_beta, false);
+        }(static_cast<dnnl::algorithm>(params.act_type), params.act_alpha, params.act_beta, params_.dt == DataType::eFp16 && !params_.allow_fp16_computations);
 
         input_memory_desc_ = to_dnnl_mem_desc(params_.input_shape, params_.input_layout, params_.dt);
         output_memory_desc_ = to_dnnl_mem_desc(get_output_shape(), params_.output_layout, params_.dt);

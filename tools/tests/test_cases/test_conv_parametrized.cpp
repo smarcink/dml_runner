@@ -87,6 +87,7 @@ protected:
         opts.input_shape = TensorShape(batch, ic, h, w);
         opts.filter_shape = TensorShape(oc, ic, kernel_size_, kernel_size_);
         opts.no_bias = no_bias_;
+        opts.allow_fp16_computations = dt == DataType::eFp16;
         auto node = std::make_unique<ConvolutionUmdD3d12Dispatcher>(std::move(opts),
             ConvolutionUmdD3d12Dispatcher::conv_umdd3d12_params_t{},
             g_dx12_engine.intel_extension_d3d12,
