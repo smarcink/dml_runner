@@ -45,6 +45,15 @@ protected:
     GemmBaseDispatcher::create_params_t params_{};
 };
 
+TEST_F(DnnlPluginNext_GEMM, SmallMandNBigK)
+{
+    params_.shape_a = TensorShape(1, 1, 20, 20000);
+    params_.shape_b = TensorShape(1, 1, 20000, 20);
+    params_.dt = DataType::eFp16;
+    params_.allow_fp16_computations = true;
+    run();
+}
+
 TEST_F(DnnlPluginNext_GEMM, SD_dims_0)
 {
     params_.shape_a = TensorShape(2, 1, 4096, 320);
@@ -97,10 +106,28 @@ TEST_F(DnnlPluginNext_GEMM, SD_dims_2_fp32)
     run();
 }
 
-TEST_F(DnnlPluginNext_GEMM, SmallMandNBigK)
+TEST_F(DnnlPluginNext_GEMM, LLaMa_v2_case_0)
 {
-    params_.shape_a = TensorShape(1, 1, 20, 20000);
-    params_.shape_b = TensorShape(1, 1, 20000, 20);
+    params_.shape_a = TensorShape(1, 1, 1, 4096);
+    params_.shape_b = TensorShape(1, 1, 4096, 4096);
+    params_.dt = DataType::eFp16;
+    params_.allow_fp16_computations = true;
+    run();
+}
+
+TEST_F(DnnlPluginNext_GEMM, LLaMa_v2_case_1)
+{
+    params_.shape_a = TensorShape(1, 1, 1, 4096);
+    params_.shape_b = TensorShape(1, 1, 4096, 11008);
+    params_.dt = DataType::eFp16;
+    params_.allow_fp16_computations = true;
+    run();
+}
+
+TEST_F(DnnlPluginNext_GEMM, LLaMa_v2_case_2)
+{
+    params_.shape_a = TensorShape(1, 1, 1, 11008);
+    params_.shape_b = TensorShape(1, 1, 11008, 4096);
     params_.dt = DataType::eFp16;
     params_.allow_fp16_computations = true;
     run();
