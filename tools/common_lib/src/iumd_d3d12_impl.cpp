@@ -85,29 +85,31 @@ iumd::custom_metacommand::UmdD3d12Device::UmdD3d12Device(ID3D12Device* device, I
     {
         if (std::wcscmp(name, L"Tigerlake") == 0)
         {
-            return UMD_IGFX_TIGERLAKE_LP;
+            return UMD_IGFX::eTIGERLAKE_LP;
         }
         else if (std::wcscmp(name, L"Meteorlake") == 0)
         {
-            return UMD_IGFX_METEORLAKE;
+            return UMD_IGFX::eMETEORLAKE;
         }
         else if (std::wcscmp(name, L"DG2") == 0)
         {
-            return UMD_IGFX_DG2;
+            return UMD_IGFX::eDG2;
         }
-        return UMD_IGFX_UNKNOWN;
+        return UMD_IGFX::eUNKNOWN;
     }(extension_info.IntelDeviceInfo.GTGenerationName);
 
-    if (sku_.igfx == UMD_IGFX_DG2 || sku_.igfx == UMD_IGFX_METEORLAKE)
+    if (sku_.igfx == UMD_IGFX::eDG2 || sku_.igfx == UMD_IGFX::eMETEORLAKE)
     {
         sku_.eu_per_dss = 16;
         sku_.threads_per_eu = 8;
+        sku_.hw_simd_size = 8;
 
     }
-    else if (sku_.igfx == UMD_IGFX_TIGERLAKE_LP)
+    else if (sku_.igfx == UMD_IGFX::eTIGERLAKE_LP)
     {
         sku_.eu_per_dss = 16;
         sku_.threads_per_eu = 7;
+        sku_.hw_simd_size = 8;
     }
 }
 
@@ -135,7 +137,7 @@ bool iumd::custom_metacommand::UmdD3d12Device::fill_memory(IUMDCommandList* cmd_
             "output[id] = pattern;"
             "}";
 
-        buffer_filler_ = create_pipeline_state_object("buffer_pattern_filler", code_string, std::strlen(code_string), "", UMD_SHADER_LANGUAGE_OCL_STATELESS);
+        buffer_filler_ = create_pipeline_state_object("buffer_pattern_filler", code_string, std::strlen(code_string), "", UMD_SHADER_LANGUAGE::eOCL_STATELESS);
     }
     assert(buffer_filler_);
 
@@ -147,6 +149,27 @@ bool iumd::custom_metacommand::UmdD3d12Device::fill_memory(IUMDCommandList* cmd_
     const auto gws = std::array<std::size_t, 3>{size, 1, 1};
 
     return typed_cmd_list->dispatch(buffer_filler_.get(), gws, lws, deps, out);
+}
+
+bool iumd::custom_metacommand::UmdD3d12Device::do_support_extension(UMD_EXTENSIONS ext) const
+{
+    switch (ext)
+    {
+    case UMD_EXTENSIONS::eSUBGROUP: return true;
+    case UMD_EXTENSIONS::eFP16: return true;
+    case UMD_EXTENSIONS::eFP64: return false;  //ToDo: check this
+    case UMD_EXTENSIONS::eDP4A: return sku_.igfx >= UMD_IGFX::eTIGERLAKE_LP;
+    case UMD_EXTENSIONS::eDPAS:  return can_use_systolic();
+    case UMD_EXTENSIONS::eSDPAS:  return can_use_systolic();
+    case UMD_EXTENSIONS::eVARIABLE_THREAD_PER_EU: return false;
+    case UMD_EXTENSIONS::eGLOBAL_FLOAT_ATOMICS: return true;
+    case UMD_EXTENSIONS::eGLOBAL_INT32_ATOMICS: return true;
+    case UMD_EXTENSIONS::eLOCAL_INT32_ATOMICS: return true;
+    case UMD_EXTENSIONS::eINT64_ATOMICS: return true;
+    default:
+        assert(false);
+    }
+    return false;
 }
 
 iumd::custom_metacommand::UmdD3d12PipelineStateObject::UmdD3d12PipelineStateObject(iumd::custom_metacommand::UmdD3d12Device* device, const char* kernel_name, const void* kernel_code, std::size_t kernel_code_size, const char* build_options, UMD_SHADER_LANGUAGE language)
@@ -169,13 +192,13 @@ iumd::custom_metacommand::UmdD3d12PipelineStateObject::UmdD3d12PipelineStateObje
     create_desc.BuildOptionStringSize = build_options ? std::strlen(build_options) : 0ull;
     switch (language)
     {
-    case UMD_SHADER_LANGUAGE_OCL:
+    case UMD_SHADER_LANGUAGE::eOCL:
         create_desc.ShaderLanguage = META_COMMAND_CUSTOM_SHADER_LANGUAGE_OCL;
         break;
-    case UMD_SHADER_LANGUAGE_OCL_STATELESS:
+    case UMD_SHADER_LANGUAGE::eOCL_STATELESS:
         create_desc.ShaderLanguage = META_COMMAND_CUSTOM_SHADER_LANGUAGE_OCL_STATELESS;
         break;
-    case UMD_SHADER_LANGUAGE_ZEBIN_ELF:
+    case UMD_SHADER_LANGUAGE::eZEBIN_ELF:
         create_desc.ShaderLanguage = META_COMMAND_CUSTOM_SHADER_LANGUAGE_ZEBIN_ELF;
         break;
     default:

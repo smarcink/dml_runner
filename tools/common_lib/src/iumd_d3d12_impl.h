@@ -126,7 +126,7 @@ namespace custom_metacommand
 
         std::uint32_t get_max_wg_size() const override
         {
-            return sku_.threads_per_eu * sku_.eu_per_dss * sku_.max_simd_size;
+            return sku_.threads_per_eu * sku_.eu_per_dss * sku_.hw_simd_size;
         };
 
         UMD_IGFX get_umd_igfx() const override
@@ -141,7 +141,7 @@ namespace custom_metacommand
 
         bool can_use_systolic() const override
         {
-            if (sku_.igfx == UMD_IGFX_DG2)
+            if (sku_.igfx == UMD_IGFX::eDG2)
             {
                 return true;
             }
@@ -154,43 +154,7 @@ namespace custom_metacommand
             return desc.VendorId;
         }
 
-        bool do_support_extension(UMD_EXTENSIONS ext) const
-        {
-            if (ext & UMD_EXTENSIONS_SUBGROUP)
-            {
-                return true;
-            }
-            else if (ext & UMD_EXTENSIONS_FP16)
-            {
-                return true;
-            }
-            else if (ext & UMD_EXTENSIONS_FP64)
-            {
-                return false;  //ToDo: check this
-            }
-            else if (ext & UMD_EXTENSIONS_DP4A)
-            {
-                return sku_.igfx >= UMD_IGFX_TIGERLAKE_LP;
-            }
-            else if (ext & UMD_EXTENSIONS_DPAS)
-            {
-                return sku_.igfx >= UMD_IGFX_DG2;
-            }
-            else if (ext & UMD_EXTENSIONS_SDPAS)
-            {
-                return sku_.igfx == UMD_IGFX_DG2;
-            }
-            else if (ext & UMD_EXTENSIONS_VARIABLE_THREAD_PER_EU)
-            {
-                return false;
-            }
-            else if (ext & UMD_EXTENSIONS_GLOBAL_FLOAT_ATOMICS)
-            {
-                return false;
-            }
-            assert(false);
-            return false;
-        }
+        bool do_support_extension(UMD_EXTENSIONS ext) const;
 
         const ID3D12Device* get_d3d12_device() const { return impl_; }
         ID3D12Device* get_d3d12_device() { return impl_; }
@@ -211,7 +175,8 @@ namespace custom_metacommand
             std::uint32_t threads_per_eu = 0;
             std::uint32_t eu_per_dss = 0;
             std::uint32_t max_simd_size = 0;
-            UMD_IGFX igfx = UMD_IGFX_UNKNOWN;
+            std::uint32_t hw_simd_size = 0;
+            UMD_IGFX igfx = UMD_IGFX::eUNKNOWN;
         };
 
     private:
