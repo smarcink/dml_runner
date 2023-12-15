@@ -64,7 +64,7 @@ std::vector<std::byte> dnnl_gemm_op::gemm(const bindings_t& bindings, opts_t opt
     dnnl::primitive_attr attrs{};
     if (opts.force_fp32_accumulator)
     {
-        attrs.set_accumulation_mode(dnnl::accumulation_mode::f32);
+        attrs.set_accumulation_mode(dnnl::accumulation_mode::strict);
     }
 
     auto has_scaling_factors = [&]()

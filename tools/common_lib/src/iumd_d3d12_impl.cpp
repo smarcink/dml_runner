@@ -58,9 +58,9 @@ struct META_COMMAND_EXECUTE_CUSTOM_DESC
     UINT64 RuntimeConstantsMemorySizes[40];   // how much bytes to copy
     UINT64 RuntimeConstantsMemoryOffsets[40]; // bytes offset into "RuntimeConstants" buffer
 
-    UINT64 DispatchThreadGroup[3];
     UINT64 DispatchGlobalWorkSize[3];
     UINT64 DispatchLocalWorkSize[3];
+    UINT64 SharedLocalMemorySize;
 };
 
 
@@ -210,6 +210,12 @@ bool iumd::custom_metacommand::UmdD3d12PipelineStateObject::set_kernel_arg(std::
     return true;
 }
 
+bool iumd::custom_metacommand::UmdD3d12PipelineStateObject::set_kernel_arg(std::size_t index, std::size_t slm_size)
+{
+    locals_[index] = slm_size;
+    return true;
+}
+
 bool iumd::custom_metacommand::UmdD3d12PipelineStateObject::execute(ID3D12GraphicsCommandList4* cmd_list, const std::array<std::size_t, 3>& gws, const std::array<std::size_t, 3>& lws)
 {
     assert(gws.size() == lws.size());
@@ -222,7 +228,6 @@ bool iumd::custom_metacommand::UmdD3d12PipelineStateObject::execute(ID3D12Graphi
         {
             return false;
         }
-        exec_desc.DispatchThreadGroup[i] = gws[i] / lws[i];
         exec_desc.DispatchGlobalWorkSize[i] = gws[i];
         exec_desc.DispatchLocalWorkSize[i] = lws[i];
     }
@@ -285,6 +290,17 @@ bool iumd::custom_metacommand::UmdD3d12PipelineStateObject::execute(ID3D12Graphi
     }
     exec_desc.RuntimeConstantsCount = scalars_.size();
     exec_desc.RuntimeConstants = reinterpret_cast<UINT64>(execution_time_constants.data());
+
+    // [3] Build slm
+    if (locals_.size() > 1)
+    {
+        assert("!Unsupported case. Please remove this check and test - if it fails most probably driver need changes!");
+        return false;
+    }
+    for (const auto& [idx, slm_size] : locals_)
+    {
+        exec_desc.SharedLocalMemorySize += slm_size;
+    }
 
     cmd_list->ExecuteMetaCommand(mc_.Get(), &exec_desc, sizeof(exec_desc));
     return true;

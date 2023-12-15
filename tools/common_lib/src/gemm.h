@@ -953,7 +953,7 @@ public:
             const bool force_fp32_accu = params_.dt == DataType::eFp16 && !params_.allow_fp16_computations;
             if (force_fp32_accu)
             {
-                attr.set_accumulation_mode(dnnl::accumulation_mode::f32);
+                attr.set_accumulation_mode(dnnl::accumulation_mode::strict);
             }
 
             // alpha

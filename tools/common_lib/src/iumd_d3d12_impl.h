@@ -62,6 +62,7 @@ namespace custom_metacommand
 
         bool set_kernel_arg(std::size_t index, const IUMDMemory* memory, std::size_t offset) override;
         bool set_kernel_arg(std::size_t index, IUMDPipelineStateObject::ScalarArgType scalar) override;
+        bool set_kernel_arg(std::size_t index, std::size_t slm_size) override;
 
         bool execute(ID3D12GraphicsCommandList4* cmd_list, const std::array<std::size_t, 3>& gws, const std::array<std::size_t, 3>& lws);
 
@@ -75,6 +76,7 @@ namespace custom_metacommand
         ComPtr<ID3D12MetaCommand> mc_ = nullptr;
         std::unordered_map<std::size_t, std::pair<const UmdD3d12Memory*, std::size_t>> resources_;
         std::unordered_map<std::size_t, ScalarArgType> scalars_;
+        std::unordered_map<std::size_t, std::size_t> locals_;
         std::string name_;
     };
 
