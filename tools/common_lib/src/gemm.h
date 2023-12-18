@@ -137,7 +137,7 @@ public:
             dml::TensorDesc desc_input_1 = { data_type, b_managed ? DML_TENSOR_FLAG_OWNED_BY_DML : DML_TENSOR_FLAG_NONE, dimensions_1 };
             input_1_ = dml::InputTensor(graph_, 1, desc_input_1);
 
-            if (shape_c.get_elements_count() > 0)
+            if (shape_c.get_dims_count() > 0)
             {
                 dml::TensorDesc::Dimensions dimensions_2;
                 dimensions_2.push_back(shape_a.n);
@@ -524,9 +524,9 @@ public:
         , d3d12_device_(d3d12_device)
 
     {
-        input_data_a_.resize(params_.shape_a.get_elements_count() * get_data_type_bytes_width(params_.dt));
-        input_data_b_.resize(params_.shape_b.get_elements_count() * get_data_type_bytes_width(params_.dt));
-        input_data_c_.resize(params_.shape_c.get_elements_count() * get_data_type_bytes_width(params_.dt));
+        input_data_a_.resize(get_tensor_elements_count(params_.shape_b, params_.layout) * get_data_type_bytes_width(params_.dt));
+        input_data_b_.resize(get_tensor_elements_count(params_.shape_b, params_.layout) * get_data_type_bytes_width(params_.dt));
+        input_data_c_.resize(get_tensor_elements_count(params_.shape_c, params_.layout) * get_data_type_bytes_width(params_.dt));
 
         if (params_.type == GemmType::GemmType_AB)
         {
@@ -610,7 +610,7 @@ public:
         const auto tensor_input_c_bytes_width = input_data_c_.size();
 
         const auto out_shape = get_shape_output();
-        const auto tensor_out_bytes_width = out_shape.get_elements_count() * get_data_type_bytes_width(params_.dt);
+        const auto tensor_out_bytes_width = get_tensor_elements_count(out_shape, params_.layout) * get_data_type_bytes_width(params_.dt);
 
         upload_buffer_ = create_buffer(d3d12_device_, tensor_input_a_bytes_width + tensor_input_b_bytes_width + tensor_input_c_bytes_width,
             D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ);
@@ -680,7 +680,7 @@ public:
     virtual ConformanceResult validate_conformance(ID3D12CommandQueue* command_queue, ID3D12CommandAllocator* command_allocator, ID3D12GraphicsCommandList* command_list, bool print_mismatches)
     {
         const auto out_shape = get_shape_output();
-        const auto tensor_out_bytes_width = out_shape.get_elements_count() * get_data_type_bytes_width(params_.dt);
+        const auto tensor_out_bytes_width = get_tensor_elements_count(out_shape, params_.layout) * get_data_type_bytes_width(params_.dt);
 
         // readback data and validate
         auto readback_buffer = create_buffer(d3d12_device_, tensor_out_bytes_width, D3D12_HEAP_TYPE_READBACK, D3D12_RESOURCE_STATE_COPY_DEST);

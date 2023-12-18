@@ -41,10 +41,7 @@ std::vector<std::byte> dnnl_conv_op::convolution(const bindings_t& bindings, opt
 
     dnnl::memory input_memory = [&](const auto& binding)
     {
-        const auto dims = to_dnnl_dims(binding.shape);
-        const auto dt = to_dnnl_data_type(binding.dt);
-        const auto ft = to_dnnl_format(binding.layout);
-        auto ret = dnnl::memory({ dims, dt, ft }, engine);
+        auto ret = dnnl::memory(to_dnnl_mem_desc(binding.shape, binding.layout, binding.dt), engine);
         copy_to_dnnl_memory(ret, binding.data);
         return ret;
     }(bindings.input);
@@ -54,11 +51,9 @@ std::vector<std::byte> dnnl_conv_op::convolution(const bindings_t& bindings, opt
         if (!binding.data)  // no bias
         {
             return dnnl::memory{};
+
         }
-        const auto dims = dnnl::memory::dims{ binding.shape.n };
-        const auto dt = to_dnnl_data_type(binding.dt);
-        const auto ft = dnnl::memory::format_tag::a;
-        auto ret = dnnl::memory({ dims, dt, ft }, engine);
+        auto ret = dnnl::memory(to_dnnl_mem_desc(binding.shape, binding.layout, binding.dt), engine);
         copy_to_dnnl_memory(ret, binding.data);
         return ret;
     }(bindings.bias);
@@ -66,7 +61,7 @@ std::vector<std::byte> dnnl_conv_op::convolution(const bindings_t& bindings, opt
 
     dnnl::memory output_memory = [&]()
     {
-        return create_dnnl_memory(binding_t{ nullptr, opts.out_dt, opts.out_layout, opts.output_shape }, engine);
+        return dnnl::memory(to_dnnl_mem_desc(opts.output_shape, opts.out_layout, opts.out_dt), engine);
     }();
 
 
@@ -137,8 +132,7 @@ std::vector<std::byte> dnnl_conv_op::convolution(const bindings_t& bindings, opt
     assert(out_dnnl_data != nullptr && "[dnnl][conv] Couldnt map output memory!");
 
     const auto om_desc = output_memory.get_desc();
-    const auto om_dims = om_desc.get_dims();
-    const auto copy_size = dimensions_product(om_dims) * dnnl::memory::data_type_size(om_desc.get_data_type());
+    const auto copy_size = om_desc.get_size();
     std::vector<std::byte> ret(copy_size);
     std::memcpy(ret.data(), out_dnnl_data, copy_size);
     output_memory.unmap_data(out_dnnl_data);

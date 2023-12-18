@@ -201,7 +201,7 @@ public:
         , dml_cmd_recorder_(dml_cmd_recorder)
         , d3d12_device_(d3d12_device)
         , dml_device_(dml_device)
-        , input_data_(params_.shape.get_elements_count() * get_data_type_bytes_width(params_.dt))
+        , input_data_(get_tensor_elements_count(params_.shape, params_.layout) * get_data_type_bytes_width(params_.dt))
     {
         if (use_bias())
         {

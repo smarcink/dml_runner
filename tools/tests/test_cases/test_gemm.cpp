@@ -45,6 +45,35 @@ protected:
     GemmBaseDispatcher::create_params_t params_{};
 };
 
+TEST_F(DnnlPluginNext_GEMM, PackedTensor_fp16)
+{
+    params_.shape_a = TensorShape(1, 1, 32, 128);
+    params_.shape_b = TensorShape(1, 1, 128, 64);
+    params_.layout = DataLayout::eNCHW;
+    params_.dt = DataType::eFp16;
+    params_.allow_fp16_computations = true;
+    run();
+}
+
+
+TEST_F(DnnlPluginNext_GEMM, PackedTensor_fp32)
+{
+    params_.shape_a = TensorShape(1, 1, 32, 128);
+    params_.shape_b = TensorShape(1, 1, 128, 64);
+    params_.layout = DataLayout::eNCHW;
+    run();
+}
+
+TEST_F(DnnlPluginNext_GEMM, UnpackedTensor_fp32)
+{
+    params_.shape_a = TensorShape(1, 1, 32, 128);
+    params_.shape_b = TensorShape(1, 1, 128, 64);
+    params_.layout = DataLayout::eNCHW_AlignW320;
+    params_.dt = DataType::eFp32;
+    run();
+}
+
+
 TEST_F(DnnlPluginNext_GEMM, SmallMandNBigK)
 {
     params_.shape_a = TensorShape(1, 1, 20, 20000);

@@ -7,6 +7,9 @@ set(TARGET_SOURCES
     ${SOURCES_DIR}/dml_base_node.h
     ${SOURCES_DIR}/layers_utils.h
     ${SOURCES_DIR}/dnnl_utils.h
+    ${SOURCES_DIR}/tensor_shape.h
+    ${SOURCES_DIR}/node_dispatcher.h
+    ${SOURCES_DIR}/conformance_check_helper.h
     ${SOURCES_DIR}/gemm.h
     ${SOURCES_DIR}/gemm.cpp
     ${SOURCES_DIR}/conv.h
