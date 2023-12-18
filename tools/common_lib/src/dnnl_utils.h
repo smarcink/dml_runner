@@ -84,7 +84,7 @@ inline void copy_to_dnnl_memory(dnnl::memory& dst_memory, const std::byte* input
 {
     const auto desc = dst_memory.get_desc();
     auto dest_ptr = dst_memory.map_data<uint8_t>();
-    const auto copy_size = dimensions_product(desc.get_dims()) * dnnl::memory::data_type_size(desc.get_data_type());
+    const auto copy_size = desc.get_size();
     std::memcpy(dest_ptr, input_data, copy_size);
     dst_memory.unmap_data(dest_ptr);
 }
@@ -96,9 +96,7 @@ inline void dump_buffer_to_file(const dnnl::memory& memory, const std::string& f
     {
         return;
     }
-
-    const auto copy_size = dimensions_product(memory.get_desc().get_dims()) * dnnl::memory::data_type_size(memory.get_desc().get_data_type());
-
+    const auto copy_size = memory.get_desc().get_size();
     std::vector<std::byte> ret(copy_size);
     auto* mapped_out_filter = memory.map_data<uint8_t>();
     std::memcpy(ret.data(), mapped_out_filter, copy_size);
