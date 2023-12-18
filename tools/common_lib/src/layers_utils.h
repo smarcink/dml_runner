@@ -53,18 +53,25 @@ struct TensorShape
         assert(current_idx == -1 && "Current idex should be equal -1 (parsed all dimensions).");
     }
 
-    inline std::size_t get_elements_count() const
+    inline std::size_t get_elements_count(std::size_t w_align = 1ull) const
     {
         if (get_dims_count() == 0)
         {
             return 0;
         }
+
+        std::size_t size_n = n ? n : 1;
+        std::size_t size_c = c ? c : 1;
+        std::size_t size_d = d ? d : 1;
+        std::size_t size_h = h ? h : 1;
+        std::size_t size_w = w ? align(w, w_align) : 1;
+
         std::size_t acc = 1;
-        acc *= n ? n : 1;
-        acc *= c ? c : 1;
-        acc *= d ? d : 1;
-        acc *= h ? h : 1;
-        acc *= w ? w : 1;
+        acc *= size_n;
+        acc *= size_c;
+        acc *= size_d;
+        acc *= size_h;
+        acc *= size_w;
         return acc;
     }
 
@@ -133,6 +140,7 @@ enum class DataLayout
 {
     eNCHW = 0,
     eNHWC = 1,
+    eNCHW_AlignW320,  // example layout for unpacked tensor, ToDo: refactor cross runner to work with strides instead of hardcoded data layouts
     eCHW,      // 3d dims for GEMMS
     eW,
 
@@ -160,6 +168,7 @@ inline std::string data_layout_name(DataLayout l)
     switch (l)
     {
     case DataLayout::eNCHW: return "NCHW";
+    case DataLayout::eNCHW_AlignW320: return "NCHW_AlignW320";
     case DataLayout::eNHWC: return "NHWC";
     case DataLayout::eCHW:  return "CHW";
     case DataLayout::eW:    return "W";
@@ -180,6 +189,7 @@ inline std::uint8_t data_layout_dimensions_count(DataLayout l)
     switch (l)
     {
     case DataLayout::eNCHW:
+    case DataLayout::eNCHW_AlignW320:
     case DataLayout::eNHWC:
         return 4;
     case DataLayout::eCHW:
@@ -190,6 +200,63 @@ inline std::uint8_t data_layout_dimensions_count(DataLayout l)
         return 0;
     }
     return 0;
+}
+
+inline bool is_data_layout_unpacked(const DataLayout l)
+{
+    if (DataLayout::eNCHW_AlignW320 == l)
+    {
+        return true;
+    }
+    return false;
+}
+
+inline std::size_t data_layout_alignment(const DataLayout l)
+{
+    if (DataLayout::eNCHW_AlignW320 == l)
+    {
+        return 320ull;
+    }
+    return 1ull;
+}
+
+inline TensorShape data_layout_to_strides(TensorShape shape, DataLayout l)
+{
+    TensorShape ret{};
+    switch (l)
+    {
+    case DataLayout::eNCHW:
+    {
+        ret = TensorShape(
+            shape.c * shape.h * shape.w,
+            shape.h * shape.w,
+            shape.w,
+            1);
+        break;
+    }
+    case DataLayout::eNCHW_AlignW320:
+    {
+        auto w_aligned = static_cast<std::uint32_t>(align(shape.w, data_layout_alignment(l)));
+        ret = TensorShape(
+            shape.c * shape.h * w_aligned,
+            shape.h * w_aligned,
+            w_aligned,
+            1);
+        break;
+    }
+    case DataLayout::eNHWC:
+    {
+        ret = TensorShape(
+            shape.c * shape.h * shape.w,
+            1,
+            shape.c * shape.w,
+            shape.c);
+        break;
+    }
+    default:
+        assert("!unsupported right now");
+    }
+    return ret;
 }
 
 template<typename T>

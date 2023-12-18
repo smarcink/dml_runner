@@ -73,6 +73,10 @@ inline dnnl::memory::data_type to_dnnl_data_type(const DataType l)
 
 inline dnnl::memory::desc to_dnnl_mem_desc(const TensorShape& shape, const DataLayout& l, const DataType& t)
 {
+    if (is_data_layout_unpacked(l))
+    {
+        return dnnl::memory::desc{ to_dnnl_dims(shape), to_dnnl_data_type(t), to_dnnl_dims(data_layout_to_strides(shape, l)) };
+    }
     return dnnl::memory::desc{ to_dnnl_dims(shape), to_dnnl_data_type(t), to_dnnl_format(l) };
 }
 
