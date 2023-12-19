@@ -217,16 +217,7 @@ inline std::size_t get_tensor_elements_count(const TensorShape& ts, DataLayout l
 }
 
 
-struct ConformanceResult
-{
-    bool passed = true;
-    float epsilon = 0.0f;
-    float biggest_difference = 0.0f;
-    float node_value = 0.0f;
-    float reference_value = 0.0f;
-    std::uint32_t index = 0;
-    std::size_t tested_samples_count = 0;
-};
+
 
 inline float cast_to_float(Half v)
 {
@@ -237,23 +228,6 @@ inline float cast_to_float(float v)
 {
     return v;
 }
-
-enum class NodeType
-{
-    eGemmDml,
-    eGemmCm,
-    eGemmUmdD3d12,
-    eConvDml,
-    eConvCm,
-    eConvUmdD3d12,
-    eSoftmaxDml,
-    eSoftmaxCm,
-    eMvnDml,
-    eMvnCm,
-    eMhaDml,
-    eMemoryBandwidth,
-    eCount
-};
 
 inline void randomize_linear_container_float(std::mt19937& gen, std::uniform_real_distribution<float>& dist, std::span<std::byte> container)
 {
@@ -311,51 +285,3 @@ inline auto add_data_layout_cli_option(CLI::App* opts, std::string_view opt_name
             {"nchw", DataLayout::eNCHW}, { "nhwc", DataLayout::eNHWC }, { "w", DataLayout::eW }, { "chw", DataLayout::eCHW },
     }, CLI::ignore_case, CLI::ignore_underscore));
 }
-
-
-template<typename Dt>
-inline ConformanceResult run_conformance_check(const std::vector<std::byte>& gpu_untyped_result, const std::vector<std::byte>& dnnl_untyped_result, float epsilon, bool print_mismatches)
-{
-    const auto* gpu_typed_result = reinterpret_cast<const Dt*>(gpu_untyped_result.data());
-    const auto* dnnl_typed_result = reinterpret_cast<const Dt*>(dnnl_untyped_result.data());
-
-    // compare results
-    ConformanceResult ret;
-    ret.epsilon = epsilon;
-    for (std::uint32_t i = 0; i < gpu_untyped_result.size() / sizeof(Dt); i++)
-    {
-        ret.node_value = cast_to_float(gpu_typed_result[i]);
-        ret.reference_value = cast_to_float(dnnl_typed_result[i]);
-
-        const auto abs_diff = std::abs(ret.node_value - ret.reference_value);
-
-        if (abs_diff > ret.epsilon || std::isnan(ret.node_value) || std::isnan(ret.reference_value))
-        {
-            ret.passed = false;
-
-            if (print_mismatches)
-            {
-                std::cout << std::format("Mismatch, gpu: {}, cpu: {}, at index: {}. Absolute differece: {} \n", ret.node_value, ret.reference_value, i, abs_diff);
-            }
-
-        }
-        ret.biggest_difference = std::max(ret.biggest_difference, abs_diff);
-        ret.tested_samples_count++;
-    }
-    return ret;
-}
-
-class NodeDispatcher
-{
-public:
-    virtual std::uint32_t get_total_descriptor_count() = 0;
-    virtual void initialize(ID3D12GraphicsCommandList* cmd_list, D3D12_CPU_DESCRIPTOR_HANDLE cpu_handle, D3D12_GPU_DESCRIPTOR_HANDLE gpu_handle) = 0;
-    virtual void execute(ID3D12GraphicsCommandList* cmd_list) = 0;
-
-    virtual ConformanceResult validate_conformance(ID3D12CommandQueue* command_queue,
-        ID3D12CommandAllocator* command_allocator, ID3D12GraphicsCommandList* command_list, bool print_mismatches) = 0;
-
-    virtual ~NodeDispatcher() = default;
-};
-
-

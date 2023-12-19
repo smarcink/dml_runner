@@ -1,6 +1,7 @@
 #pragma once
 #include "dx12_utils.h"
 #include "layers_utils.h"
+#include "node_dispatcher.h"
 
 namespace
 {
