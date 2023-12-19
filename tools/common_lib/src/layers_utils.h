@@ -213,7 +213,16 @@ inline TensorShape data_layout_to_strides(TensorShape shape, DataLayout l)
 
 inline std::size_t get_tensor_elements_count(const TensorShape& ts, DataLayout l)
 {
+    if (ts.get_dims_count() == 0)
+    {
+        return 0ull;
+    }
+    const auto strides = data_layout_to_strides(ts, l);
 
+    // this is not 100% correct 
+    // this works because currently each layout has N dimension as last dim
+    const std::size_t acc = ts.n * strides.n;
+    return acc;
 }
 
 

@@ -42,7 +42,7 @@ target_compile_features(${PROJECT_NAME} PRIVATE cxx_std_20)
 target_link_libraries(${PROJECT_NAME} PRIVATE common_lib gtest_main)
 
 if(MSVC)
-  target_compile_options(${PROJECT_NAME} PRIVATE /W1)
+  target_compile_options(${PROJECT_NAME} PRIVATE /W1 /MP)
 else()
   target_compile_options(${PROJECT_NAME} PRIVATE -Wextra -pedantic)
 endif()
