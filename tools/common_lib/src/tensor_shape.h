@@ -35,28 +35,6 @@ struct TensorShape
         assert(current_idx == -1 && "Current idex should be equal -1 (parsed all dimensions).");
     }
 
-    inline std::size_t get_elements_count(std::size_t h_align = 1ull, std::size_t w_align = 1ull) const
-    {
-        if (get_dims_count() == 0)
-        {
-            return 0;
-        }
-
-        std::size_t size_n = n ? n : 1;
-        std::size_t size_c = c ? c : 1;
-        std::size_t size_d = d ? d : 1;
-        std::size_t size_h = h ? h : 1;
-        std::size_t size_w = w ? w : 1;
-
-        std::size_t acc = 1;
-        acc *= size_n;
-        acc *= size_c;
-        acc *= size_d;
-        acc *= size_h;
-        acc *= size_w;
-        return acc;
-    }
-
     inline std::uint8_t get_dims_count() const
     {
         std::uint8_t ret = 0;

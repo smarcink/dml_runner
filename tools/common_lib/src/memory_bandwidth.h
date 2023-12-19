@@ -34,7 +34,7 @@ public:
 public:
     MemoryBandwidthDispatcher(create_params_t&& params, ID3D12Device* d3d12_device, ID3D12GraphicsCommandList* cmd_list, IntelExtension& intc_ext)
         : params_(std::move(params))
-        , input_data_(params_.shape.get_elements_count()* get_data_type_bytes_width(params_.dt))
+        , input_data_(get_tensor_elements_count(params_.shape, DataLayout::eNCHW) * get_data_type_bytes_width(params_.dt))
         , intc_ext_(intc_ext)
         , d3d12_device_(d3d12_device)
     {

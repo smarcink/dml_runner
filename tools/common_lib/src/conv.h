@@ -299,7 +299,7 @@ public:
         : params_(std::move(params))
         , d3d12_device_(d3d12_device)
         , input_data_(get_tensor_elements_count(params_.input_shape, params_.input_layout)* get_data_type_bytes_width(params_.dt))
-        , filter_data_(params_.filter_shape.get_elements_count()* get_data_type_bytes_width(params_.dt))
+        , filter_data_(get_tensor_elements_count(params_.filter_shape, params_.filter_layout)* get_data_type_bytes_width(params_.dt))
 
     {
         assert(params_.input_shape.c == params_.filter_shape.c);
