@@ -38,6 +38,47 @@ protected:
     ConvolutionBaseDispatcher::create_params_t params_{};
 };
 
+TEST_F(DnnlPluginNext_Convolution, Simple_nchw_fp16)
+{
+    params_.dt = DataType::eFp16;
+    params_.allow_fp16_computations = true;
+    params_.input_layout = DataLayout::eNCHW;
+    params_.output_layout = DataLayout::eNCHW;
+    params_.filter_layout = DataLayout::eNCHW;
+    params_.in_pad = 0;
+    params_.stride = TensorShape(1, 1, 1, 1);
+    params_.input_shape = TensorShape(1, 32, 48, 48);
+    params_.filter_shape = TensorShape(16, 32, 1, 1);
+    run();
+}
+
+TEST_F(DnnlPluginNext_Convolution, Simple_nhwc_fp16)
+{
+    params_.dt = DataType::eFp16;
+    params_.allow_fp16_computations = true;
+    params_.input_layout = DataLayout::eNHWC;
+    params_.output_layout = DataLayout::eNCHW;
+    params_.filter_layout = DataLayout::eNHWC;
+    params_.in_pad = 0;
+    params_.stride = TensorShape(1, 1, 1, 1);
+    params_.input_shape = TensorShape(1, 32, 48, 48);
+    params_.filter_shape = TensorShape(16, 32, 1, 1);
+    run();
+}
+
+TEST_F(DnnlPluginNext_Convolution, Simple_nhwc_fp32)
+{
+    params_.dt = DataType::eFp32;
+    params_.input_layout = DataLayout::eNHWC;
+    params_.output_layout = DataLayout::eNCHW;
+    params_.filter_layout = DataLayout::eNHWC;
+    params_.in_pad = 0;
+    params_.stride = TensorShape(1, 1, 1, 1);
+    params_.input_shape = TensorShape(1, 32, 48, 48);
+    params_.filter_shape = TensorShape(16, 32, 1, 1);
+    run();
+}
+
 TEST_F(DnnlPluginNext_Convolution, UnpackedInputTensor_fp16)
 {
     params_.dt = DataType::eFp16;
