@@ -11,83 +11,24 @@
 #include "CLI/Formatter.hpp"
 #include "CLI/Config.hpp"
 
+#include "tensor_shape.h"
 
 inline bool is_power_of_2(std::size_t n)
 {
     return (n & (n - 1)) == 0;
 }
 
-struct TensorShape
+template<typename T>
+inline constexpr T round_up_next_multiple(T N, T M)
 {
-    std::uint32_t n = 0;
-    std::uint32_t c = 0;
-    std::uint32_t d = 0; // for 5d tensors
-    std::uint32_t h = 0;
-    std::uint32_t w = 0;
+    return ((N + M - 1) / M) * M;
+}
 
-    TensorShape() = default;
-
-    TensorShape(std::uint32_t n, std::uint32_t c, std::uint32_t h, std::uint32_t w)
-        : n(n), c(c), h(h), w(w)
-    {
-    }
-
-    TensorShape(std::span<std::uint32_t> in_v)
-    {
-        assert(!(in_v.size() <3 || in_v.size() > 5) && "Not supported shape!");
-        std::int32_t current_idx = static_cast<std::int32_t>(in_v.size()) - 1;
-        if (in_v.size() > 3)
-        {
-            w = in_v[current_idx--];
-        }
-        h = in_v[current_idx--];
-        if (in_v.size() == 5)
-        {
-            d = in_v[current_idx--];
-        }
-        if (in_v.size() > 2)
-        {
-            c = in_v[current_idx--];
-            n = in_v[current_idx--];
-        }
-        assert(current_idx == -1 && "Current idex should be equal -1 (parsed all dimensions).");
-    }
-
-    inline std::size_t get_elements_count(std::size_t h_align = 1ull, std::size_t w_align = 1ull) const
-    {
-        if (get_dims_count() == 0)
-        {
-            return 0;
-        }
-
-        std::size_t size_n = n ? n : 1;
-        std::size_t size_c = c ? c : 1;
-        std::size_t size_d = d ? d : 1;
-        std::size_t size_h = h ? align(h, h_align) : 1;
-        std::size_t size_w = w ? align(w, w_align) : 1;
-
-        std::size_t acc = 1;
-        acc *= size_n;
-        acc *= size_c;
-        acc *= size_d;
-        acc *= size_h;
-        acc *= size_w;
-        return acc;
-    }
-
-    inline std::uint8_t get_dims_count() const
-    {
-        std::uint8_t ret = 0;
-        if (n) ret++;
-        if (c) ret++;
-        if (d) ret++;
-        if (h) ret++;
-        if (w) ret++;
-
-        return ret;
-    }
-};
-
+inline int64_t align(const int64_t value, const int64_t alignment)
+{
+    assert(alignment >= 1);
+    return ((value + alignment - 1ll) / alignment) * alignment;
+}
 
 inline bool lexical_cast(const std::string& input, TensorShape& ts)
 {
@@ -269,10 +210,10 @@ inline TensorShape data_layout_to_strides(TensorShape shape, DataLayout l)
     return ret;
 }
 
-template<typename T>
-inline constexpr T round_up_next_multiple(T N, T M) 
+
+inline std::size_t get_tensor_elements_count(const TensorShape& ts, DataLayout l)
 {
-    return ((N + M - 1) / M) * M;
+
 }
 
 
@@ -418,152 +359,3 @@ public:
 };
 
 
-enum class DescType
-{
-    eSrv,
-    eUav
-};
-
-inline ComPtr<ID3D12RootSignature> create_root_signature(ID3D12Device* d3d12_device, std::span<const DescType> desc_list)
-{
-    const auto bindings_size = desc_list.size();
-    std::vector<D3D12_DESCRIPTOR_RANGE1> ranges;
-    std::vector<CD3DX12_ROOT_PARAMETER1> root_params;
-    ranges.reserve(bindings_size);
-    root_params.reserve(bindings_size + 1); // + 1 beacuse of the CM driver path
-
-    std::uint32_t srv_range_reg = 0;
-    std::uint32_t uav_range_reg = 0;
-    std::uint32_t cbv_range_reg = 0;
-
-    {
-        // driver thing
-        CD3DX12_ROOT_PARAMETER1 rp{};
-        rp.InitAsConstants(1, cbv_range_reg++);
-        root_params.push_back(rp);
-    }
-
-    auto add_desc_table = [&](DescType type)
-    {
-        if (type == DescType::eSrv)
-        {
-            ranges.push_back({ D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, srv_range_reg++, 0, D3D12_DESCRIPTOR_RANGE_FLAG_DESCRIPTORS_VOLATILE });
-        }
-        else
-        {
-            ranges.push_back({ D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, uav_range_reg++, 0, D3D12_DESCRIPTOR_RANGE_FLAG_DATA_VOLATILE });
-        }
-        CD3DX12_ROOT_PARAMETER1 rp{};
-        rp.InitAsDescriptorTable(1u, &ranges.back());
-        root_params.push_back(rp);
-    };
-
-    for (const auto d : desc_list)
-    {
-        add_desc_table(d);
-    }
-
-    if (root_params.size() == 0)
-    {
-        throw std::runtime_error("Something gone wrong. Why kernel has 0 root params?");
-    }
-
-    CD3DX12_VERSIONED_ROOT_SIGNATURE_DESC compute_root_signature_desc;
-    compute_root_signature_desc.Init_1_1(static_cast<UINT>(root_params.size()), root_params.data(), 0, nullptr);
-
-    ComPtr<ID3DBlob> signature;
-    ComPtr<ID3DBlob> error;
-    throw_if_failed(D3DX12SerializeVersionedRootSignature(
-        &compute_root_signature_desc,
-        D3D_ROOT_SIGNATURE_VERSION_1_1,
-        &signature,
-        &error), "D3DX12SerializeVersionedRootSignature failed.");
-
-    if (error)
-    {
-        throw_with_msg("Failed to create root signature, error:" + std::string((LPCSTR)error->GetBufferPointer()));
-    }
-    ComPtr<ID3D12RootSignature> ret;
-    throw_if_failed(d3d12_device->CreateRootSignature(
-        0,
-        signature->GetBufferPointer(),
-        signature->GetBufferSize(),
-        IID_PPV_ARGS(&ret)), "CreateRootSignature(...) failed.");
-    return ret;
-}
-
-inline std::vector<CD3DX12_GPU_DESCRIPTOR_HANDLE> create_resource_views_and_handles(ID3D12Device* d3d12_device, std::span<const std::pair<DescType, ID3D12Resource*>> resources_list, D3D12_CPU_DESCRIPTOR_HANDLE cpu_handle, D3D12_GPU_DESCRIPTOR_HANDLE gpu_handle)
-{
-    const auto desc_heap_incrs_size = d3d12_device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
-
-    const auto base_cpu_handle = CD3DX12_CPU_DESCRIPTOR_HANDLE{ cpu_handle };
-    const auto base_gpu_handle = CD3DX12_GPU_DESCRIPTOR_HANDLE{ gpu_handle };
-
-    std::vector<CD3DX12_GPU_DESCRIPTOR_HANDLE> gpu_handles;
-    gpu_handles.reserve(resources_list.size());
-
-    for (std::size_t i = 0; i < resources_list.size(); i++)
-    {
-        auto cpu_handle = CD3DX12_CPU_DESCRIPTOR_HANDLE(base_cpu_handle, static_cast<int32_t>(i), desc_heap_incrs_size);
-        gpu_handles.push_back(CD3DX12_GPU_DESCRIPTOR_HANDLE(base_gpu_handle, static_cast<int32_t>(i), desc_heap_incrs_size));
-
-        auto& resource_view_type = resources_list[i].first;
-        auto& resource = resources_list[i].second;
-        assert(resource != nullptr);
-        const auto res_desc = resource->GetDesc();
-        assert(res_desc.Dimension == D3D12_RESOURCE_DIMENSION::D3D12_RESOURCE_DIMENSION_BUFFER);
-
-        if (resource_view_type == DescType::eSrv)
-        {
-            D3D12_SHADER_RESOURCE_VIEW_DESC desc{};
-            desc.Format = DXGI_FORMAT_R8_UINT;
-            desc.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
-            desc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-
-            desc.Buffer.StructureByteStride = 0;
-            desc.Buffer.NumElements = static_cast<UINT>(res_desc.Width);
-            desc.Buffer.FirstElement = 0;
-            desc.Buffer.Flags = D3D12_BUFFER_SRV_FLAG_NONE;
-
-            d3d12_device->CreateShaderResourceView(resource, &desc, cpu_handle);
-        }
-        else
-        {
-            D3D12_UNORDERED_ACCESS_VIEW_DESC desc{};
-            desc.Format = DXGI_FORMAT_R8_UINT;
-            desc.ViewDimension = D3D12_UAV_DIMENSION_BUFFER;
-
-            desc.Buffer.StructureByteStride = 0;
-            desc.Buffer.NumElements = static_cast<UINT>(res_desc.Width);
-            desc.Buffer.FirstElement = 0;
-            desc.Buffer.Flags = D3D12_BUFFER_UAV_FLAG_NONE;
-
-            d3d12_device->CreateUnorderedAccessView(resource, nullptr, &desc, cpu_handle);
-        }
-    }
-
-    return gpu_handles;
-}
-
-inline void dispatch_kernel(ID3D12GraphicsCommandList* cmd_list, ID3D12PipelineState* pso, ID3D12RootSignature* root_signature, std::span<CD3DX12_GPU_DESCRIPTOR_HANDLE> gpu_handles, std::uint32_t thg_x, std::uint32_t thg_y, std::uint32_t thg_z)
-{
-    assert(thg_x > 0);
-    assert(thg_y > 0);
-    assert(thg_z > 0);
-    assert(cmd_list);
-    assert(root_signature);
-    assert(pso);
-    assert(!gpu_handles.empty());
-
-    cmd_list->SetComputeRootSignature(root_signature);
-    cmd_list->SetPipelineState(pso);
-
-    uint32_t root_index = 1; // start with 1, beacuse Cross compiler CM driver path needs that
-    for (uint32_t i = 0; i < gpu_handles.size(); i++)
-    {
-        const auto gpu_heap_handle = gpu_handles[i];
-        cmd_list->SetComputeRootDescriptorTable(root_index++, gpu_heap_handle);
-    }
-
-    cmd_list->Dispatch(thg_x, thg_y, thg_z);
-}
