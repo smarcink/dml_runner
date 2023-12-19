@@ -154,3 +154,109 @@ INSTANTIATE_TEST_SUITE_P(
         return DnnlPluginNext_Convolution_Params::params_to_str(info);
     });
 
+
+
+class DnnlPluginNext_Convolution_ParamsUnpackedCases : public NodeDispatcherBase, public testing::TestWithParam<std::tuple<
+    DataLayout,  // in
+    DataLayout,  // out
+    DataType
+    >>
+{
+public:
+    static std::string params_to_str(const testing::TestParamInfo<DnnlPluginNext_Convolution_ParamsUnpackedCases::ParamType>& info)
+    {
+        const auto& params = info.param;
+
+        const auto in_layout = std::get<TUPLE_ID_IN_LAYOUT>(params);
+        const auto out_layout = std::get<TUPLE_ID_OUT_LAYOUT>(params);
+        const auto dt = std::get<TUPLE_ID_DT>(params);
+
+        const auto fmt = std::format("in_layout_{}__out_layout_{}__datatype_{}",
+            data_layout_name(in_layout), data_layout_name(out_layout), get_data_type_str(dt));
+        return fmt;
+    }
+
+protected:
+    enum TupleID
+    {
+        TUPLE_ID_IN_LAYOUT,
+        TUPLE_ID_OUT_LAYOUT,
+        TUPLE_ID_DT,
+    };
+
+
+protected:
+    DnnlPluginNext_Convolution_ParamsUnpackedCases() {
+        // You can do set-up work for each test here.
+    }
+
+    ~DnnlPluginNext_Convolution_ParamsUnpackedCases() override {
+        // You can do clean-up work that doesn't throw exceptions here.
+    }
+
+protected:
+    std::unique_ptr<NodeDispatcher> create_dispatcher_impl() override
+    {
+        const auto params = GetParam();
+        const auto in_layout = std::get<TUPLE_ID_IN_LAYOUT>(params);
+        const auto out_layout = std::get<TUPLE_ID_OUT_LAYOUT>(params);
+        const auto dt = std::get<TUPLE_ID_DT>(params);
+
+        ConvolutionBaseDispatcher::create_params_t opts{};
+        opts.algo_winograd = false; // we should use auto anyway
+        opts.dt = dt;
+        opts.input_layout = in_layout;
+        opts.output_layout = out_layout;
+        opts.filter_layout = DataLayout::eNCHW;
+        opts.in_pad = 0;
+        opts.stride = TensorShape(1, 1, 1, 1);
+        opts.managaed_weights = true;
+        opts.input_shape = TensorShape(1, 32, 64, 64);
+        opts.filter_shape = TensorShape(16, 32, 1, 1);
+        opts.no_bias = false;
+        opts.allow_fp16_computations = dt == DataType::eFp16;
+        auto node = std::make_unique<ConvolutionUmdD3d12Dispatcher>(std::move(opts),
+            ConvolutionUmdD3d12Dispatcher::conv_umdd3d12_params_t{},
+            g_dx12_engine.intel_extension_d3d12,
+            g_dx12_engine.d3d12_device.Get(),
+            g_dx12_engine.command_list.Get());
+        return node;
+    }
+};
+
+
+TEST_P(DnnlPluginNext_Convolution_ParamsUnpackedCases, UnpackedTests)
+{
+    run();
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    ConvolutionUnpackedInputs, DnnlPluginNext_Convolution_ParamsUnpackedCases,
+    testing::Combine(
+        testing::Values(DataLayout::eNCHW_AlignW320, DataLayout::eNHWC_AlignH48),
+        testing::Values(DataLayout::eNCHW, DataLayout::eNHWC),
+        testing::Values(DataType::eFp32, DataType::eFp16)),
+    [](const testing::TestParamInfo<DnnlPluginNext_Convolution_ParamsUnpackedCases::ParamType>& info) {
+        return DnnlPluginNext_Convolution_ParamsUnpackedCases::params_to_str(info);
+    });
+
+INSTANTIATE_TEST_SUITE_P(
+    ConvolutionUnpackedOutputs, DnnlPluginNext_Convolution_ParamsUnpackedCases,
+    testing::Combine(
+        testing::Values(DataLayout::eNCHW, DataLayout::eNHWC),
+        testing::Values(DataLayout::eNCHW_AlignW320, DataLayout::eNHWC_AlignH48),
+        testing::Values(DataType::eFp32, DataType::eFp16)),
+    [](const testing::TestParamInfo<DnnlPluginNext_Convolution_ParamsUnpackedCases::ParamType>& info) {
+        return DnnlPluginNext_Convolution_ParamsUnpackedCases::params_to_str(info);
+    });
+
+INSTANTIATE_TEST_SUITE_P(
+    ConvolutionUnpackedIntputAndOutputs, DnnlPluginNext_Convolution_ParamsUnpackedCases,
+    testing::Combine(
+        testing::Values(DataLayout::eNCHW_AlignW320, DataLayout::eNHWC_AlignH48),
+        testing::Values(DataLayout::eNCHW_AlignW320, DataLayout::eNHWC_AlignH48),
+        testing::Values(DataType::eFp32, DataType::eFp16)),
+    [](const testing::TestParamInfo<DnnlPluginNext_Convolution_ParamsUnpackedCases::ParamType>& info) {
+        return DnnlPluginNext_Convolution_ParamsUnpackedCases::params_to_str(info);
+    });
+

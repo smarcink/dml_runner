@@ -298,7 +298,7 @@ public:
     ConvolutionBaseDispatcher(create_params_t&& params, ID3D12Device* d3d12_device, ID3D12GraphicsCommandList* cmd_list)
         : params_(std::move(params))
         , d3d12_device_(d3d12_device)
-        , input_data_(params_.input_shape.get_elements_count(data_layout_alignment(params_.input_layout))* get_data_type_bytes_width(params_.dt))
+        , input_data_(params_.input_shape.get_elements_count(data_layout_h_alignment(params_.input_layout), data_layout_w_alignment(params_.input_layout))* get_data_type_bytes_width(params_.dt))
         , filter_data_(params_.filter_shape.get_elements_count()* get_data_type_bytes_width(params_.dt))
 
     {
@@ -349,7 +349,7 @@ public:
         const auto tensor_input_bytes_width = input_data_.size();
         const auto tensor_filter_bytes_width = filter_data_.size();
         const auto tensor_bias_bytes_width = bias_data_.size();
-        const auto tensor_out_bytes_width = output_shape.get_elements_count(data_layout_alignment(params_.output_layout)) * get_data_type_bytes_width(params_.dt);
+        const auto tensor_out_bytes_width = output_shape.get_elements_count(data_layout_h_alignment(params_.output_layout), data_layout_w_alignment(params_.output_layout)) * get_data_type_bytes_width(params_.dt);
 
         upload_buffer_ = create_buffer(d3d12_device_, tensor_input_bytes_width + tensor_filter_bytes_width + tensor_bias_bytes_width + tensor_constant_bytes_width,
             D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ);
