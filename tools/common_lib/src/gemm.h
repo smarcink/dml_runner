@@ -44,6 +44,7 @@ struct opts_t
     DataType out_dt = DataType::eCount;
     DataLayout out_layout = DataLayout::eCount;
     bool force_fp32_accumulator = false;
+    ActivationSettings activation{};
 
     float alpha = 1.0f;
     float beta = 1.0f;
@@ -112,12 +113,24 @@ class Gemm : public DirectMlBaseNode
 public:
     Gemm(GemmType gemm_type, const DML_TENSOR_DATA_TYPE data_type, const dml::TensorPolicy& tensor_policy,
         const TensorShape& shape_a, const TensorShape& shape_b, const TensorShape& shape_c, const TensorShape& shape_out,
-        bool b_managed, bool b_transposed, float alpha, float beta, bool allow_fp16_computations,
+        bool b_managed, bool b_transposed, float alpha, float beta, bool allow_fp16_computations, const ActivationSettings& activation_settings,
         IDMLDevice* dml_device, ID3D12Device* d3d12_device, bool disable_mc = false)
         : DirectMlBaseNode(dml_device, d3d12_device)
         , type_(gemm_type)
         , graph_(dml_device)
     {
+
+        const auto fused_act = [](const auto& activation_settings)
+        {
+            auto ret = dml::FusedActivation::None();
+            if (activation_settings.type != ActivationType::eUnknown)
+            {
+                const auto activation = to_dml_activation_setting(activation_settings);
+                ret = dml::FusedActivation(activation.desc.Type, activation_settings.alpha, activation_settings.beta);
+            }
+            return ret;
+        }(activation_settings);
+
         outputs_.resize(1);
         if (type_ == GemmType::GemmType_AB)
         {
@@ -151,7 +164,7 @@ public:
             outputs_[0] = dml::Gemm(input_0_, input_1_, input_2_,
                 DML_MATRIX_TRANSFORM_NONE,
                 b_transposed ? DML_MATRIX_TRANSFORM_TRANSPOSE : DML_MATRIX_TRANSFORM_NONE,
-                alpha, beta);
+                alpha, beta, fused_act);
         }
         else if (type_ == GemmType::GemmType_QK_QKV)
         {
@@ -191,7 +204,7 @@ public:
             dml::TensorStrides strides_1 = { batch_stride, head_count_stride, head_size_stride, seq_stride };
             auto gemm_inp_a = dml::Reinterpret(reshaped_splits[0], dml::TensorDimensions{batch, head_count, seq, head_size }, strides_0);
             auto gemm_inp_b = dml::Reinterpret(reshaped_splits[1], dml::TensorDimensions{batch, head_count, head_size, seq }, strides_1);
-            outputs_[0] = dml::Gemm(gemm_inp_a, gemm_inp_b, dml::NullOpt, DML_MATRIX_TRANSFORM_NONE, DML_MATRIX_TRANSFORM_NONE, alpha, beta);
+            outputs_[0] = dml::Gemm(gemm_inp_a, gemm_inp_b, dml::NullOpt, DML_MATRIX_TRANSFORM_NONE, DML_MATRIX_TRANSFORM_NONE, alpha, beta, fused_act);
         }
         else if (type_ == GemmType::GemmType_SV_S_QKV)
         {
@@ -232,7 +245,7 @@ public:
             const auto batch_stride = seq * seq_stride;
             dml::TensorStrides strides_1 = { batch_stride, head_count_stride, seq_stride, head_size_stride };
             auto gemm_inp_b = dml::Reinterpret(reshaped_split,  dml::TensorDimensions{batch, head_count, seq, head_size }, strides_1);
-            auto gemm_out = dml::Gemm(input_0_, gemm_inp_b, dml::NullOpt, DML_MATRIX_TRANSFORM_NONE, DML_MATRIX_TRANSFORM_NONE, alpha, beta);
+            auto gemm_out = dml::Gemm(input_0_, gemm_inp_b, dml::NullOpt, DML_MATRIX_TRANSFORM_NONE, DML_MATRIX_TRANSFORM_NONE, alpha, beta, fused_act);
             const auto& gemm_out_sizes = gemm_out.GetOutputDesc().sizes;
             outputs_[0] = dml_transpose(gemm_out, dml::TensorDimensions{ gemm_out_sizes[0], gemm_out_sizes[2], gemm_out_sizes[1], gemm_out_sizes[3]},
                 dml::TensorPolicy(&compute_transpose_nchw_to_nhcw));
@@ -281,7 +294,7 @@ public:
             // transpose logical
             dml::TensorStrides input_1_strides = { N * head_count * head_size, head_size, 1, head_count * head_size };
             auto gemm_inp_b = dml::Reinterpret(reshaped_split, dml::TensorDimensions{ batch, head_count, head_size, N }, input_1_strides);
-            outputs_[0] = dml::Gemm(gemm_inp_a, gemm_inp_b, dml::NullOpt, DML_MATRIX_TRANSFORM_NONE, DML_MATRIX_TRANSFORM_NONE, alpha, beta);
+            outputs_[0] = dml::Gemm(gemm_inp_a, gemm_inp_b, dml::NullOpt, DML_MATRIX_TRANSFORM_NONE, DML_MATRIX_TRANSFORM_NONE, alpha, beta, fused_act);
         }
         else if (type_ == GemmType::GemmType_SV_S_KV)
         {
@@ -318,7 +331,7 @@ public:
             // transpose logical
             dml::TensorStrides input_1_strides = { seq * head_count * head_size, head_size, head_count * head_size , 1};
             auto gemm_inp_b = dml::Reinterpret(reshaped_split, dml::TensorDimensions{ batch, head_count, seq, head_size }, input_1_strides);
-            outputs_[0] = dml::Gemm(input_0_, gemm_inp_b, dml::NullOpt, DML_MATRIX_TRANSFORM_NONE, DML_MATRIX_TRANSFORM_NONE, alpha, beta);
+            outputs_[0] = dml::Gemm(input_0_, gemm_inp_b, dml::NullOpt, DML_MATRIX_TRANSFORM_NONE, DML_MATRIX_TRANSFORM_NONE, alpha, beta, fused_act);
         }
         else
         {
@@ -468,11 +481,11 @@ public:
         GemmType type;
         DataType dt;
         DataLayout layout;
+        ActivationSettings activation{};
 
         TensorShape shape_a;
         TensorShape shape_b;
         TensorShape shape_c;
-
 
         float alpha = 1.0f;
         float beta = 1.0f;
@@ -488,7 +501,7 @@ public:
         {
             add_data_type_cli_option(opts, "--data_type", params.dt)->required();
             add_data_layout_cli_option(opts, "--layout", params.layout)->required();
-
+            opts->add_option("--activation", params.activation);
 
             opts->add_option("--shape_a", params.shape_a)->required();
             opts->add_option("--shape_b", params.shape_b); 
@@ -732,13 +745,14 @@ public:
             opts.force_fp32_accumulator = params_.dt == DataType::eFp16 && !params_.allow_fp16_computations;
             opts.alpha = params_.alpha;
             opts.beta = params_.beta;
+            opts.activation = params_.activation;
             ref_untyped_result = dnnl_gemm_op::gemm(bindings, opts);
         }
         else   
         {
             gpu_op::Gemm gemm_ref(params_.type, to_dml_data_type(params_.dt), to_dml_tensor_policy(params_.layout),
                 params_.shape_a, params_.shape_b, params_.shape_c, get_shape_output(),
-                false /*params_.b_managed*/, params_.b_transposed, params_.alpha, params_.beta, params_.allow_fp16_computations,
+                false /*params_.b_managed*/, params_.b_transposed, params_.alpha, params_.beta, params_.allow_fp16_computations, params_.activation,
                 dml_device_, d3d12_device_, true);
             // bind descriptor heap
             auto descriptor_heap = create_descriptor_heap(d3d12_device_, gemm_ref.get_total_descriptor_count());
@@ -888,7 +902,7 @@ public:
     GemmDmlDispatcher(create_params_t&& params, ID3D12Device* d3d12_device, IDMLDevice* dml_device, IDMLCommandRecorder* dml_cmd_recorder, ID3D12GraphicsCommandList* cmd_list)
         : GemmBaseDispatcher(std::move(params), d3d12_device, dml_device, dml_cmd_recorder, cmd_list)
         , gemm_(params_.type, to_dml_data_type(params_.dt), to_dml_tensor_policy(params_.layout),  params_.shape_a, params_.shape_b, params_.shape_c, get_shape_output(), params_.b_managed, params_.b_transposed,
-            params_.alpha, params_.beta, params_.allow_fp16_computations,
+            params_.alpha, params_.beta, params_.allow_fp16_computations, params_.activation,
             dml_device, d3d12_device, false)
     {
         if (params_.c_managed)
@@ -972,6 +986,12 @@ public:
             {
                 ops.append_binary(dnnl::algorithm::binary_mul, 
                     to_dnnl_mem_desc(TensorShape{ 1, 0, 0, 0 }, DataLayout::eW, DataType::eFp32));
+            }
+
+            if (params_.activation.type != ActivationType::eUnknown)
+            {
+                ops.append_eltwise(to_dnnl_activation_type(params_.activation.type), params_.activation.alpha, params_.activation.beta);
+                attr.set_post_ops(ops);
             }
 
             attr.set_post_ops(ops);

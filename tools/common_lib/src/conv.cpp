@@ -1,7 +1,7 @@
 #include "conv.h"
 #include "dnnl_utils.h"
 
-inline dnnl::primitive_attr CreateEltwisePostOps(dnnl::algorithm Activation, float alpha, float beta, bool use_fp32_accu)
+inline dnnl::primitive_attr CreateEltwisePostOps(const ActivationSettings& activation, bool use_fp32_accu)
 {
     // create a post-op with relu
     dnnl::post_ops ops;
@@ -17,10 +17,9 @@ inline dnnl::primitive_attr CreateEltwisePostOps(dnnl::algorithm Activation, flo
         attr.set_accumulation_mode(dnnl::accumulation_mode::strict);
     }
 
-    if (Activation != dnnl::algorithm::undef)
+    if (activation.type != ActivationType::eUnknown)
     {
-        ops.append_eltwise(Activation
-            , alpha, beta);
+        ops.append_eltwise(dnnl_utils::to_dnnl_activation_type(activation.type), activation.alpha, activation.beta);
         // create an attribute and set the corresponding post op
         attr.set_post_ops(ops);
     }
@@ -67,7 +66,7 @@ std::vector<std::byte> dnnl_conv_op::convolution(const bindings_t& bindings, opt
 
     const dnnl::memory::dims pad{ opts.inp_pad, opts.inp_pad };
     const dnnl::memory::dims stride{ opts.stride.h, opts.stride.w };
-    const dnnl::primitive_attr attr = CreateEltwisePostOps(static_cast<dnnl::algorithm>(opts.activation_type), opts.activation_alpha, opts.activation_beta, opts.use_fp32_accu);
+    const dnnl::primitive_attr attr = CreateEltwisePostOps(opts.activation, opts.use_fp32_accu);
     const dnnl::convolution_forward::primitive_desc conv_desc(engine,
         dnnl::prop_kind::forward_inference, 
         opts.force_winograd ? dnnl::algorithm::convolution_winograd : dnnl::algorithm::convolution_direct,

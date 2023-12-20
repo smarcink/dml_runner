@@ -83,6 +83,16 @@ TEST_F(DnnlPluginNext_GEMM, SmallMandNBigK)
     run();
 }
 
+TEST_F(DnnlPluginNext_GEMM, SmallMandNBigKWithActivation)
+{
+    params_.shape_a = TensorShape(1, 1, 20, 20000);
+    params_.shape_b = TensorShape(1, 1, 20000, 20);
+    params_.dt = DataType::eFp16;
+    params_.allow_fp16_computations = true;
+    params_.activation = ActivationSettings{ ActivationType::eGelu };
+    run();
+}
+
 TEST_F(DnnlPluginNext_GEMM, SD_dims_0)
 {
     params_.shape_a = TensorShape(2, 1, 4096, 320);

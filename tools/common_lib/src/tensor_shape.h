@@ -47,3 +47,18 @@ struct TensorShape
         return ret;
     }
 };
+
+inline bool lexical_cast(const std::string& input, TensorShape& ts)
+{
+    std::vector<std::uint32_t> data;
+    constexpr const auto buffer_size = 128;
+    std::string line(buffer_size, ' ');
+    std::stringstream stream;
+    stream << input;
+    while (stream.getline(line.data(), buffer_size, ','))
+    {
+        data.push_back(std::stoi(line));
+    }
+    ts = TensorShape(data);
+    return true;
+}

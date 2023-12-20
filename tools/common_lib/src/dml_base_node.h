@@ -3,6 +3,8 @@
 #include "layers_utils.h"
 #include "node_dispatcher.h"
 
+#include <variant>
+
 namespace
 {
     inline static dml::TensorProperties compute_nchw_tensor_policy(
@@ -105,6 +107,86 @@ inline dml::TensorPolicy to_dml_tensor_policy(DataLayout layout)
         assert(false && "Unknown data layout.");
     }
     return dml::TensorPolicy::Default();
+}
+
+struct DmlActivationSetting
+{
+    DML_OPERATOR_DESC desc{};
+
+    // below concrete OP descs - needed to hold memory, which is pointed by above DML_OPERATOR_DESC desc
+    std::unique_ptr<DML_ACTIVATION_RELU_OPERATOR_DESC> relu{};
+    std::unique_ptr<DML_ACTIVATION_LEAKY_RELU_OPERATOR_DESC> leaky_relu{};
+    std::unique_ptr<DML_ELEMENT_WISE_CLIP_OPERATOR_DESC> clip{};
+    std::unique_ptr<DML_ACTIVATION_GELU_OPERATOR_DESC> gelu{};
+    std::unique_ptr<DML_ACTIVATION_SIGMOID_OPERATOR_DESC> sigmoid{};
+    std::unique_ptr<DML_ACTIVATION_LINEAR_OPERATOR_DESC> linear{};
+    std::unique_ptr<DML_ACTIVATION_TANH_OPERATOR_DESC> tanh{};
+};
+
+inline DmlActivationSetting to_dml_activation_setting(const ActivationSettings& act)
+{
+    DmlActivationSetting ret{};
+    ret.desc.Type = DML_OPERATOR_INVALID;
+    switch (act.type)
+    {
+    case ActivationType::eRelu:
+    {
+        ret.desc.Type = DML_OPERATOR_ACTIVATION_RELU;
+        ret.relu = std::make_unique<DML_ACTIVATION_RELU_OPERATOR_DESC>();
+        ret.desc.Desc = ret.relu.get();
+        break;
+    }
+    case ActivationType::eLeakyRelu:
+    {
+        ret.desc.Type = DML_OPERATOR_ACTIVATION_LEAKY_RELU;
+        ret.leaky_relu = std::make_unique<DML_ACTIVATION_LEAKY_RELU_OPERATOR_DESC>();
+        ret.leaky_relu->Alpha = act.alpha;
+        ret.desc.Desc = ret.leaky_relu.get();
+        break;
+    }
+    case ActivationType::eClip:
+    {
+        ret.desc.Type = DML_OPERATOR_ELEMENT_WISE_CLIP;
+        ret.clip = std::make_unique<DML_ELEMENT_WISE_CLIP_OPERATOR_DESC>();
+        ret.clip->Min = act.alpha;
+        ret.clip->Max = act.beta;
+        ret.desc.Desc = ret.clip.get();
+        break;
+    }
+    case ActivationType::eGelu:
+    {
+        ret.desc.Type = DML_OPERATOR_ACTIVATION_GELU;
+        ret.gelu = std::make_unique<DML_ACTIVATION_GELU_OPERATOR_DESC>();
+        ret.desc.Desc = ret.gelu.get();
+        break;
+    }
+    case ActivationType::eSigmoid:
+    {
+        ret.desc.Type = DML_OPERATOR_ACTIVATION_SIGMOID;
+        ret.sigmoid = std::make_unique<DML_ACTIVATION_SIGMOID_OPERATOR_DESC>();
+        ret.desc.Desc = ret.sigmoid.get();
+        break;
+    }
+    case ActivationType::eLinear:
+    {
+        ret.desc.Type = DML_OPERATOR_ACTIVATION_LINEAR;
+        ret.linear = std::make_unique<DML_ACTIVATION_LINEAR_OPERATOR_DESC>();
+        ret.linear->Alpha = act.alpha;
+        ret.linear->Beta = act.beta;
+        ret.desc.Desc = ret.linear.get();
+        break;
+    }
+    case ActivationType::eTanh:
+    {
+        ret.desc.Type = DML_OPERATOR_ACTIVATION_TANH;
+        ret.tanh = std::make_unique<DML_ACTIVATION_TANH_OPERATOR_DESC>();
+        ret.desc.Desc = ret.tanh.get();
+        break;
+    }
+    default:
+        assert("unknown fused activation type, add it to the switch above!");
+    }
+    return ret;
 }
 
 namespace gpu_op

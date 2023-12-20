@@ -30,20 +30,7 @@ inline int64_t align(const int64_t value, const int64_t alignment)
     return ((value + alignment - 1ll) / alignment) * alignment;
 }
 
-inline bool lexical_cast(const std::string& input, TensorShape& ts)
-{
-    std::vector<std::uint32_t> data;
-    constexpr const auto buffer_size = 128;
-    std::string line(buffer_size, ' ');
-    std::stringstream stream;
-    stream << input;
-    while (stream.getline(line.data(), buffer_size, ','))
-    {
-        data.push_back(std::stoi(line));
-    }
-    ts = TensorShape(data);
-    return true;
-}
+
 
 enum class DataType
 {
@@ -75,6 +62,94 @@ inline std::string get_data_type_str(DataType dt)
         assert(false && "Unknown data type.");
     }
     return "UNKNOWN";
+}
+
+enum class ActivationType
+{
+    eUnknown = 0,
+    eRelu = 1,
+    eLeakyRelu,
+    eClip,
+    eGelu,
+    eSigmoid,
+    eLinear,
+    eTanh,
+    // we can add more here
+    //..
+    //..
+    eCount
+};
+
+inline std::string get_activation_type_str(ActivationType type)
+{
+    switch (type)
+    {
+    case ActivationType::eRelu: return "relu";
+    case ActivationType::eLeakyRelu: return "leakyrelu";
+    case ActivationType::eClip: return "clip";
+    case ActivationType::eGelu: return "gelu";
+    case ActivationType::eSigmoid: return "sigmoid";
+    case ActivationType::eLinear: return "linear";
+    case ActivationType::eTanh: return "tanh";
+    default:
+        assert("!unknown act type. cant get string name for it");
+    }
+    return "";
+}
+
+inline ActivationType to_activation_type(std::string str)
+{
+    // lower case
+    std::transform(str.begin(), str.end(), str.begin(),
+        [](unsigned char c) { return std::tolower(c); });
+    // remove underscore
+    str.erase(std::remove(str.begin(), str.end(), '_'), str.end());
+
+    auto is_str_matching_type = [](const auto& str, const auto& type)
+    {
+        if (str.compare(get_activation_type_str(type)) == 0)
+        {
+            return type;
+        }
+        return ActivationType::eUnknown;
+    };  
+
+    for (auto i = 0; i < static_cast<std::size_t>(ActivationType::eCount); i++)
+    {
+        const auto t = static_cast<ActivationType>(i);
+        if (ActivationType::eUnknown != is_str_matching_type(str, t))
+        {
+            return t;
+        }
+    }
+    return ActivationType::eUnknown;
+}
+
+struct ActivationSettings
+{
+    ActivationType type = ActivationType::eUnknown;
+    float alpha = 0.0f;
+    float beta = 0.0f;
+};
+
+inline bool lexical_cast(const std::string& input, ActivationSettings& act)
+{
+    std::stringstream stream;
+    stream << input;
+
+    std::string type = "";
+    std::string alpha = "0.0f";
+    std::string beta = "0.0f";
+
+    std::getline(stream, type, ',');
+    std::getline(stream, alpha, ',');
+    std::getline(stream, beta, ',');
+
+    act.type = to_activation_type(type);
+    act.alpha = std::stof(alpha);
+    act.beta = std::stof(beta);
+
+    return true;
 }
 
 enum class DataLayout

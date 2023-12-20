@@ -78,6 +78,10 @@ std::vector<std::byte> dnnl_gemm_op::gemm(const bindings_t& bindings, opts_t opt
         po.append_binary(dnnl::algorithm::binary_mul, beta_scale_memory.get_desc());
     }
 
+    if (opts.activation.type != ActivationType::eUnknown)
+    {
+        po.append_eltwise(to_dnnl_activation_type(opts.activation.type), opts.activation.alpha, opts.activation.beta);
+    }
 
     attrs.set_post_ops(po);
 

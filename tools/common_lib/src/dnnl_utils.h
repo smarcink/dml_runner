@@ -5,6 +5,10 @@
 #include <span>
 #include <cassert>
 
+#include "layers_utils.h"
+
+#include <DirectML.h>
+
 namespace dnnl_utils
 {
 struct binding_t
@@ -118,6 +122,23 @@ inline dnnl::memory create_dnnl_memory(const dnnl_utils::binding_t binding, dnnl
         copy_to_dnnl_memory(ret, binding.data);
     }
     return ret;
+}
+
+inline dnnl::algorithm to_dnnl_activation_type(const ActivationType& type)
+{
+    switch (type)
+    {
+    case ActivationType::eRelu: return dnnl::algorithm::eltwise_relu;
+    case ActivationType::eLeakyRelu: return dnnl::algorithm::eltwise_relu;  // for dnnl it's RELU, but it uses alpha to scale negative values
+    case ActivationType::eClip: return dnnl::algorithm::eltwise_clip;
+    case ActivationType::eGelu: return dnnl::algorithm::eltwise_gelu_erf;
+    case ActivationType::eSigmoid: return dnnl::algorithm::eltwise_logistic;
+    case ActivationType::eLinear: return dnnl::algorithm::eltwise_linear;
+    case ActivationType::eTanh: return dnnl::algorithm::eltwise_tanh;
+    default:
+        assert(!"unknown activation type!");
+    }
+    return dnnl::algorithm::undef;
 }
 
 }// namespace dnnl_utils

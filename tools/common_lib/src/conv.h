@@ -28,9 +28,7 @@ struct opts_t
     TensorShape output_shape;
     DataType out_dt = DataType::eCount;
     bool use_fp32_accu = false;
-    std::uint32_t activation_type;
-    float activation_alpha;
-    float activation_beta;
+    ActivationSettings activation;
     DataLayout out_layout = DataLayout::eCount;
     bool force_winograd = false;
 
@@ -49,7 +47,7 @@ public:
     Convolution(const TensorShape& input_shape, const TensorShape& filter_shape, const TensorShape& output_shape,
         const DML_TENSOR_DATA_TYPE data_type, const dml::TensorPolicy& input_tensor_policy, const dml::TensorPolicy& filter_tensor_policy, const dml::TensorPolicy& output_tensor_policy,
         const TensorShape& stride_shape, std::uint32_t input_pad, std::uint32_t output_pad,
-        bool use_bias, bool allow_fp16_computations,
+        bool use_bias, bool allow_fp16_computations, const ActivationSettings& activation_settings,
         IDMLDevice* dml_device, ID3D12Device* d3d12_device, bool disable_mc = false)
         : DirectMlBaseNode(dml_device, d3d12_device)
     {
@@ -152,7 +150,9 @@ public:
         desc.EndPadding = end_pad.data();
         desc.OutputPadding = out_pad.data();
         desc.GroupCount = 1u;
-        desc.FusedActivation = nullptr;
+        const auto activation = to_dml_activation_setting(activation_settings);
+        desc.FusedActivation = activation.desc.Type != DML_OPERATOR_INVALID ? &activation.desc : nullptr;
+
 
         DML_OPERATOR_DESC dml_operator_desc{};
         dml_operator_desc.Type = DML_OPERATOR_CONVOLUTION;
@@ -262,9 +262,7 @@ public:
         TensorShape filter_shape;
         std::uint32_t in_pad;
         std::uint32_t out_pad;
-        std::uint32_t act_type;
-        float act_alpha;
-        float act_beta;
+        ActivationSettings activation{};
         TensorShape stride;
         bool no_bias = false;
         bool allow_fp16_computations = false;
@@ -286,9 +284,7 @@ public:
             opts->add_option("--stride", params.stride, "speciify list: <stride_h, stride_w>")->required();
             opts->add_flag("--no_bias", params.no_bias);
             opts->add_flag("--allow_fp16_computations", params.allow_fp16_computations);
-            opts->add_option("--activation_type", params.act_type);
-            opts->add_option("--activation_alpha", params.act_alpha);
-            opts->add_option("--activation_beta", params.act_beta);
+            opts->add_option("--activation", params.activation);
             opts->add_flag("--algo_winograd", params.algo_winograd);
 
             opts->add_flag("--dump_weights", params.dump_weights);
@@ -474,9 +470,15 @@ protected:
         *ptr++ = static_cast<Dt>(params_.stride.h);
         *ptr++ = static_cast<Dt>(params_.filter_shape.c);
         *ptr++ = static_cast<Dt>(params_.filter_shape.n);
-        *ptr++ = static_cast<Dt>(params_.act_type);
-        *ptr++ = static_cast<Dt>(params_.act_alpha);
-        *ptr++ = static_cast<Dt>(params_.act_beta);
+
+        //todo fix this
+        *ptr++ = static_cast<Dt>(0);
+        *ptr++ = static_cast<Dt>(0);
+        *ptr++ = static_cast<Dt>(0);
+        //*ptr++ = static_cast<Dt>(params_.act_type);
+        //*ptr++ = static_cast<Dt>(params_.act_alpha);
+        //*ptr++ = static_cast<Dt>(params_.act_beta);
+
         *ptr++ = static_cast<Dt>(params_.output_layout == DataLayout::eNCHW ? 0 : 1);
         *ptr++ = static_cast<Dt>(params_.input_layout == DataLayout::eNCHW ? 0 : 1);
         *ptr++ = static_cast<Dt>(params_.input_shape.c);
@@ -518,9 +520,7 @@ protected:
         opts.stride = params_.stride;
         opts.out_layout = params_.output_layout;
         opts.out_dt = params_.dt;
-        opts.activation_type = params_.act_type;
-        opts.activation_alpha = params_.act_alpha;
-        opts.activation_beta = params_.act_beta;
+        opts.activation = params_.activation;
         opts.force_winograd = params_.algo_winograd;
         opts.dump_weights = dump_weights();
         opts.dump_scratchpad = dump_weights();
@@ -566,7 +566,7 @@ public:
         , conv_(params_.input_shape, params_.filter_shape, get_output_shape(),
             to_dml_data_type(params_.dt), to_dml_tensor_policy(params_.input_layout),
             to_dml_tensor_policy(params_.filter_layout), to_dml_tensor_policy(params_.output_layout),
-            params_.stride, params_.in_pad, params_.out_pad, !params_.no_bias, params_.allow_fp16_computations,
+            params_.stride, params_.in_pad, params_.out_pad, !params_.no_bias, params_.allow_fp16_computations, params_.activation,
             dml_device, d3d12_device)
     {
     }
@@ -613,7 +613,7 @@ public:
         const dnnl::memory::dims pad{ params.in_pad, params.in_pad };
         const dnnl::memory::dims stride{ params.stride.h, params.stride.w };
 
-        const dnnl::primitive_attr attr = [](dnnl::algorithm act, float alpha, float beta, bool use_fp32_accu)
+        const dnnl::primitive_attr attr = [](const ActivationSettings& activation, bool use_fp32_accu)
         {
             // create a post-op with relu
             dnnl::post_ops ops;
@@ -629,16 +629,14 @@ public:
                 attr.set_accumulation_mode(dnnl::accumulation_mode::strict);
             }
 
-
-            if (act != dnnl::algorithm::undef)
+            if (activation.type != ActivationType::eUnknown)
             {
-                ops.append_eltwise(act, alpha, beta);
-                // create an attribute and set the corresponding post op
+                ops.append_eltwise(to_dnnl_activation_type(activation.type), activation.alpha, activation.beta);
                 attr.set_post_ops(ops);
             }
 
             return attr;
-        }(static_cast<dnnl::algorithm>(params.act_type), params.act_alpha, params.act_beta, params_.dt == DataType::eFp16 && !params_.allow_fp16_computations);
+        }(params_.activation, params_.dt == DataType::eFp16 && !params_.allow_fp16_computations);
 
         input_memory_desc_ = to_dnnl_mem_desc(params_.input_shape, params_.input_layout, params_.dt);
         output_memory_desc_ = to_dnnl_mem_desc(get_output_shape(), params_.output_layout, params_.dt);
