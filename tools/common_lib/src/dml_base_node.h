@@ -48,6 +48,34 @@ namespace
         return props;
     }
 
+    inline static dml::TensorProperties compute_nchw_alignw320_tensor_policy(
+        DML_TENSOR_DATA_TYPE dataType,
+        DML_TENSOR_FLAGS /*flags*/,
+        std::span<const uint32_t> sizes)
+    {
+        const uint32_t dimension_count = static_cast<uint32_t>(sizes.size());
+        dml::TensorStrides strides(dimension_count);
+
+        dml::TensorDimensions dims(dimension_count);
+        for (std::uint32_t i = 0; i < dimension_count; i++)
+        {
+            dims[i] = sizes[i];
+        }
+        dims.back() = align(dims.back(), 320);
+
+        uint32_t stride = 1;
+        for (std::uint32_t i = dimension_count; i > 0; i--)
+        {
+            strides[i - 1] = stride;
+            stride *= dims[i - 1];
+        }
+
+        dml::TensorProperties props;
+        props.strides = std::move(strides);
+        props.totalTensorSizeInBytes = DMLCalcBufferTensorSize(dataType, dimension_count, sizes.data(), props.strides->data());
+        props.guaranteedBaseOffsetAlignment = 0;
+        return props;
+    }
 }
 
 inline std::string to_string(const std::string& value) { return value; }
@@ -72,6 +100,7 @@ inline dml::TensorPolicy to_dml_tensor_policy(DataLayout layout)
     case DataLayout::eNCHW: return dml::TensorPolicy::Default();
     case DataLayout::eNHWC: return dml::TensorPolicy::InterleavedChannel();
     case DataLayout::eW: return dml::TensorPolicy(compute_w_tensor_policy);
+    case DataLayout::eNCHW_AlignW320: return dml::TensorPolicy(compute_nchw_alignw320_tensor_policy);
     default:
         assert(false && "Unknown data layout.");
     }

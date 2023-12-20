@@ -47,7 +47,7 @@ class Convolution : public DirectMlBaseNode
 {
 public:
     Convolution(const TensorShape& input_shape, const TensorShape& filter_shape, const TensorShape& output_shape,
-        const DML_TENSOR_DATA_TYPE data_type, const dml::TensorPolicy& input_tensor_policy, const dml::TensorPolicy& output_tensor_policy,
+        const DML_TENSOR_DATA_TYPE data_type, const dml::TensorPolicy& input_tensor_policy, const dml::TensorPolicy& filter_tensor_policy, const dml::TensorPolicy& output_tensor_policy,
         const TensorShape& stride_shape, std::uint32_t input_pad, std::uint32_t output_pad,
         bool use_bias, bool allow_fp16_computations,
         IDMLDevice* dml_device, ID3D12Device* d3d12_device, bool disable_mc = false)
@@ -86,7 +86,7 @@ public:
             tensor_filter_desc_.DimensionCount = static_cast<std::uint32_t>(filter_dims.size());
             tensor_filter_desc_.Sizes = filter_dims.data();
 
-            filter_tensor_properites = input_tensor_policy.Get(tensor_filter_desc_.DataType, tensor_filter_desc_.Flags, filter_dims);
+            filter_tensor_properites = filter_tensor_policy.Get(tensor_filter_desc_.DataType, tensor_filter_desc_.Flags, filter_dims);
             tensor_filter_desc_.Strides = filter_tensor_properites.strides.has_value() ? filter_tensor_properites.strides->data() : nullptr;;
             tensor_filter_desc_.TotalTensorSizeInBytes = filter_tensor_properites.totalTensorSizeInBytes;
             tensor_filter_desc_.GuaranteedBaseOffsetAlignment = filter_tensor_properites.guaranteedBaseOffsetAlignment;
@@ -100,7 +100,7 @@ public:
             bias_desc.Flags = DML_TENSOR_FLAG_NONE;
             bias_desc.DimensionCount = static_cast<std::uint32_t>(bias_dims.size());
             bias_desc.Sizes = bias_dims.data();
-            bias_tensor_properites = input_tensor_policy.Get(bias_desc.DataType, bias_desc.Flags, bias_dims);
+            bias_tensor_properites = filter_tensor_policy.Get(bias_desc.DataType, bias_desc.Flags, bias_dims);
             bias_desc.TotalTensorSizeInBytes = bias_tensor_properites.totalTensorSizeInBytes;
             bias_desc.GuaranteedBaseOffsetAlignment = bias_tensor_properites.guaranteedBaseOffsetAlignment;
             tensor_bias_desc_.emplace(std::move(bias_desc));
@@ -565,7 +565,7 @@ public:
         , dml_cmd_recorder_(dml_cmd_recorder)
         , conv_(params_.input_shape, params_.filter_shape, get_output_shape(),
             to_dml_data_type(params_.dt), to_dml_tensor_policy(params_.input_layout),
-            to_dml_tensor_policy(params_.output_layout),
+            to_dml_tensor_policy(params_.filter_layout), to_dml_tensor_policy(params_.output_layout),
             params_.stride, params_.in_pad, params_.out_pad, !params_.no_bias, params_.allow_fp16_computations,
             dml_device, d3d12_device)
     {
