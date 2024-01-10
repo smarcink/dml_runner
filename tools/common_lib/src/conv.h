@@ -25,6 +25,7 @@ struct opts_t
     std::uint32_t inp_pad;
     std::uint32_t out_pad;
     TensorShape stride;
+    TensorShape dilates;
     TensorShape output_shape;
     DataType out_dt = DataType::eCount;
     bool use_fp32_accu = false;
@@ -46,7 +47,7 @@ class Convolution : public DirectMlBaseNode
 public:
     Convolution(const TensorShape& input_shape, const TensorShape& filter_shape, const TensorShape& output_shape,
         const DML_TENSOR_DATA_TYPE data_type, const dml::TensorPolicy& input_tensor_policy, const dml::TensorPolicy& filter_tensor_policy, const dml::TensorPolicy& output_tensor_policy,
-        const TensorShape& stride_shape, std::uint32_t input_pad, std::uint32_t output_pad,
+        const TensorShape& stride_shape, const TensorShape& dilation_shape, std::uint32_t input_pad, std::uint32_t output_pad,
         bool use_bias, bool allow_fp16_computations, const ActivationSettings& activation_settings,
         IDMLDevice* dml_device, ID3D12Device* d3d12_device, bool disable_mc = false)
         : DirectMlBaseNode(dml_device, d3d12_device)
@@ -59,7 +60,7 @@ public:
         const dml::TensorDimensions bias_dims{ 1, output_shape.c, 1, 1 };
 
         const std::array<std::uint32_t, 2> strides = { stride_shape.h, stride_shape.w };
-        const std::vector<std::uint32_t> dilations = { 1u, 1u };
+        const std::vector<std::uint32_t> dilations = { 1u + dilation_shape.h, 1u + dilation_shape.w }; // for some reason DML default is 1
         const std::vector<std::uint32_t> start_pad = { input_pad, input_pad };
         const std::vector<std::uint32_t> end_pad = { input_pad, input_pad };
         const std::vector<std::uint32_t> out_pad = { output_pad, output_pad };
@@ -264,12 +265,14 @@ public:
         std::uint32_t out_pad;
         ActivationSettings activation{};
         TensorShape stride;
+        TensorShape dilation{};  // DML non-dilation is 1, OneDNN non-dilation is 0 -> so for DML path we force to add 1 to dialtions
         bool no_bias = false;
         bool allow_fp16_computations = false;
         bool managaed_weights = false; // ToDo: pass it to DML class so its actually beigned used
         bool algo_winograd = false;
 
         bool dump_weights = false;
+        bool use_dnnl_for_reference_calculations = false;
 
         inline static void add_cli_options(CLI::App* opts, create_params_t& params)
         {
@@ -282,18 +285,22 @@ public:
             opts->add_option("--in_pad", params.in_pad)->required();
             opts->add_option("--out_pad", params.out_pad)->required();
             opts->add_option("--stride", params.stride, "speciify list: <stride_h, stride_w>")->required();
+            opts->add_option("--dilation", params.dilation, "speciify list: <dilation_h, dilation_w>");
             opts->add_flag("--no_bias", params.no_bias);
             opts->add_flag("--allow_fp16_computations", params.allow_fp16_computations);
             opts->add_option("--activation", params.activation);
             opts->add_flag("--algo_winograd", params.algo_winograd);
+            opts->add_flag("--dnnl_reference", params.use_dnnl_for_reference_calculations)->default_val(false);
 
             opts->add_flag("--dump_weights", params.dump_weights);
         }
     };
 
-    ConvolutionBaseDispatcher(create_params_t&& params, ID3D12Device* d3d12_device, ID3D12GraphicsCommandList* cmd_list)
+    ConvolutionBaseDispatcher(create_params_t&& params, ID3D12Device* d3d12_device, IDMLDevice* dml_device, IDMLCommandRecorder* dml_cmd_recorder, ID3D12GraphicsCommandList* cmd_list)
         : params_(std::move(params))
         , d3d12_device_(d3d12_device)
+        , dml_cmd_recorder_(dml_cmd_recorder)
+        , dml_device_(dml_device)
         , input_data_(get_tensor_elements_count(params_.input_shape, params_.input_layout)* get_data_type_bytes_width(params_.dt))
         , filter_data_(get_tensor_elements_count(params_.filter_shape, params_.filter_layout)* get_data_type_bytes_width(params_.dt))
 
@@ -428,15 +435,24 @@ public:
         std::memcpy(data_out.data(), readback_mapped_ptr, data_out.size());
         readback_buffer->Unmap(0, nullptr);
 
-        const auto dnnl_untyped_result = get_dnnl_result();
+        std::vector<std::byte> ref_untyped_result;
+        if (params_.use_dnnl_for_reference_calculations)
+        {
+            ref_untyped_result = get_dnnl_result();
+        }
+        else
+        {
+            ref_untyped_result = get_dml_results(tensor_out_bytes_width, command_queue, command_allocator, command_list);
+        }
+
 
         if (params_.dt == DataType::eFp32)
         {
-            return run_conformance_check<float>(data_out, dnnl_untyped_result, 0.001f, print_mismatches);
+            return run_conformance_check<float>(data_out, ref_untyped_result, 0.001f, print_mismatches);
         }
         else if (params_.dt == DataType::eFp16)
         {
-            return run_conformance_check<Half>(data_out, dnnl_untyped_result, 0.05f, print_mismatches);
+            return run_conformance_check<Half>(data_out, ref_untyped_result, 0.05f, print_mismatches);
         }
         assert(false && "Unsupported output data type!");
         ConformanceResult ret{};
@@ -446,12 +462,15 @@ public:
 protected:
     inline TensorShape get_output_shape() const
     {
+        const auto dkh = 1 + (params_.filter_shape.h - 1) * (params_.dilation.h + 1);
+        const auto dkw = 1 + (params_.filter_shape.w - 1) * (params_.dilation.w + 1);
+
         TensorShape ret;
         ret.n = params_.input_shape.n;
         ret.c = params_.filter_shape.n; // output channels
         ret.d = 0;
-        ret.h = (params_.input_shape.h - params_.filter_shape.h + params_.in_pad + params_.in_pad) / params_.stride.h + 1;
-        ret.w = (params_.input_shape.w - params_.filter_shape.w + params_.in_pad + params_.in_pad) / params_.stride.w + 1;
+        ret.h = (params_.input_shape.h - dkh + params_.in_pad + params_.in_pad) / params_.stride.h + 1;
+        ret.w = (params_.input_shape.w - dkw + params_.in_pad + params_.in_pad) / params_.stride.w + 1;
         return ret;
     }
 
@@ -518,6 +537,7 @@ protected:
         opts.inp_pad = params_.in_pad;
         opts.out_pad = params_.out_pad;
         opts.stride = params_.stride;
+        opts.dilates = params_.dilation;
         opts.out_layout = params_.output_layout;
         opts.out_dt = params_.dt;
         opts.activation = params_.activation;
@@ -526,6 +546,46 @@ protected:
         opts.dump_scratchpad = dump_weights();
         opts.use_fp32_accu = params_.dt == DataType::eFp16 && !params_.allow_fp16_computations;
         return dnnl_conv_op::convolution(bindings, opts);
+    }
+
+    std::vector<std::byte> get_dml_results(const std::size_t tensor_out_bytes_width, ID3D12CommandQueue* command_queue,
+        ID3D12CommandAllocator* command_allocator, ID3D12GraphicsCommandList* command_list) const
+    {
+        auto readback_buffer = create_buffer(d3d12_device_, tensor_out_bytes_width, D3D12_HEAP_TYPE_READBACK, D3D12_RESOURCE_STATE_COPY_DEST);
+        auto readback_output_barrirer = CD3DX12_RESOURCE_BARRIER::Transition(output_buffer_.Get(),
+            D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
+
+        auto conv_ref = gpu_op::Convolution(params_.input_shape, params_.filter_shape, get_output_shape(),
+            to_dml_data_type(params_.dt), to_dml_tensor_policy(params_.input_layout),
+            to_dml_tensor_policy(params_.filter_layout), to_dml_tensor_policy(params_.output_layout),
+            params_.stride, params_.dilation, params_.in_pad, params_.out_pad, !params_.no_bias, params_.allow_fp16_computations, params_.activation, dml_device_, d3d12_device_, true /* disable_mc*/);
+
+        // bind descriptor heap
+        auto descriptor_heap = create_descriptor_heap(d3d12_device_, conv_ref.get_total_descriptor_count());
+        ID3D12DescriptorHeap* d3d12_descriptor_heaps[] = { descriptor_heap.Get() };
+        command_list->SetDescriptorHeaps(1, d3d12_descriptor_heaps);
+
+        conv_ref.create_binding_tables(descriptor_heap->GetCPUDescriptorHandleForHeapStart(), descriptor_heap->GetGPUDescriptorHandleForHeapStart());
+        conv_ref.record_initialize(dml_cmd_recorder_, command_list);
+        close_execute_reset_wait(d3d12_device_, command_queue, command_allocator, command_list);
+
+        command_list->SetDescriptorHeaps(1, d3d12_descriptor_heaps);
+        conv_ref.record_execute(dml_cmd_recorder_, command_list, output_buffer_.Get(), input_buffer_.Get(), filter_buffer_.Get(), bias_buffer_.Get(), constant_buffer_.Get());
+        close_execute_reset_wait(d3d12_device_, command_queue, command_allocator, command_list);
+
+        auto readback_buffer_ref = create_buffer(d3d12_device_, tensor_out_bytes_width, D3D12_HEAP_TYPE_READBACK, D3D12_RESOURCE_STATE_COPY_DEST);
+        readback_output_barrirer = CD3DX12_RESOURCE_BARRIER::Transition(output_buffer_.Get(),
+            D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
+        command_list->ResourceBarrier(1, &readback_output_barrirer);
+        command_list->CopyResource(readback_buffer_ref.Get(), output_buffer_.Get());
+        close_execute_reset_wait(d3d12_device_, command_queue, command_allocator, command_list);
+
+        std::vector<std::byte> ref_untyped_result(tensor_out_bytes_width);
+        void* readback_mapped_ptr_ref = nullptr;
+        readback_buffer_ref->Map(0, nullptr, reinterpret_cast<void**>(&readback_mapped_ptr_ref));
+        std::memcpy(ref_untyped_result.data(), readback_mapped_ptr_ref, ref_untyped_result.size());
+        readback_buffer_ref->Unmap(0, nullptr);
+        return ref_untyped_result;
     }
 
 protected:
@@ -541,6 +601,8 @@ protected:
 
 protected:
     ID3D12Device* d3d12_device_;
+    IDMLDevice* dml_device_;
+    IDMLCommandRecorder* dml_cmd_recorder_;
     create_params_t params_;
 
     std::vector<std::byte> input_data_;
@@ -561,12 +623,12 @@ class ConvolutionDirectMLDispatcher : public ConvolutionBaseDispatcher
 public:
 
     ConvolutionDirectMLDispatcher(create_params_t&& params, ID3D12Device* d3d12_device, IDMLDevice* dml_device, IDMLCommandRecorder* dml_cmd_recorder, ID3D12GraphicsCommandList* cmd_list)
-        : ConvolutionBaseDispatcher(std::move(params), d3d12_device, cmd_list)
+        : ConvolutionBaseDispatcher(std::move(params), d3d12_device, dml_device, dml_cmd_recorder, cmd_list)
         , dml_cmd_recorder_(dml_cmd_recorder)
         , conv_(params_.input_shape, params_.filter_shape, get_output_shape(),
             to_dml_data_type(params_.dt), to_dml_tensor_policy(params_.input_layout),
             to_dml_tensor_policy(params_.filter_layout), to_dml_tensor_policy(params_.output_layout),
-            params_.stride, params_.in_pad, params_.out_pad, !params_.no_bias, params_.allow_fp16_computations, params_.activation,
+            params_.stride, params_.dilation, params_.in_pad, params_.out_pad, !params_.no_bias, params_.allow_fp16_computations, params_.activation,
             dml_device, d3d12_device)
     {
     }
@@ -603,8 +665,8 @@ public:
     };
 
 public:
-    ConvolutionUmdD3d12Dispatcher(create_params_t&& params, conv_umdd3d12_params_t&& umdd3d12_params, IntelExtension& intc_ext, ID3D12Device* d3d12_device, ID3D12GraphicsCommandList* cmd_list)
-        : ConvolutionBaseDispatcher(std::move(params), d3d12_device, cmd_list)
+    ConvolutionUmdD3d12Dispatcher(create_params_t&& params, conv_umdd3d12_params_t&& umdd3d12_params, IntelExtension& intc_ext, ID3D12Device* d3d12_device, IDMLDevice* dml_device, IDMLCommandRecorder* dml_cmd_recorder, ID3D12GraphicsCommandList* cmd_list)
+        : ConvolutionBaseDispatcher(std::move(params), d3d12_device, dml_device, dml_cmd_recorder, cmd_list)
         , device_(d3d12_device, intc_ext.get_info())
         , umdd3d12_params_(std::move(umdd3d12_params))
         , dnnl_engine_(dnnl::iumd_interop::make_engine(&device_))
@@ -612,6 +674,7 @@ public:
         using namespace dnnl_utils;
         const dnnl::memory::dims pad{ params.in_pad, params.in_pad };
         const dnnl::memory::dims stride{ params.stride.h, params.stride.w };
+        const dnnl::memory::dims dilates{ params.dilation.h, params.dilation.w };
 
         const dnnl::primitive_attr attr = [](const ActivationSettings& activation, bool use_fp32_accu)
         {
@@ -655,6 +718,7 @@ public:
             bias_memory_desc_ ? bias_memory_desc_.value() : dnnl::memory::desc{},
             output_memory_desc_,
             stride,
+            dilates,
             pad,
             pad,
             attr
@@ -972,8 +1036,8 @@ public:
         }
     };
 public:
-    ConvolutionCmDispatcher(create_params_t&& params, conv_cm_params_t&& cm_params, IntelExtension& intc_ext, ID3D12Device* d3d12_device, ID3D12GraphicsCommandList* cmd_list)
-        : ConvolutionBaseDispatcher(std::move(params), d3d12_device, cmd_list)
+    ConvolutionCmDispatcher(create_params_t&& params, conv_cm_params_t&& cm_params, IntelExtension& intc_ext, ID3D12Device* d3d12_device, IDMLDevice* dml_device, IDMLCommandRecorder* dml_cmd_recorder, ID3D12GraphicsCommandList* cmd_list)
+        : ConvolutionBaseDispatcher(std::move(params), d3d12_device, dml_device, dml_cmd_recorder, cmd_list)
         , intc_ext_(intc_ext)
         , d3d12_device_(d3d12_device)
         , cm_params_(std::move(cm_params))

@@ -17,6 +17,7 @@ protected:
         // You can do set-up work for each test here.
         params_.managaed_weights = true;
         params_.algo_winograd = false; // we should use auto anyway
+        params_.use_dnnl_for_reference_calculations = true;
     }
 
     ~DnnlPluginNext_Convolution() override {
@@ -30,6 +31,8 @@ protected:
             ConvolutionUmdD3d12Dispatcher::conv_umdd3d12_params_t{},
             g_dx12_engine.intel_extension_d3d12,
             g_dx12_engine.d3d12_device.Get(),
+            g_dx12_engine.dml_device.Get(),
+            g_dx12_engine.dml_command_recorder.Get(),
             g_dx12_engine.command_list.Get());
         return node;
     }

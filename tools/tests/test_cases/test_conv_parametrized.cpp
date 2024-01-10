@@ -60,6 +60,7 @@ protected:
     void set_kernel_size(std::uint32_t ks) { kernel_size_ = ks; }
     void set_kernel_stride(std::uint32_t ks) { kernel_stride_ = ks; }
     void set_input_padding(std::uint32_t p) { input_pad_ = p; }
+    void set_dilation(std::uint32_t d) { dilation_ = d; }
     void set_no_bias() { no_bias_ = true; }
     void set_activation_setting(ActivationSettings act) { activation_ = std::move(act); };
 
@@ -78,12 +79,14 @@ protected:
 
         ConvolutionBaseDispatcher::create_params_t opts{};
         opts.algo_winograd = false; // we should use auto anyway
+        opts.use_dnnl_for_reference_calculations = true;
         opts.dt = dt;
         opts.input_layout = layout;
         opts.output_layout = layout;
         opts.filter_layout = layout;
         opts.in_pad = input_pad_;
-        opts.stride = TensorShape(1, 1, kernel_stride_, kernel_stride_);
+        opts.stride = TensorShape(1u, 1u, kernel_stride_, kernel_stride_);
+        opts.dilation = TensorShape(0u, 0u, dilation_, dilation_);
         opts.managaed_weights = true;
         opts.input_shape = TensorShape(batch, ic, h, w);
         opts.filter_shape = TensorShape(oc, ic, kernel_size_, kernel_size_);
@@ -94,6 +97,8 @@ protected:
             ConvolutionUmdD3d12Dispatcher::conv_umdd3d12_params_t{},
             g_dx12_engine.intel_extension_d3d12,
             g_dx12_engine.d3d12_device.Get(),
+            g_dx12_engine.dml_device.Get(),
+            g_dx12_engine.dml_command_recorder.Get(),
             g_dx12_engine.command_list.Get());
         return node;
     }
@@ -103,6 +108,7 @@ private:
     std::uint32_t kernel_size_ = 1;
     std::uint32_t kernel_stride_ = 1;
     std::uint32_t input_pad_ = 0;
+    std::uint32_t dilation_ = 0;
     ActivationSettings activation_ = {};
 };
 
@@ -137,6 +143,16 @@ TEST_P(DnnlPluginNext_Convolution_Params, Kernel3x3Stride2x2WithPaddingAndReLuAc
     set_kernel_stride(2);
     set_input_padding(1);
     set_activation_setting(ActivationSettings{ ActivationType::eRelu });
+    run();
+}
+
+TEST_P(DnnlPluginNext_Convolution_Params, Kernel3x3Stride2x2WithPaddingAndReLuActivationAndDilation1)
+{
+    set_kernel_size(3);
+    set_kernel_stride(2);
+    set_input_padding(1);
+    set_activation_setting(ActivationSettings{ ActivationType::eRelu });
+    set_dilation(1u);
     run();
 }
 
@@ -216,6 +232,7 @@ protected:
 
         ConvolutionBaseDispatcher::create_params_t opts{};
         opts.algo_winograd = false; // we should use auto anyway
+        opts.use_dnnl_for_reference_calculations = true;
         opts.dt = dt;
         opts.input_layout = in_layout;
         opts.output_layout = out_layout;
@@ -231,6 +248,8 @@ protected:
             ConvolutionUmdD3d12Dispatcher::conv_umdd3d12_params_t{},
             g_dx12_engine.intel_extension_d3d12,
             g_dx12_engine.d3d12_device.Get(),
+            g_dx12_engine.dml_device.Get(),
+            g_dx12_engine.dml_command_recorder.Get(),
             g_dx12_engine.command_list.Get());
         return node;
     }
@@ -329,6 +348,7 @@ protected:
 
         ConvolutionBaseDispatcher::create_params_t opts{};
         opts.algo_winograd = false; // we should use auto anyway
+        opts.use_dnnl_for_reference_calculations = true;
         opts.dt = dt;
         opts.input_layout = layout;
         opts.output_layout = layout;
@@ -345,6 +365,8 @@ protected:
             ConvolutionUmdD3d12Dispatcher::conv_umdd3d12_params_t{},
             g_dx12_engine.intel_extension_d3d12,
             g_dx12_engine.d3d12_device.Get(),
+            g_dx12_engine.dml_device.Get(),
+            g_dx12_engine.dml_command_recorder.Get(),
             g_dx12_engine.command_list.Get());
         return node;
     }

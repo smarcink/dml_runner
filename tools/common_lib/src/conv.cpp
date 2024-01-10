@@ -66,6 +66,7 @@ std::vector<std::byte> dnnl_conv_op::convolution(const bindings_t& bindings, opt
 
     const dnnl::memory::dims pad{ opts.inp_pad, opts.inp_pad };
     const dnnl::memory::dims stride{ opts.stride.h, opts.stride.w };
+    const dnnl::memory::dims dilates{ opts.dilates.h, opts.dilates.w };
     const dnnl::primitive_attr attr = CreateEltwisePostOps(opts.activation, opts.use_fp32_accu);
     const dnnl::convolution_forward::primitive_desc conv_desc(engine,
         dnnl::prop_kind::forward_inference, 
@@ -74,7 +75,7 @@ std::vector<std::byte> dnnl_conv_op::convolution(const bindings_t& bindings, opt
         dnnl::memory::desc{to_dnnl_dims(bindings.filter.shape), to_dnnl_data_type(bindings.filter.dt), dnnl::memory::format_tag::any },
         bindings.bias.data ? bias_memory.get_desc() : dnnl::memory::desc{},
         output_memory.get_desc(),
-        stride, pad, pad, attr);
+        stride, dilates, pad, pad, attr);
 
     const auto filter_output_desc_mem = conv_desc.query_md(dnnl::query::weights_md);
     dnnl::memory filter_memory(filter_output_desc_mem, engine);
