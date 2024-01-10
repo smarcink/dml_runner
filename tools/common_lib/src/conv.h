@@ -32,7 +32,7 @@ struct opts_t
     ActivationSettings activation;
     DataLayout out_layout = DataLayout::eCount;
     bool force_winograd = false;
-
+    bool transposed = false;
     bool dump_weights = false;
     bool dump_scratchpad = false;
 };
@@ -48,7 +48,7 @@ public:
     Convolution(const TensorShape& input_shape, const TensorShape& filter_shape, const TensorShape& output_shape,
         const DML_TENSOR_DATA_TYPE data_type, const dml::TensorPolicy& input_tensor_policy, const dml::TensorPolicy& filter_tensor_policy, const dml::TensorPolicy& output_tensor_policy,
         const TensorShape& stride_shape, const TensorShape& dilation_shape, std::uint32_t input_pad, std::uint32_t output_pad,
-        bool use_bias, bool allow_fp16_computations, const ActivationSettings& activation_settings,
+        bool use_bias, bool allow_fp16_computations, bool transposed, const ActivationSettings& activation_settings,
         IDMLDevice* dml_device, ID3D12Device* d3d12_device, bool disable_mc = false)
         : DirectMlBaseNode(dml_device, d3d12_device)
     {
@@ -143,7 +143,7 @@ public:
         desc.BiasTensor = use_bias ? &bias_desc : nullptr;
         desc.OutputTensor = &output_desc;
         desc.Mode = DML_CONVOLUTION_MODE_CROSS_CORRELATION;
-        desc.Direction = DML_CONVOLUTION_DIRECTION_FORWARD;
+        desc.Direction = transposed ? DML_CONVOLUTION_DIRECTION_BACKWARD : DML_CONVOLUTION_DIRECTION_FORWARD;
         desc.DimensionCount = 2;
         desc.Strides = strides.data();
         desc.Dilations = dilations.data();
@@ -270,6 +270,7 @@ public:
         bool allow_fp16_computations = false;
         bool managaed_weights = false; // ToDo: pass it to DML class so its actually beigned used
         bool algo_winograd = false;
+        bool transposed = false;
 
         bool dump_weights = false;
         bool use_dnnl_for_reference_calculations = false;
@@ -290,6 +291,7 @@ public:
             opts->add_flag("--allow_fp16_computations", params.allow_fp16_computations);
             opts->add_option("--activation", params.activation);
             opts->add_flag("--algo_winograd", params.algo_winograd);
+            opts->add_flag("--transposed", params.transposed);
             opts->add_flag("--dnnl_reference", params.use_dnnl_for_reference_calculations)->default_val(false);
 
             opts->add_flag("--dump_weights", params.dump_weights);
@@ -306,6 +308,7 @@ public:
 
     {
         assert(params_.input_shape.c == params_.filter_shape.c);
+
         const auto output_shape = get_output_shape();
         prepare_constant_data();
 
@@ -462,15 +465,24 @@ public:
 protected:
     inline TensorShape get_output_shape() const
     {
-        const auto dkh = 1 + (params_.filter_shape.h - 1) * (params_.dilation.h + 1);
-        const auto dkw = 1 + (params_.filter_shape.w - 1) * (params_.dilation.w + 1);
-
         TensorShape ret;
         ret.n = params_.input_shape.n;
         ret.c = params_.filter_shape.n; // output channels
         ret.d = 0;
-        ret.h = (params_.input_shape.h - dkh + params_.in_pad + params_.in_pad) / params_.stride.h + 1;
-        ret.w = (params_.input_shape.w - dkw + params_.in_pad + params_.in_pad) / params_.stride.w + 1;
+
+        const auto dkh = 1 + (params_.filter_shape.h - 1) * (params_.dilation.h + 1);
+        const auto dkw = 1 + (params_.filter_shape.w - 1) * (params_.dilation.w + 1);
+        if (params_.transposed)
+        {
+            ret.h = (params_.stride.h * ((params_.input_shape.h - 1) + dkh)) - params_.in_pad - params_.in_pad;
+            ret.w = (params_.stride.w * ((params_.input_shape.w - 1) + dkw)) - params_.in_pad - params_.in_pad;
+        }
+        else
+        {
+            ret.h = (params_.input_shape.h - dkh + params_.in_pad + params_.in_pad) / params_.stride.h + 1;
+            ret.w = (params_.input_shape.w - dkw + params_.in_pad + params_.in_pad) / params_.stride.w + 1;
+        }
+
         return ret;
     }
 
@@ -542,6 +554,7 @@ protected:
         opts.out_dt = params_.dt;
         opts.activation = params_.activation;
         opts.force_winograd = params_.algo_winograd;
+        opts.transposed = params_.transposed;
         opts.dump_weights = dump_weights();
         opts.dump_scratchpad = dump_weights();
         opts.use_fp32_accu = params_.dt == DataType::eFp16 && !params_.allow_fp16_computations;
@@ -558,7 +571,8 @@ protected:
         auto conv_ref = gpu_op::Convolution(params_.input_shape, params_.filter_shape, get_output_shape(),
             to_dml_data_type(params_.dt), to_dml_tensor_policy(params_.input_layout),
             to_dml_tensor_policy(params_.filter_layout), to_dml_tensor_policy(params_.output_layout),
-            params_.stride, params_.dilation, params_.in_pad, params_.out_pad, !params_.no_bias, params_.allow_fp16_computations, params_.activation, dml_device_, d3d12_device_, true /* disable_mc*/);
+            params_.stride, params_.dilation, params_.in_pad, params_.out_pad, !params_.no_bias, params_.allow_fp16_computations,
+            params_.transposed, params_.activation, dml_device_, d3d12_device_, true /* disable_mc*/);
 
         // bind descriptor heap
         auto descriptor_heap = create_descriptor_heap(d3d12_device_, conv_ref.get_total_descriptor_count());
@@ -628,7 +642,8 @@ public:
         , conv_(params_.input_shape, params_.filter_shape, get_output_shape(),
             to_dml_data_type(params_.dt), to_dml_tensor_policy(params_.input_layout),
             to_dml_tensor_policy(params_.filter_layout), to_dml_tensor_policy(params_.output_layout),
-            params_.stride, params_.dilation, params_.in_pad, params_.out_pad, !params_.no_bias, params_.allow_fp16_computations, params_.activation,
+            params_.stride, params_.dilation, params_.in_pad, params_.out_pad, !params_.no_bias,
+            params_.allow_fp16_computations, params_.transposed, params_.activation,
             dml_device, d3d12_device)
     {
     }
