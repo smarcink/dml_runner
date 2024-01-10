@@ -154,7 +154,8 @@ namespace custom_metacommand
             return desc.VendorId;
         }
 
-        bool do_support_extension(UMD_EXTENSIONS ext) const;
+        bool do_support_extension(UMD_EXTENSIONS ext) const override;
+        bool do_support_ngen_kernels() const override;
 
         const ID3D12Device* get_d3d12_device() const { return impl_; }
         ID3D12Device* get_d3d12_device() { return impl_; }

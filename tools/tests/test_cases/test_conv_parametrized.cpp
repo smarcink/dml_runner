@@ -12,6 +12,7 @@ class DnnlPluginNext_Convolution_Params : public NodeDispatcherBase, public test
     std::int32_t, // OC
     std::int32_t, // HEIGHT
     std::int32_t, // WIDTH
+    bool, // transposed
     DataLayout,
     DataType
     >>
@@ -27,11 +28,13 @@ public:
         const auto h = std::get<TUPLE_ID_HEIGHT>(params);
         const auto w = std::get<TUPLE_ID_WIDTH>(params);
 
+        const auto is_transposed = std::get<TUPLE_ID_IS_TRANSPOSED>(params);
+
         const auto layout = std::get<TUPLE_ID_LAYOUT>(params);
         const auto dt = std::get<TUPLE_ID_DT>(params);
 
-        const auto fmt = std::format("batch_{}__ic_{}__oc_{}__h_{}__w_{}__layout_{}__datatype_{}",
-            batch, ic, oc, h, w, data_layout_name(layout), get_data_type_str(dt));
+        const auto fmt = std::format("batch_{}__ic_{}__oc_{}__h_{}__w_{}__transposed_{}__layout_{}__datatype_{}",
+            batch, ic, oc, h, w, is_transposed, data_layout_name(layout), get_data_type_str(dt));
         return fmt;
     }
 
@@ -43,6 +46,7 @@ protected:
         TUPLE_ID_OC,
         TUPLE_ID_HEIGHT,
         TUPLE_ID_WIDTH,
+        TUPLE_ID_IS_TRANSPOSED,
         TUPLE_ID_LAYOUT,
         TUPLE_ID_DT,
     };
@@ -74,6 +78,8 @@ protected:
         const auto h = std::get<TUPLE_ID_HEIGHT>(params);
         const auto w = std::get<TUPLE_ID_WIDTH>(params);
 
+        const auto is_transposed = std::get<TUPLE_ID_IS_TRANSPOSED>(params);
+
         const auto layout = std::get<TUPLE_ID_LAYOUT>(params);
         const auto dt = std::get<TUPLE_ID_DT>(params);
 
@@ -88,7 +94,8 @@ protected:
         opts.stride = TensorShape(1u, 1u, kernel_stride_, kernel_stride_);
         opts.dilation = TensorShape(0u, 0u, dilation_, dilation_);
         opts.managaed_weights = true;
-        opts.input_shape = TensorShape(batch, ic, h, w);
+        opts.transposed = is_transposed;
+        opts.input_shape = TensorShape(batch, is_transposed ? oc : ic, h, w);
         opts.filter_shape = TensorShape(oc, ic, kernel_size_, kernel_size_);
         opts.no_bias = no_bias_;
         opts.allow_fp16_computations = dt == DataType::eFp16;
@@ -163,6 +170,7 @@ INSTANTIATE_TEST_SUITE_P(
         testing::Values(16),
         testing::Values(32),
         testing::Values(64), testing::Values(64),  // height and width
+        testing::Values(false, true), // is transposed
         testing::Values(DataLayout::eNCHW, DataLayout::eNHWC),
         testing::Values(DataType::eFp32, DataType::eFp16)),
     [](const testing::TestParamInfo<DnnlPluginNext_Convolution_Params::ParamType>& info) {
@@ -176,6 +184,7 @@ INSTANTIATE_TEST_SUITE_P(
         testing::Values(17),
         testing::Values(79),
         testing::Values(55), testing::Values(55),  // height and width
+        testing::Values(false, true), // is transposed
         testing::Values(DataLayout::eNCHW, DataLayout::eNHWC),
         testing::Values(DataType::eFp32, DataType::eFp16)),
     [](const testing::TestParamInfo<DnnlPluginNext_Convolution_Params::ParamType>& info) {
@@ -187,6 +196,7 @@ INSTANTIATE_TEST_SUITE_P(
 class DnnlPluginNext_Convolution_ParamsUnpackedCases : public NodeDispatcherBase, public testing::TestWithParam<std::tuple<
     DataLayout,  // in
     DataLayout,  // out
+    bool, // transposed
     DataType
     >>
 {
@@ -197,10 +207,11 @@ public:
 
         const auto in_layout = std::get<TUPLE_ID_IN_LAYOUT>(params);
         const auto out_layout = std::get<TUPLE_ID_OUT_LAYOUT>(params);
+        const auto is_transposed = std::get<TUPLE_ID_IS_TRANSPOSED>(params);
         const auto dt = std::get<TUPLE_ID_DT>(params);
 
-        const auto fmt = std::format("in_layout_{}__out_layout_{}__datatype_{}",
-            data_layout_name(in_layout), data_layout_name(out_layout), get_data_type_str(dt));
+        const auto fmt = std::format("in_layout_{}__out_layout_{}__datatype_{}__is_transposed_{}",
+            data_layout_name(in_layout), data_layout_name(out_layout), get_data_type_str(dt), is_transposed);
         return fmt;
     }
 
@@ -209,6 +220,7 @@ protected:
     {
         TUPLE_ID_IN_LAYOUT,
         TUPLE_ID_OUT_LAYOUT,
+        TUPLE_ID_IS_TRANSPOSED,
         TUPLE_ID_DT,
     };
 
@@ -228,6 +240,7 @@ protected:
         const auto params = GetParam();
         const auto in_layout = std::get<TUPLE_ID_IN_LAYOUT>(params);
         const auto out_layout = std::get<TUPLE_ID_OUT_LAYOUT>(params);
+        const auto is_transposed = std::get<TUPLE_ID_IS_TRANSPOSED>(params);
         const auto dt = std::get<TUPLE_ID_DT>(params);
 
         ConvolutionBaseDispatcher::create_params_t opts{};
@@ -240,8 +253,9 @@ protected:
         opts.in_pad = 0;
         opts.stride = TensorShape(1, 1, 1, 1);
         opts.managaed_weights = true;
-        opts.input_shape = TensorShape(1, 32, 64, 64);
         opts.filter_shape = TensorShape(16, 32, 1, 1);
+        opts.transposed = is_transposed;
+        opts.input_shape = TensorShape(1, is_transposed ? opts.filter_shape.n : opts.filter_shape.c, 64, 64);
         opts.no_bias = false;
         opts.allow_fp16_computations = dt == DataType::eFp16;
         auto node = std::make_unique<ConvolutionUmdD3d12Dispatcher>(std::move(opts),
@@ -266,6 +280,7 @@ INSTANTIATE_TEST_SUITE_P(
     testing::Combine(
         testing::Values(DataLayout::eNCHW_AlignW320, DataLayout::eNHWC_AlignH48),
         testing::Values(DataLayout::eNCHW, DataLayout::eNHWC),
+        testing::Values(false, true),
         testing::Values(DataType::eFp32, DataType::eFp16)),
     [](const testing::TestParamInfo<DnnlPluginNext_Convolution_ParamsUnpackedCases::ParamType>& info) {
         return DnnlPluginNext_Convolution_ParamsUnpackedCases::params_to_str(info);
@@ -276,6 +291,7 @@ INSTANTIATE_TEST_SUITE_P(
     testing::Combine(
         testing::Values(DataLayout::eNCHW, DataLayout::eNHWC),
         testing::Values(DataLayout::eNCHW_AlignW320, DataLayout::eNHWC_AlignH48),
+        testing::Values(false, true),
         testing::Values(DataType::eFp32, DataType::eFp16)),
     [](const testing::TestParamInfo<DnnlPluginNext_Convolution_ParamsUnpackedCases::ParamType>& info) {
         return DnnlPluginNext_Convolution_ParamsUnpackedCases::params_to_str(info);
@@ -286,6 +302,7 @@ INSTANTIATE_TEST_SUITE_P(
     testing::Combine(
         testing::Values(DataLayout::eNCHW_AlignW320, DataLayout::eNHWC_AlignH48),
         testing::Values(DataLayout::eNCHW_AlignW320, DataLayout::eNHWC_AlignH48),
+        testing::Values(false, true),
         testing::Values(DataType::eFp32, DataType::eFp16)),
     [](const testing::TestParamInfo<DnnlPluginNext_Convolution_ParamsUnpackedCases::ParamType>& info) {
         return DnnlPluginNext_Convolution_ParamsUnpackedCases::params_to_str(info);
@@ -297,6 +314,7 @@ INSTANTIATE_TEST_SUITE_P(
 class DnnlPluginNext_Convolution_Activations : public NodeDispatcherBase, public testing::TestWithParam<std::tuple<
     ActivationSettings,
     DataLayout,
+    bool, //transposed
     DataType
     >>
 {
@@ -307,10 +325,11 @@ public:
 
         const auto act = std::get<TUPLE_ID_ACTIVATION>(params);
         const auto layout = std::get<TUPLE_ID_LAYOUT>(params);
+        const auto is_transposed = std::get<TUPLE_ID_IS_TRANSPOSED>(params);
         const auto dt = std::get<TUPLE_ID_DT>(params);
 
-        const auto fmt = std::format("activation_{}__layout_{}__datatype_{}",
-            get_activation_type_str(act.type), data_layout_name(layout), get_data_type_str(dt));
+        const auto fmt = std::format("activation_{}__layout_{}__datatype_{}__is_transposed_{}",
+            get_activation_type_str(act.type), data_layout_name(layout), get_data_type_str(dt), is_transposed);
         return fmt;
     }
 
@@ -319,6 +338,7 @@ protected:
     {
         TUPLE_ID_ACTIVATION = 0,
         TUPLE_ID_LAYOUT,
+        TUPLE_ID_IS_TRANSPOSED,
         TUPLE_ID_DT,
     };
 
@@ -344,7 +364,13 @@ protected:
         const auto params = GetParam();
         const auto activation = std::get<TUPLE_ID_ACTIVATION>(params);
         const auto layout = std::get<TUPLE_ID_LAYOUT>(params);
+        const auto is_transposed = std::get<TUPLE_ID_IS_TRANSPOSED>(params);
         const auto dt = std::get<TUPLE_ID_DT>(params);
+
+        if (is_transposed)
+        {
+            input_shape_.c = filter_shape_.n;
+        }
 
         ConvolutionBaseDispatcher::create_params_t opts{};
         opts.algo_winograd = false; // we should use auto anyway
@@ -354,10 +380,11 @@ protected:
         opts.output_layout = layout;
         opts.filter_layout = layout;
         opts.in_pad = input_pad_;
+        opts.transposed = is_transposed;
         opts.stride = TensorShape(1, 1, kernel_stride_, kernel_stride_);
         opts.managaed_weights = true;
-        opts.input_shape = input_shape_;
         opts.filter_shape = filter_shape_;
+        opts.input_shape = input_shape_;
         opts.no_bias = no_bias_;
         opts.allow_fp16_computations = dt == DataType::eFp16;
         opts.activation = activation;
@@ -411,6 +438,7 @@ INSTANTIATE_TEST_SUITE_P(
             ActivationSettings{ ActivationType::eTanh }
         ),
         testing::Values(DataLayout::eNCHW, DataLayout::eNHWC),
+        testing::Values(false, true), // is transposed
         testing::Values(DataType::eFp32, DataType::eFp16)),
     [](const testing::TestParamInfo<DnnlPluginNext_Convolution_Activations::ParamType>& info) {
         return DnnlPluginNext_Convolution_Activations::params_to_str(info);

@@ -172,6 +172,17 @@ bool iumd::custom_metacommand::UmdD3d12Device::do_support_extension(UMD_EXTENSIO
     return false;
 }
 
+bool iumd::custom_metacommand::UmdD3d12Device::do_support_ngen_kernels() const
+{
+    // look at OneDNN for OpenCL runtime - they compile dummy kernel to get information if NGEN is supported - this is good and roboust solution.
+    printf("Add proper NGEN support detection mechanism!\n"); 
+    if (sku_.igfx == UMD_IGFX::eDG2 || sku_.igfx == UMD_IGFX::eMETEORLAKE)
+    {
+        return true;
+    }
+    return false;
+}
+
 iumd::custom_metacommand::UmdD3d12PipelineStateObject::UmdD3d12PipelineStateObject(iumd::custom_metacommand::UmdD3d12Device* device, const char* kernel_name, const void* kernel_code, std::size_t kernel_code_size, const char* build_options, UMD_SHADER_LANGUAGE language)
     : name_(kernel_name)
     , device_(device)
