@@ -27,17 +27,7 @@ inline dnnl::primitive_attr CreateEltwisePostOps(const ActivationSettings& activ
 }
 
 template<typename T>
-inline void run_inference(auto stream, const auto& conv_desc, const auto& input_memory, const auto& filter_memory, const auto& bias_memory,
-    const auto& output_memory, const auto& scratchpad_memory)
-{
-    T convolution(conv_desc.get());
-    convolution.execute(stream, { { DNNL_ARG_SRC, input_memory }, {DNNL_ARG_WEIGHTS, filter_memory}, {DNNL_ARG_BIAS, bias_memory}, {DNNL_ARG_DST, output_memory},
-        {DNNL_ARG_SCRATCHPAD, scratchpad_memory} });
-    stream.wait();
-}
-
-
-std::vector<std::byte> dnnl_conv_op::convolution(const bindings_t& bindings, opts_t opts)
+inline std::vector<std::byte> run_inference(const dnnl_conv_op::bindings_t& bindings, dnnl_conv_op::opts_t opts, dnnl::algorithm algo)
 {
     using namespace dnnl_utils;
     static dnnl::engine engine(dnnl::engine::kind::gpu, 0);
@@ -79,17 +69,14 @@ std::vector<std::byte> dnnl_conv_op::convolution(const bindings_t& bindings, opt
     const dnnl::memory::dims dilates{ opts.dilates.h, opts.dilates.w };
     const dnnl::primitive_attr attr = CreateEltwisePostOps(opts.activation, opts.use_fp32_accu);
 
-    dnnl::convolution_forward::primitive_desc conv_desc{};
-
-
-        conv_desc = dnnl::convolution_forward::primitive_desc(engine,
-            dnnl::prop_kind::forward_inference,
-            opts.force_winograd ? dnnl::algorithm::convolution_winograd : dnnl::algorithm::convolution_direct,
-            input_memory.get_desc(),
-            dnnl::memory::desc{ to_dnnl_dims(bindings.filter.shape), to_dnnl_data_type(bindings.filter.dt), dnnl::memory::format_tag::any },
-            bindings.bias.data ? bias_memory.get_desc() : dnnl::memory::desc{},
-            output_memory.get_desc(),
-            stride, dilates, pad, pad, attr);
+    const auto conv_desc = T::primitive_desc(engine,
+        dnnl::prop_kind::forward_inference,
+        algo,
+        input_memory.get_desc(),
+        dnnl::memory::desc{ to_dnnl_dims(bindings.filter.shape), to_dnnl_data_type(bindings.filter.dt), dnnl::memory::format_tag::any },
+        bindings.bias.data ? bias_memory.get_desc() : dnnl::memory::desc{},
+        output_memory.get_desc(),
+        stride, dilates, pad, pad, attr);
 
 
     const auto filter_output_desc_mem = conv_desc.query_md(dnnl::query::weights_md);
@@ -133,11 +120,10 @@ std::vector<std::byte> dnnl_conv_op::convolution(const bindings_t& bindings, opt
     const auto guery_impl_str = conv_desc.impl_info_str();
     std::cout << "ref query impl: " << guery_impl_str << std::endl;
 
-    //dnnl::convolution_forward convolution(conv_desc.get());
-    //convolution.execute(stream, { { DNNL_ARG_SRC, input_memory }, {DNNL_ARG_WEIGHTS, filter_memory}, {DNNL_ARG_BIAS, bias_memory}, {DNNL_ARG_DST, output_memory}, 
-    //    {DNNL_ARG_SCRATCHPAD, scratchpad_memory} });
-    //stream.wait();
-    run_inference<dnnl::convolution_forward>(stream, conv_desc, input_memory, filter_memory, bias_memory, output_memory, scratchpad_memory);
+    T convolution(conv_desc.get());
+    convolution.execute(stream, { { DNNL_ARG_SRC, input_memory }, {DNNL_ARG_WEIGHTS, filter_memory}, {DNNL_ARG_BIAS, bias_memory}, {DNNL_ARG_DST, output_memory}, 
+        {DNNL_ARG_SCRATCHPAD, scratchpad_memory} });
+    stream.wait();
 
     if (opts.dump_scratchpad)
     {
@@ -155,7 +141,13 @@ std::vector<std::byte> dnnl_conv_op::convolution(const bindings_t& bindings, opt
     return ret;
 }
 
+
+std::vector<std::byte> dnnl_conv_op::convolution(const bindings_t& bindings, opts_t opts)
+{
+    return run_inference<dnnl::convolution_forward>(bindings, opts, opts.force_winograd ? dnnl::algorithm::convolution_winograd : dnnl::algorithm::convolution_direct);
+}
+
 std::vector<std::byte> dnnl_conv_op::deconvolution(const bindings_t& bindings, opts_t opts)
 {
-
+    return run_inference<dnnl::deconvolution_forward>(bindings, opts, opts.force_winograd ? dnnl::algorithm::deconvolution_winograd : dnnl::algorithm::deconvolution_direct);
 }

@@ -474,8 +474,8 @@ protected:
         const auto dkw = 1 + (params_.filter_shape.w - 1) * (params_.dilation.w + 1);
         if (params_.transposed)
         {
-            ret.h = (params_.stride.h * ((params_.input_shape.h - 1) + dkh)) - params_.in_pad - params_.in_pad;
-            ret.w = (params_.stride.w * ((params_.input_shape.w - 1) + dkw)) - params_.in_pad - params_.in_pad;
+            ret.h = (params_.stride.h * (params_.input_shape.h - 1)) + dkh - params_.in_pad - params_.in_pad;
+            ret.w = (params_.stride.w * (params_.input_shape.w - 1)) + dkw - params_.in_pad - params_.in_pad;
         }
         else
         {
