@@ -78,7 +78,6 @@ inline std::vector<std::byte> run_inference(const dnnl_conv_op::bindings_t& bind
         output_memory.get_desc(),
         stride, dilates, pad, pad, attr);
 
-
     const auto filter_output_desc_mem = conv_desc.query_md(dnnl::query::weights_md);
     dnnl::memory filter_memory(filter_output_desc_mem, engine);
 
@@ -149,5 +148,121 @@ std::vector<std::byte> dnnl_conv_op::convolution(const bindings_t& bindings, opt
 
 std::vector<std::byte> dnnl_conv_op::deconvolution(const bindings_t& bindings, opts_t opts)
 {
-    return run_inference<dnnl::deconvolution_forward>(bindings, opts, opts.force_winograd ? dnnl::algorithm::deconvolution_winograd : dnnl::algorithm::deconvolution_direct);
+    using namespace dnnl_utils;
+    static dnnl::engine engine(dnnl::engine::kind::gpu, 0);
+    static dnnl::stream stream(engine);
+    const auto engine_kind = engine.get_kind();
+
+    dnnl::set_jit_dump(false);
+
+    stream.wait();  // just to be sure we can freely upload the input data    
+
+    dnnl::memory input_memory = [&](const auto& binding)
+    {
+        auto ret = dnnl::memory(to_dnnl_mem_desc(binding.shape, binding.layout, binding.dt), engine);
+        copy_to_dnnl_memory(ret, binding.data);
+        return ret;
+    }(bindings.input);
+
+    dnnl::memory bias_memory = [&](const auto& binding)
+    {
+        if (!binding.data)  // no bias
+        {
+            return dnnl::memory{};
+
+        }
+        auto ret = dnnl::memory(to_dnnl_mem_desc(binding.shape, binding.layout, binding.dt), engine);
+        copy_to_dnnl_memory(ret, binding.data);
+        return ret;
+    }(bindings.bias);
+
+
+    dnnl::memory output_memory = [&]()
+    {
+        return dnnl::memory(to_dnnl_mem_desc(opts.output_shape, opts.out_layout, opts.out_dt), engine);
+    }();
+
+
+    const dnnl::memory::dims pad{ opts.inp_pad, opts.inp_pad };
+    const dnnl::memory::dims stride{ opts.stride.h, opts.stride.w };
+    const dnnl::memory::dims dilates{ opts.dilates.h, opts.dilates.w };
+    const dnnl::primitive_attr attr = CreateEltwisePostOps(opts.activation, opts.use_fp32_accu);
+
+    const auto conv_hint_desc = dnnl::convolution_forward::primitive_desc(engine,
+        dnnl::prop_kind::forward_inference,
+        dnnl::algorithm::convolution_auto,
+        input_memory.get_desc(),
+        dnnl::memory::desc{ to_dnnl_dims(bindings.filter.shape), to_dnnl_data_type(bindings.filter.dt), dnnl::memory::format_tag::any },
+        bindings.bias.data ? bias_memory.get_desc() : dnnl::memory::desc{},
+        output_memory.get_desc(),
+        stride, dilates, pad, pad, attr);
+
+    const auto conv_desc = dnnl::convolution_backward_data::primitive_desc(engine,
+        dnnl::algorithm::convolution_direct,
+        input_memory.get_desc(),
+        dnnl::memory::desc{ to_dnnl_dims(bindings.filter.shape), to_dnnl_data_type(bindings.filter.dt), dnnl::memory::format_tag::any },
+        output_memory.get_desc(),
+        stride, dilates, pad, pad,
+        conv_hint_desc,
+        attr);
+
+    const auto filter_output_desc_mem = conv_desc.query_md(dnnl::query::weights_md);
+    dnnl::memory filter_memory(filter_output_desc_mem, engine);
+
+    // weights reorder
+    {
+        dnnl::memory filter_input_memory = [&](const auto& binding)
+        {
+            const auto dims = to_dnnl_dims(binding.shape);
+            const auto dt = to_dnnl_data_type(binding.dt);
+            auto ft = dnnl::memory::format_tag::undef;
+            if (binding.layout == DataLayout::eNCHW)
+            {
+                ft = dnnl::memory::format_tag::oihw;
+            }
+            else if (binding.layout == DataLayout::eNHWC)
+            {
+                ft = dnnl::memory::format_tag::ohwi;
+            }
+            assert(ft != dnnl::memory::format_tag::undef);
+            auto ret = dnnl::memory({ dims, dt, ft }, engine);
+            copy_to_dnnl_memory(ret, binding.data);
+            return ret;
+        }(bindings.filter);
+
+        dnnl::reorder::primitive_desc reorder_desc(filter_input_memory, filter_memory);
+        auto reorder = dnnl::reorder(reorder_desc);
+        reorder.execute(stream, { { DNNL_ARG_SRC, filter_input_memory }, { DNNL_ARG_DST, filter_memory } });
+        stream.wait();
+
+        if (opts.dump_weights)
+        {
+            dump_buffer_to_file(filter_memory, "dnnl_weights_data.dat");
+        }
+    }
+
+    const auto scratchpad_desc_mem = conv_desc.query_md(dnnl::query::scratchpad_md);
+    dnnl::memory scratchpad_memory(scratchpad_desc_mem, engine);
+
+    const auto guery_impl_str = conv_desc.impl_info_str();
+    std::cout << "ref query impl: " << guery_impl_str << std::endl;
+
+    dnnl::convolution_backward_data convolution(conv_desc.get());
+    convolution.execute(stream, { { DNNL_ARG_DIFF_SRC, input_memory }, {DNNL_ARG_WEIGHTS, filter_memory}, {DNNL_ARG_DIFF_DST, output_memory}, {DNNL_ARG_SCRATCHPAD, scratchpad_memory} });
+    stream.wait();
+
+    if (opts.dump_scratchpad)
+    {
+        dump_buffer_to_file(scratchpad_memory, "dnnl_scratchpad_data.dat");
+    }
+
+    auto* out_dnnl_data = output_memory.map_data<uint8_t>();
+    assert(out_dnnl_data != nullptr && "[dnnl][conv] Couldnt map output memory!");
+
+    const auto om_desc = output_memory.get_desc();
+    const auto copy_size = om_desc.get_size();
+    std::vector<std::byte> ret(copy_size);
+    std::memcpy(ret.data(), out_dnnl_data, copy_size);
+    output_memory.unmap_data(out_dnnl_data);
+    return ret;
 }
