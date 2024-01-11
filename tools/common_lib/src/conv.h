@@ -32,11 +32,11 @@ struct opts_t
     ActivationSettings activation;
     DataLayout out_layout = DataLayout::eCount;
     bool force_winograd = false;
-    bool transposed = false;
     bool dump_weights = false;
     bool dump_scratchpad = false;
 };
 std::vector<std::byte> convolution(const bindings_t& bindings, opts_t opts);
+std::vector<std::byte> deconvolution(const bindings_t& bindings, opts_t opts);
 }
 
 
@@ -554,10 +554,13 @@ protected:
         opts.out_dt = params_.dt;
         opts.activation = params_.activation;
         opts.force_winograd = params_.algo_winograd;
-        opts.transposed = params_.transposed;
         opts.dump_weights = dump_weights();
         opts.dump_scratchpad = dump_weights();
         opts.use_fp32_accu = params_.dt == DataType::eFp16 && !params_.allow_fp16_computations;
+        if (params_.transposed)
+        {
+            return dnnl_conv_op::deconvolution(bindings, opts);
+        }
         return dnnl_conv_op::convolution(bindings, opts);
     }
 
