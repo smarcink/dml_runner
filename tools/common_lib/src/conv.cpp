@@ -89,15 +89,29 @@ inline std::vector<std::byte> run_inference(const dnnl_conv_op::bindings_t& bind
             const auto dims = to_dnnl_dims(binding.shape);
             const auto dt = to_dnnl_data_type(binding.dt);
             auto ft = dnnl::memory::format_tag::undef;
-            if (binding.layout == DataLayout::eNCHW)
+            if constexpr (std::is_same_v<T, dnnl::convolution_forward>)
             {
-                ft = dnnl::memory::format_tag::oihw;
+                if (binding.layout == DataLayout::eNCHW)
+                {
+                    ft = dnnl::memory::format_tag::oihw;
+                }
+                else if (binding.layout == DataLayout::eNHWC)
+                {
+                    ft = dnnl::memory::format_tag::ohwi;
+                }
             }
-            else if (binding.layout == DataLayout::eNHWC)
+            else if constexpr (std::is_same_v<T, dnnl::deconvolution_forward>)
             {
-                ft = dnnl::memory::format_tag::ohwi;
+                // for tranposed convolutions (deconvolutions) we need to flip input and output channels!
+                if (binding.layout == DataLayout::eNCHW)
+                {
+                    ft = dnnl::memory::format_tag::iohw;
+                }
+                else if (binding.layout == DataLayout::eNHWC)
+                {
+                    ft = dnnl::memory::format_tag::ihwo;
+                }
             }
-            ft = dnnl::memory::format_tag::iohw;
             assert(ft != dnnl::memory::format_tag::undef);
             auto ret = dnnl::memory({ dims, dt, ft }, engine);
             copy_to_dnnl_memory(ret, binding.data);
