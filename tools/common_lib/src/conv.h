@@ -307,14 +307,14 @@ public:
         , filter_data_(get_tensor_elements_count(params_.filter_shape, params_.filter_layout)* get_data_type_bytes_width(params_.dt))
 
     {
-        assert(params_.input_shape.c == params_.filter_shape.c);
+        //assert(params_.input_shape.c == params_.filter_shape.c);
 
         const auto output_shape = get_output_shape();
         prepare_constant_data();
 
         if (!params_.no_bias)
         {
-            bias_data_ = std::vector<std::byte>(params_.filter_shape.n * get_data_type_bytes_width(params_.dt));
+            bias_data_ = std::vector<std::byte>(output_shape.c * get_data_type_bytes_width(params_.dt));
         }
         // randomize data
         std::mt19937 random_generator(42); // static, create it once!
@@ -467,18 +467,20 @@ protected:
     {
         TensorShape ret;
         ret.n = params_.input_shape.n;
-        ret.c = params_.filter_shape.n; // output channels
         ret.d = 0;
 
         const auto dkh = 1 + (params_.filter_shape.h - 1) * (params_.dilation.h + 1);
         const auto dkw = 1 + (params_.filter_shape.w - 1) * (params_.dilation.w + 1);
         if (params_.transposed)
         {
+            ret.c = params_.filter_shape.c; // input channels (transposed case)
             ret.h = (params_.stride.h * (params_.input_shape.h - 1)) + dkh - params_.in_pad - params_.in_pad;
             ret.w = (params_.stride.w * (params_.input_shape.w - 1)) + dkw - params_.in_pad - params_.in_pad;
         }
         else
         {
+
+            ret.c = params_.filter_shape.n; // output channels
             ret.h = (params_.input_shape.h - dkh + params_.in_pad + params_.in_pad) / params_.stride.h + 1;
             ret.w = (params_.input_shape.w - dkw + params_.in_pad + params_.in_pad) / params_.stride.w + 1;
         }
@@ -522,6 +524,8 @@ protected:
 
     std::vector<std::byte> get_dnnl_result() const
     {
+        const auto output_shape = get_output_shape();
+
         dnnl_conv_op::bindings_t bindings{};
         {
             bindings.input.data = input_data_.data();
@@ -541,11 +545,11 @@ protected:
             bindings.bias.data = bias_data_.data();
             bindings.bias.dt = params_.dt;
             bindings.bias.layout = DataLayout::eO;
-            bindings.bias.shape = TensorShape(params_.filter_shape.n, 0u, 0u, 0u);
+            bindings.bias.shape = TensorShape(output_shape.c, 0u, 0u, 0u);
         }
 
         dnnl_conv_op::opts_t opts{};
-        opts.output_shape = get_output_shape();
+        opts.output_shape = output_shape;
         opts.inp_pad = params_.in_pad;
         opts.out_pad = params_.out_pad;
         opts.stride = params_.stride;

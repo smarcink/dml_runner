@@ -69,11 +69,23 @@ inline std::vector<std::byte> run_inference(const dnnl_conv_op::bindings_t& bind
     const dnnl::memory::dims dilates{ opts.dilates.h, opts.dilates.w };
     const dnnl::primitive_attr attr = CreateEltwisePostOps(opts.activation, opts.use_fp32_accu);
 
+    const dnnl::memory::desc filter_any_fmt_desc = [](const auto bind)
+    {
+        const auto fmt = dnnl::memory::format_tag::any;
+        const auto dt = to_dnnl_data_type(bind.dt);
+        dnnl::memory::dims dims = to_dnnl_dims(bind.shape);
+        if constexpr (std::is_same_v<T, dnnl::deconvolution_forward>)
+        {
+            std::swap(dims[0], dims[1]);
+        }
+        return dnnl::memory::desc(dims, dt, fmt);
+    }(bindings.filter);
+
     const auto conv_desc = T::primitive_desc(engine,
         dnnl::prop_kind::forward_inference,
         algo,
         input_memory.get_desc(),
-        dnnl::memory::desc{ to_dnnl_dims(bindings.filter.shape), to_dnnl_data_type(bindings.filter.dt), dnnl::memory::format_tag::any },
+        filter_any_fmt_desc,
         bindings.bias.data ? bias_memory.get_desc() : dnnl::memory::desc{},
         output_memory.get_desc(),
         stride, dilates, pad, pad, attr);
@@ -86,8 +98,9 @@ inline std::vector<std::byte> run_inference(const dnnl_conv_op::bindings_t& bind
     {
         dnnl::memory filter_input_memory = [&](const auto& binding)
         {
-            const auto dims = to_dnnl_dims(binding.shape);
-            const auto dt = to_dnnl_data_type(binding.dt);
+            const auto dims = filter_any_fmt_desc.get_dims();
+            const auto dt = filter_any_fmt_desc.get_data_type();
+            // use typed format for input resource for reorder primitive
             auto ft = dnnl::memory::format_tag::undef;
             if constexpr (std::is_same_v<T, dnnl::convolution_forward>)
             {
