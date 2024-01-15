@@ -12,6 +12,7 @@ class DnnlPluginNext_Convolution_Params : public NodeDispatcherBase, public test
     std::int32_t, // OC
     std::int32_t, // HEIGHT
     std::int32_t, // WIDTH
+    bool, // transposed
     DataLayout,
     DataType
     >>
@@ -27,11 +28,13 @@ public:
         const auto h = std::get<TUPLE_ID_HEIGHT>(params);
         const auto w = std::get<TUPLE_ID_WIDTH>(params);
 
+        const auto is_transposed = std::get<TUPLE_ID_IS_TRANSPOSED>(params);
+
         const auto layout = std::get<TUPLE_ID_LAYOUT>(params);
         const auto dt = std::get<TUPLE_ID_DT>(params);
 
-        const auto fmt = std::format("batch_{}__ic_{}__oc_{}__h_{}__w_{}__layout_{}__datatype_{}",
-            batch, ic, oc, h, w, data_layout_name(layout), get_data_type_str(dt));
+        const auto fmt = std::format("batch_{}__ic_{}__oc_{}__h_{}__w_{}__transposed_{}__layout_{}__datatype_{}",
+            batch, ic, oc, h, w, is_transposed, data_layout_name(layout), get_data_type_str(dt));
         return fmt;
     }
 
@@ -43,6 +46,7 @@ protected:
         TUPLE_ID_OC,
         TUPLE_ID_HEIGHT,
         TUPLE_ID_WIDTH,
+        TUPLE_ID_IS_TRANSPOSED,
         TUPLE_ID_LAYOUT,
         TUPLE_ID_DT,
     };
@@ -74,6 +78,8 @@ protected:
         const auto h = std::get<TUPLE_ID_HEIGHT>(params);
         const auto w = std::get<TUPLE_ID_WIDTH>(params);
 
+        const auto is_transposed = std::get<TUPLE_ID_IS_TRANSPOSED>(params);
+
         const auto layout = std::get<TUPLE_ID_LAYOUT>(params);
         const auto dt = std::get<TUPLE_ID_DT>(params);
 
@@ -88,7 +94,8 @@ protected:
         opts.stride = TensorShape(1u, 1u, kernel_stride_, kernel_stride_);
         opts.dilation = TensorShape(0u, 0u, dilation_, dilation_);
         opts.managaed_weights = true;
-        opts.input_shape = TensorShape(batch, ic, h, w);
+        opts.transposed = is_transposed;
+        opts.input_shape = TensorShape(batch, is_transposed ? oc : ic, h, w);
         opts.filter_shape = TensorShape(oc, ic, kernel_size_, kernel_size_);
         opts.no_bias = no_bias_;
         opts.allow_fp16_computations = dt == DataType::eFp16;
@@ -163,6 +170,7 @@ INSTANTIATE_TEST_SUITE_P(
         testing::Values(16),
         testing::Values(32),
         testing::Values(64), testing::Values(64),  // height and width
+        testing::Values(false, true), // is transposed
         testing::Values(DataLayout::eNCHW, DataLayout::eNHWC),
         testing::Values(DataType::eFp32, DataType::eFp16)),
     [](const testing::TestParamInfo<DnnlPluginNext_Convolution_Params::ParamType>& info) {
@@ -176,6 +184,7 @@ INSTANTIATE_TEST_SUITE_P(
         testing::Values(17),
         testing::Values(79),
         testing::Values(55), testing::Values(55),  // height and width
+        testing::Values(false, true), // is transposed
         testing::Values(DataLayout::eNCHW, DataLayout::eNHWC),
         testing::Values(DataType::eFp32, DataType::eFp16)),
     [](const testing::TestParamInfo<DnnlPluginNext_Convolution_Params::ParamType>& info) {
