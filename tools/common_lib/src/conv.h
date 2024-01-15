@@ -31,6 +31,7 @@ struct opts_t
     bool use_fp32_accu = false;
     ActivationSettings activation;
     DataLayout out_layout = DataLayout::eCount;
+    std::uint32_t groups = 1u;
     bool force_winograd = false;
     bool dump_weights = false;
     bool dump_scratchpad = false;
@@ -47,14 +48,14 @@ class Convolution : public DirectMlBaseNode
 public:
     Convolution(const TensorShape& input_shape, const TensorShape& filter_shape, const TensorShape& output_shape,
         const DML_TENSOR_DATA_TYPE data_type, const dml::TensorPolicy& input_tensor_policy, const dml::TensorPolicy& filter_tensor_policy, const dml::TensorPolicy& output_tensor_policy,
-        const TensorShape& stride_shape, const TensorShape& dilation_shape, std::uint32_t input_pad, std::uint32_t output_pad,
+        const TensorShape& stride_shape, const TensorShape& dilation_shape, std::uint32_t input_pad, std::uint32_t output_pad, std::uint32_t group_count,
         bool use_bias, bool allow_fp16_computations, bool transposed, const ActivationSettings& activation_settings,
         IDMLDevice* dml_device, ID3D12Device* d3d12_device, bool disable_mc = false)
         : DirectMlBaseNode(dml_device, d3d12_device)
     {
 
         const dml::TensorDimensions input_dims{ input_shape.n, input_shape.c, input_shape.h, input_shape.w };
-        const dml::TensorDimensions filter_dims{ filter_shape.n, filter_shape.c, filter_shape.h, filter_shape.w };
+        const dml::TensorDimensions filter_dims{ filter_shape.n, filter_shape.c / group_count, filter_shape.h, filter_shape.w };
         const dml::TensorDimensions output_dims{ output_shape.n, output_shape.c, output_shape.h, output_shape.w };
 
         const dml::TensorDimensions bias_dims{ 1, output_shape.c, 1, 1 };
@@ -150,7 +151,7 @@ public:
         desc.StartPadding = start_pad.data();
         desc.EndPadding = end_pad.data();
         desc.OutputPadding = out_pad.data();
-        desc.GroupCount = 1u;
+        desc.GroupCount = group_count;
         const auto activation = to_dml_activation_setting(activation_settings);
         desc.FusedActivation = activation.desc.Type != DML_OPERATOR_INVALID ? &activation.desc : nullptr;
 
@@ -261,8 +262,9 @@ public:
         DataLayout filter_layout = DataLayout::eNCHW;
         TensorShape input_shape;
         TensorShape filter_shape;
-        std::uint32_t in_pad;
-        std::uint32_t out_pad;
+        std::uint32_t in_pad = 0u;
+        std::uint32_t out_pad = 0u;
+        std::uint32_t groups = 1u;
         ActivationSettings activation{};
         TensorShape stride;
         TensorShape dilation{};  // DML non-dilation is 1, OneDNN non-dilation is 0 -> so for DML path we force to add 1 to dialtions
@@ -285,6 +287,7 @@ public:
             opts->add_option("--filter_shape", params.filter_shape, "speciify list: <oc, ic, kh, kw")->required();
             opts->add_option("--in_pad", params.in_pad)->required();
             opts->add_option("--out_pad", params.out_pad)->required();
+            opts->add_option("--groups", params.groups)->default_val(1u);
             opts->add_option("--stride", params.stride, "speciify list: <stride_h, stride_w>")->required();
             opts->add_option("--dilation", params.dilation, "speciify list: <dilation_h, dilation_w>");
             opts->add_flag("--no_bias", params.no_bias);
@@ -307,7 +310,15 @@ public:
         , filter_data_(get_tensor_elements_count(params_.filter_shape, params_.filter_layout)* get_data_type_bytes_width(params_.dt))
 
     {
-        //assert(params_.input_shape.c == params_.filter_shape.c);
+        if (params_.transposed)
+        {
+            assert(params_.input_shape.c == params_.filter_shape.n);
+        }
+        else
+        {
+            assert(params_.input_shape.c == params_.filter_shape.c);
+        }
+        assert(params_.groups >= 1);
 
         const auto output_shape = get_output_shape();
         prepare_constant_data();
@@ -561,6 +572,7 @@ protected:
         opts.dump_weights = dump_weights();
         opts.dump_scratchpad = dump_weights();
         opts.use_fp32_accu = params_.dt == DataType::eFp16 && !params_.allow_fp16_computations;
+        opts.groups = params_.groups;
         if (params_.transposed)
         {
             return dnnl_conv_op::deconvolution(bindings, opts);
@@ -578,7 +590,7 @@ protected:
         auto conv_ref = gpu_op::Convolution(params_.input_shape, params_.filter_shape, get_output_shape(),
             to_dml_data_type(params_.dt), to_dml_tensor_policy(params_.input_layout),
             to_dml_tensor_policy(params_.filter_layout), to_dml_tensor_policy(params_.output_layout),
-            params_.stride, params_.dilation, params_.in_pad, params_.out_pad, !params_.no_bias, params_.allow_fp16_computations,
+            params_.stride, params_.dilation, params_.in_pad, params_.out_pad, params_.groups, !params_.no_bias, params_.allow_fp16_computations,
             params_.transposed, params_.activation, dml_device_, d3d12_device_, true /* disable_mc*/);
 
         // bind descriptor heap
@@ -649,7 +661,7 @@ public:
         , conv_(params_.input_shape, params_.filter_shape, get_output_shape(),
             to_dml_data_type(params_.dt), to_dml_tensor_policy(params_.input_layout),
             to_dml_tensor_policy(params_.filter_layout), to_dml_tensor_policy(params_.output_layout),
-            params_.stride, params_.dilation, params_.in_pad, params_.out_pad, !params_.no_bias,
+            params_.stride, params_.dilation, params_.in_pad, params_.out_pad, params_.groups, !params_.no_bias,
             params_.allow_fp16_computations, params_.transposed, params_.activation,
             dml_device, d3d12_device)
     {
@@ -882,22 +894,22 @@ private:
             {
                 if (fl == DataLayout::eNCHW)
                 {
-                    return dnnl::memory::format_tag::iohw;
+                    return params_.groups > 1 ? dnnl::memory::format_tag::giohw : dnnl::memory::format_tag::iohw;
                 }
                 else if (fl == DataLayout::eNHWC)
                 {
-                    return dnnl::memory::format_tag::ihwo;
+                    return params_.groups > 1 ? dnnl::memory::format_tag::acdeb : dnnl::memory::format_tag::ihwo;
                 }
             }
             else
             {
                 if (fl == DataLayout::eNCHW)
                 {
-                    return dnnl::memory::format_tag::oihw;
+                    return params_.groups > 1 ? dnnl::memory::format_tag::goihw : dnnl::memory::format_tag::oihw;
                 }
                 else if (fl == DataLayout::eNHWC)
                 {
-                    return dnnl::memory::format_tag::ohwi;
+                    return params_.groups > 1 ? dnnl::memory::format_tag::gohwi : dnnl::memory::format_tag::ohwi;
                 }
             }
             return dnnl::memory::format_tag::undef;
@@ -909,6 +921,15 @@ private:
             if (params_.transposed)
             {
                 std::swap(dims[0], dims[1]);
+            }
+            if (params_.groups != 1)
+            {
+                dims[0] /= params_.groups;
+                dims[1] /= params_.groups;
+
+                dnnl::memory::dims dims_temp{ params_.groups };
+                dims_temp.insert(dims_temp.end(), dims.begin(), dims.end());
+                dims = dims_temp;
             }
             return dims;
         }();

@@ -69,17 +69,26 @@ inline std::vector<std::byte> run_inference(const dnnl_conv_op::bindings_t& bind
     const dnnl::memory::dims dilates{ opts.dilates.h, opts.dilates.w };
     const dnnl::primitive_attr attr = CreateEltwisePostOps(opts.activation, opts.use_fp32_accu);
 
-    const dnnl::memory::desc filter_any_fmt_desc = [](const auto bind)
+    const dnnl::memory::desc filter_any_fmt_desc = [](const auto& bind, const auto& group_count)
     {
         const auto fmt = dnnl::memory::format_tag::any;
-        const auto dt = to_dnnl_data_type(bind.dt);
+        const auto dt = to_dnnl_data_type(bind.dt);  
         dnnl::memory::dims dims = to_dnnl_dims(bind.shape);
         if constexpr (std::is_same_v<T, dnnl::deconvolution_forward>)
         {
             std::swap(dims[0], dims[1]);
         }
+        if (group_count != 1)
+        {
+            dims[0] /= group_count;
+            dims[1] /= group_count;
+
+            dnnl::memory::dims dims_temp{ group_count };
+            dims_temp.insert(dims_temp.end(), dims.begin(), dims.end());
+            dims = dims_temp;
+        }
         return dnnl::memory::desc(dims, dt, fmt);
-    }(bindings.filter);
+    }(bindings.filter, opts.groups);
 
     const auto conv_desc = T::primitive_desc(engine,
         dnnl::prop_kind::forward_inference,
@@ -106,11 +115,11 @@ inline std::vector<std::byte> run_inference(const dnnl_conv_op::bindings_t& bind
             {
                 if (binding.layout == DataLayout::eNCHW)
                 {
-                    ft = dnnl::memory::format_tag::oihw;
+                    ft = opts.groups > 1 ? dnnl::memory::format_tag::goihw : dnnl::memory::format_tag::oihw;
                 }
                 else if (binding.layout == DataLayout::eNHWC)
                 {
-                    ft = dnnl::memory::format_tag::ohwi;
+                    ft = opts.groups > 1 ? dnnl::memory::format_tag::gohwi : dnnl::memory::format_tag::ohwi;
                 }
             }
             else if constexpr (std::is_same_v<T, dnnl::deconvolution_forward>)
@@ -118,11 +127,11 @@ inline std::vector<std::byte> run_inference(const dnnl_conv_op::bindings_t& bind
                 // for tranposed convolutions (deconvolutions) we need to flip input and output channels!
                 if (binding.layout == DataLayout::eNCHW)
                 {
-                    ft = dnnl::memory::format_tag::iohw;
+                    ft = opts.groups > 1 ? dnnl::memory::format_tag::giohw : dnnl::memory::format_tag::iohw;
                 }
                 else if (binding.layout == DataLayout::eNHWC)
                 {
-                    ft = dnnl::memory::format_tag::ihwo;
+                    ft = opts.groups > 1 ? dnnl::memory::format_tag::acdeb : dnnl::memory::format_tag::ihwo;
                 }
             }
             assert(ft != dnnl::memory::format_tag::undef);

@@ -12,6 +12,7 @@ class DnnlPluginNext_Convolution_Params : public NodeDispatcherBase, public test
     std::int32_t, // OC
     std::int32_t, // HEIGHT
     std::int32_t, // WIDTH
+    std::int32_t, // GROUPS
     bool, // transposed
     DataLayout,
     DataType
@@ -27,14 +28,15 @@ public:
         const auto oc = std::get<TUPLE_ID_OC>(params);
         const auto h = std::get<TUPLE_ID_HEIGHT>(params);
         const auto w = std::get<TUPLE_ID_WIDTH>(params);
+        const auto g = std::get<TUPLE_ID_GROUPS>(params);
 
         const auto is_transposed = std::get<TUPLE_ID_IS_TRANSPOSED>(params);
 
         const auto layout = std::get<TUPLE_ID_LAYOUT>(params);
         const auto dt = std::get<TUPLE_ID_DT>(params);
 
-        const auto fmt = std::format("batch_{}__ic_{}__oc_{}__h_{}__w_{}__transposed_{}__layout_{}__datatype_{}",
-            batch, ic, oc, h, w, is_transposed, data_layout_name(layout), get_data_type_str(dt));
+        const auto fmt = std::format("batch_{}__ic_{}__oc_{}__h_{}__w_{}__w_{}__transposed_{}__layout_{}__datatype_{}",
+            batch, ic, oc, h, w, g, is_transposed, data_layout_name(layout), get_data_type_str(dt));
         return fmt;
     }
 
@@ -46,6 +48,7 @@ protected:
         TUPLE_ID_OC,
         TUPLE_ID_HEIGHT,
         TUPLE_ID_WIDTH,
+        TUPLE_ID_GROUPS,
         TUPLE_ID_IS_TRANSPOSED,
         TUPLE_ID_LAYOUT,
         TUPLE_ID_DT,
@@ -77,6 +80,7 @@ protected:
         const auto oc = std::get<TUPLE_ID_OC>(params);
         const auto h = std::get<TUPLE_ID_HEIGHT>(params);
         const auto w = std::get<TUPLE_ID_WIDTH>(params);
+        const auto g = std::get<TUPLE_ID_GROUPS>(params);
 
         const auto is_transposed = std::get<TUPLE_ID_IS_TRANSPOSED>(params);
 
@@ -91,6 +95,7 @@ protected:
         opts.output_layout = layout;
         opts.filter_layout = layout;
         opts.in_pad = input_pad_;
+        opts.groups = g;
         opts.stride = TensorShape(1u, 1u, kernel_stride_, kernel_stride_);
         opts.dilation = TensorShape(0u, 0u, dilation_, dilation_);
         opts.managaed_weights = true;
@@ -170,6 +175,7 @@ INSTANTIATE_TEST_SUITE_P(
         testing::Values(16),
         testing::Values(32),
         testing::Values(64), testing::Values(64),  // height and width
+        testing::Values(1, 16),  // groups
         testing::Values(false, true), // is transposed
         testing::Values(DataLayout::eNCHW, DataLayout::eNHWC),
         testing::Values(DataType::eFp32, DataType::eFp16)),
@@ -184,6 +190,7 @@ INSTANTIATE_TEST_SUITE_P(
         testing::Values(17),
         testing::Values(79),
         testing::Values(55), testing::Values(55),  // height and width
+        testing::Values(1), // groups
         testing::Values(false, true), // is transposed
         testing::Values(DataLayout::eNCHW, DataLayout::eNHWC),
         testing::Values(DataType::eFp32, DataType::eFp16)),
@@ -357,6 +364,7 @@ protected:
     void set_kernel_stride(std::uint32_t ks) { kernel_stride_ = ks; }
     void set_input_padding(std::uint32_t p) { input_pad_ = p; }
     void set_no_bias() { no_bias_ = true; }
+    void set_groups(std::uint32_t g) { groups_ = g; }
 
 protected:
     std::unique_ptr<NodeDispatcher> create_dispatcher_impl() override
@@ -376,6 +384,7 @@ protected:
         opts.algo_winograd = false; // we should use auto anyway
         opts.use_dnnl_for_reference_calculations = true;
         opts.dt = dt;
+        opts.groups = groups_;
         opts.input_layout = layout;
         opts.output_layout = layout;
         opts.filter_layout = layout;
@@ -402,6 +411,7 @@ private:
     bool no_bias_ = false;
     std::uint32_t kernel_stride_ = 1;
     std::uint32_t input_pad_ = 0;
+    std::uint32_t groups_ = 1;
     TensorShape input_shape_ = {};
     TensorShape filter_shape_ = {};
 };
@@ -418,10 +428,39 @@ TEST_P(DnnlPluginNext_Convolution_Activations, Kernel1x1)
 
 TEST_P(DnnlPluginNext_Convolution_Activations, Kernel3x3)
 {
-    set_kernel_stride(1);
+    set_kernel_stride(2);
     set_input_padding(1);
     set_input_tensor_shape(TensorShape{ 1, 32, 64, 64 });
     set_filter_tensor_shape(TensorShape{ 64, 32, 3, 3 });
+    run();
+}
+
+TEST_P(DnnlPluginNext_Convolution_Activations, Kernel3x3AndGroups2)
+{
+    set_kernel_stride(2);
+    set_input_padding(1);
+    set_input_tensor_shape(TensorShape{ 1, 32, 64, 64 });
+    set_filter_tensor_shape(TensorShape{ 32, 32, 3, 3 });
+    set_groups(2);
+    run();
+}
+
+TEST_P(DnnlPluginNext_Convolution_Activations, Kernel3x3Depthwise)
+{
+    set_kernel_stride(2);
+    set_input_padding(1);
+    set_input_tensor_shape(TensorShape{ 1, 32, 64, 64 });
+    set_filter_tensor_shape(TensorShape{ 32, 32, 3, 3 });
+    set_groups(32);
+    run();
+}
+
+TEST_P(DnnlPluginNext_Convolution_Activations, Kernel1x1Depthwise)
+{
+    set_kernel_stride(1);
+    set_input_tensor_shape(TensorShape{ 1, 32, 64, 64 });
+    set_filter_tensor_shape(TensorShape{ 32, 32, 1, 1 });
+    set_groups(32);
     run();
 }
 
