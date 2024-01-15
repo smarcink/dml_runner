@@ -693,112 +693,13 @@ public:
         , umdd3d12_params_(std::move(umdd3d12_params))
         , dnnl_engine_(dnnl::iumd_interop::make_engine(&device_))
     {      
-        using namespace dnnl_utils;
-        const dnnl::memory::dims pad{ params.in_pad, params.in_pad };
-        const dnnl::memory::dims stride{ params.stride.h, params.stride.w };
-        const dnnl::memory::dims dilates{ params.dilation.h, params.dilation.w };
-
-        const dnnl::primitive_attr attr = [](const ActivationSettings& activation, bool use_fp32_accu)
+        if (params_.transposed)
         {
-            // create a post-op with relu
-            dnnl::post_ops ops;
-            dnnl::primitive_attr attr;
-
-            // sanity check
-            assert(attr.get_scratchpad_mode() == dnnl::scratchpad_mode::library);
-            // set scratchpad mode to user provided
-            attr.set_scratchpad_mode(dnnl::scratchpad_mode::user);
-
-            if (use_fp32_accu)
-            {
-                attr.set_accumulation_mode(dnnl::accumulation_mode::strict);
-            }
-
-            if (activation.type != ActivationType::eUnknown)
-            {
-                ops.append_eltwise(to_dnnl_activation_type(activation.type), activation.alpha, activation.beta);
-                attr.set_post_ops(ops);
-            }
-
-            return attr;
-        }(params_.activation, params_.dt == DataType::eFp16 && !params_.allow_fp16_computations);
-
-        input_memory_desc_ = to_dnnl_mem_desc(params_.input_shape, params_.input_layout, params_.dt);
-        output_memory_desc_ = to_dnnl_mem_desc(get_output_shape(), params_.output_layout, params_.dt);
-
-        if (!params_.no_bias)
-        {
-            bias_memory_desc_.emplace(to_dnnl_mem_desc(TensorShape{ params_.filter_shape.n, 0, 0, 0}, DataLayout::eO, params_.dt));
+            create_convolution<dnnl::deconvolution_forward>();
         }
-        
-        const auto conv_desc = dnnl::convolution_forward::primitive_desc(
-            dnnl_engine_,
-            dnnl::prop_kind::forward_inference,
-            params_.algo_winograd ? dnnl::algorithm::convolution_winograd : dnnl::algorithm::convolution_direct,
-            input_memory_desc_,
-            dnnl_utils::to_dnnl_mem_desc(params_.filter_shape, DataLayout::eWeightsLayoutStart, params_.dt),  // DataLayout::eWeightsLayoutStart  to allow oneDNNL to reorder the weights
-            bias_memory_desc_ ? bias_memory_desc_.value() : dnnl::memory::desc{},
-            output_memory_desc_,
-            stride,
-            dilates,
-            pad,
-            pad,
-            attr
-        );
-        std::cout << "dnnl-umd kernel impl: " << conv_desc.impl_info_str() << std::endl;
-
-        filter_memory_desc_ = conv_desc.query_md(dnnl::query::weights_md);
-
-        const auto persistent_resource_size = [&]()
+        else
         {
-            auto ret = filter_memory_desc_.get_size();
-            if (use_bias())
-            {
-                ret += bias_memory_desc_->get_size();
-            }
-            return ret;
-        }();
-        if (persistent_resource_size != 0)
-        {
-            const auto heap_props = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
-            const auto buffder_desc = CD3DX12_RESOURCE_DESC::Buffer(persistent_resource_size, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
-            throw_if_failed(d3d12_device_->CreateCommittedResource(
-                &heap_props,
-                D3D12_HEAP_FLAG_NONE,
-                &buffder_desc,
-                D3D12_RESOURCE_STATE_COMMON,
-                nullptr, IID_PPV_ARGS(persistent_buffer_.ReleaseAndGetAddressOf())), "create buffer resource");
-        }
-
-        assert(conv_desc.query_s64(dnnl::query::memory_consumption_s64) == 0);  // we provide scratchpad, so sanity check that primitive does not require any "hidden" memory
-        scratchpad_memory_desc_.emplace(conv_desc.query_md(dnnl::query::scratchpad_md));
-        const auto temporary_resoruce_size = scratchpad_memory_desc_->get_size();
-        if (temporary_resoruce_size != 0)
-        {          
-            const auto heap_props = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
-            const auto buffder_desc = CD3DX12_RESOURCE_DESC::Buffer(temporary_resoruce_size, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
-            throw_if_failed(d3d12_device_->CreateCommittedResource(
-                &heap_props,
-                D3D12_HEAP_FLAG_NONE,
-                &buffder_desc,
-                D3D12_RESOURCE_STATE_COMMON,
-                nullptr, IID_PPV_ARGS(temporary_buffer_.ReleaseAndGetAddressOf())), "create buffer resource");
-        }
-
-        // create convolution primitive
-        convolution_ = dnnl::convolution_forward(conv_desc);
-
-        // compile weights reorder kernel and create reorder primitive
-        // ToDo: check if reorder needs scratchpad memory??
-        dnnl::reorder::primitive_desc reorder_desc(dnnl_engine_, to_dnnl_mem_desc(params_.filter_shape, params_.filter_layout, params_.dt), dnnl_engine_, filter_memory_desc_);
-        reorder_weights_ = dnnl::reorder(reorder_desc);
-
-        if (use_bias())
-        {
-            assert(bias_memory_desc_.has_value());
-            // mimic copy shader from metacommand
-            dnnl::reorder::primitive_desc reorder_desc(dnnl_engine_, *bias_memory_desc_, dnnl_engine_, *bias_memory_desc_);
-            reorder_bias_ = dnnl::reorder(reorder_desc);
+            create_convolution<dnnl::convolution_forward>();
         }
     }
 
@@ -853,7 +754,7 @@ public:
             auto umd_filter_input_mem = iumd::custom_metacommand::UmdD3d12Memory(gpu_handles[0]);
             auto umd_filter_reorder_mem = iumd::custom_metacommand::UmdD3d12Memory(gpu_handles[1]);
 
-            dnnl::memory filer_input_memory = create_dnnl_memory(dnnl_utils::to_dnnl_mem_desc(params_.filter_shape, params_.filter_layout, params_.dt), umd_filter_input_mem);
+            dnnl::memory filer_input_memory = create_dnnl_memory(get_dnnl_filter_input_memory_desc(false), umd_filter_input_mem);
             dnnl::memory filer_reorder_memory = create_dnnl_memory(filter_memory_desc_, umd_filter_reorder_mem);
 
             std::unordered_map<int, dnnl::memory> args;
@@ -949,11 +850,193 @@ public:
         {
             args.insert({ DNNL_ARG_SCRATCHPAD, scratchpad_memory.value() });
         }
-        convolution_.execute(stream, args);
-        //stream.wait();
+
+        auto exec_untyped = [&](const auto& conv)
+        {
+            conv.execute(stream, args);
+        };
+
+        if (params_.transposed)
+        {
+            exec_untyped(std::get<dnnl::deconvolution_forward>(convolution_));
+        }
+        else
+        {
+            exec_untyped(std::get<dnnl::convolution_forward>(convolution_));
+        }
     }
 
 private:
+    dnnl::memory::desc get_dnnl_filter_input_memory_desc(bool any_format)
+    {
+        using namespace dnnl_utils;
+        const auto dt = to_dnnl_data_type(params_.dt);
+        const auto fmt = [&]()
+        {
+            if (any_format)
+            {
+                return dnnl::memory::format_tag::any;
+            }
+            const auto& fl = params_.filter_layout;
+            if (params_.transposed)
+            {
+                if (fl == DataLayout::eNCHW)
+                {
+                    return dnnl::memory::format_tag::iohw;
+                }
+                else if (fl == DataLayout::eNHWC)
+                {
+                    return dnnl::memory::format_tag::ihwo;
+                }
+            }
+            else
+            {
+                if (fl == DataLayout::eNCHW)
+                {
+                    return dnnl::memory::format_tag::oihw;
+                }
+                else if (fl == DataLayout::eNHWC)
+                {
+                    return dnnl::memory::format_tag::ohwi;
+                }
+            }
+            return dnnl::memory::format_tag::undef;
+        }();          
+
+        const auto dims = [&]()
+        {
+            dnnl::memory::dims dims = to_dnnl_dims(params_.filter_shape);
+            if (params_.transposed)
+            {
+                std::swap(dims[0], dims[1]);
+            }
+            return dims;
+        }();
+
+        return dnnl::memory::desc(dims, dt, fmt);
+    }
+
+    template<typename T>
+    void create_convolution()
+    {
+        using namespace dnnl_utils;
+        const dnnl::memory::dims pad{ params_.in_pad, params_.in_pad };
+        const dnnl::memory::dims stride{ params_.stride.h, params_.stride.w };
+        const dnnl::memory::dims dilates{ params_.dilation.h, params_.dilation.w };
+
+        const dnnl::primitive_attr attr = [](const ActivationSettings& activation, bool use_fp32_accu)
+        {
+            // create a post-op with relu
+            dnnl::post_ops ops;
+            dnnl::primitive_attr attr;
+
+            // sanity check
+            assert(attr.get_scratchpad_mode() == dnnl::scratchpad_mode::library);
+            // set scratchpad mode to user provided
+            attr.set_scratchpad_mode(dnnl::scratchpad_mode::user);
+
+            if (use_fp32_accu)
+            {
+                attr.set_accumulation_mode(dnnl::accumulation_mode::strict);
+            }
+
+            if (activation.type != ActivationType::eUnknown)
+            {
+                ops.append_eltwise(to_dnnl_activation_type(activation.type), activation.alpha, activation.beta);
+                attr.set_post_ops(ops);
+            }
+
+            return attr;
+        }(params_.activation, params_.dt == DataType::eFp16 && !params_.allow_fp16_computations);
+
+        input_memory_desc_ = to_dnnl_mem_desc(params_.input_shape, params_.input_layout, params_.dt);
+        output_memory_desc_ = to_dnnl_mem_desc(get_output_shape(), params_.output_layout, params_.dt);
+
+        if (!params_.no_bias)
+        {
+            bias_memory_desc_.emplace(to_dnnl_mem_desc(TensorShape{ get_output_shape().c, 0, 0, 0}, DataLayout::eO, params_.dt));
+        }
+
+        const auto conv_algorithm = [&]()
+        {
+            if constexpr (std::is_same_v<T, dnnl::deconvolution_forward>)
+            {
+                return params_.algo_winograd ? dnnl::algorithm::deconvolution_winograd : dnnl::algorithm::deconvolution_direct;
+            }
+            return params_.algo_winograd ? dnnl::algorithm::convolution_winograd : dnnl::algorithm::convolution_direct;
+        }();
+
+        const auto conv_desc = T::primitive_desc(
+            dnnl_engine_,
+            dnnl::prop_kind::forward_inference,
+            conv_algorithm,
+            input_memory_desc_,
+            get_dnnl_filter_input_memory_desc(true),
+            bias_memory_desc_ ? bias_memory_desc_.value() : dnnl::memory::desc{},
+            output_memory_desc_,
+            stride,
+            dilates,
+            pad,
+            pad,
+            attr
+        );
+        std::cout << "dnnl-umd kernel impl: " << conv_desc.impl_info_str() << std::endl;
+
+        filter_memory_desc_ = conv_desc.query_md(dnnl::query::weights_md);
+
+        const auto persistent_resource_size = [&]()
+        {
+            auto ret = filter_memory_desc_.get_size();
+            if (use_bias())
+            {
+                ret += bias_memory_desc_->get_size();
+            }
+            return ret;
+        }();
+        if (persistent_resource_size != 0)
+        {
+            const auto heap_props = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
+            const auto buffder_desc = CD3DX12_RESOURCE_DESC::Buffer(persistent_resource_size, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+            throw_if_failed(d3d12_device_->CreateCommittedResource(
+                &heap_props,
+                D3D12_HEAP_FLAG_NONE,
+                &buffder_desc,
+                D3D12_RESOURCE_STATE_COMMON,
+                nullptr, IID_PPV_ARGS(persistent_buffer_.ReleaseAndGetAddressOf())), "create buffer resource");
+        }
+
+        assert(conv_desc.query_s64(dnnl::query::memory_consumption_s64) == 0);  // we provide scratchpad, so sanity check that primitive does not require any "hidden" memory
+        scratchpad_memory_desc_.emplace(conv_desc.query_md(dnnl::query::scratchpad_md));
+        const auto temporary_resoruce_size = scratchpad_memory_desc_->get_size();
+        if (temporary_resoruce_size != 0)
+        {
+            const auto heap_props = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
+            const auto buffder_desc = CD3DX12_RESOURCE_DESC::Buffer(temporary_resoruce_size, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+            throw_if_failed(d3d12_device_->CreateCommittedResource(
+                &heap_props,
+                D3D12_HEAP_FLAG_NONE,
+                &buffder_desc,
+                D3D12_RESOURCE_STATE_COMMON,
+                nullptr, IID_PPV_ARGS(temporary_buffer_.ReleaseAndGetAddressOf())), "create buffer resource");
+        }
+
+        // create convolution primitive
+        convolution_ = T(conv_desc);
+
+        // compile weights reorder kernel and create reorder primitive
+        // ToDo: check if reorder needs scratchpad memory??
+        dnnl::reorder::primitive_desc reorder_desc(dnnl_engine_, get_dnnl_filter_input_memory_desc(false), dnnl_engine_, filter_memory_desc_);
+        reorder_weights_ = dnnl::reorder(reorder_desc);
+
+        if (use_bias())
+        {
+            assert(bias_memory_desc_.has_value());
+            // mimic copy shader from metacommand
+            dnnl::reorder::primitive_desc reorder_desc(dnnl_engine_, *bias_memory_desc_, dnnl_engine_, *bias_memory_desc_);
+            reorder_bias_ = dnnl::reorder(reorder_desc);
+        }
+    }
+
     dnnl::memory create_dnnl_memory(const auto& desc, auto& umd_mem, std::size_t offset = 0)
     {
         return dnnl::iumd_interop::make_memory(desc, dnnl_engine_, &umd_mem, offset);
@@ -1008,7 +1091,7 @@ private:
     conv_umdd3d12_params_t umdd3d12_params_;
     dnnl::engine dnnl_engine_;
 
-    dnnl::convolution_forward convolution_;
+    std::variant<dnnl::convolution_forward, dnnl::deconvolution_forward> convolution_;
     dnnl::reorder reorder_weights_;
     dnnl::reorder reorder_bias_;  // metacommand copy bias data to persistent buffer
 
