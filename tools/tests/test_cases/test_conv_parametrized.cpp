@@ -314,6 +314,7 @@ INSTANTIATE_TEST_SUITE_P(
 class DnnlPluginNext_Convolution_Activations : public NodeDispatcherBase, public testing::TestWithParam<std::tuple<
     ActivationSettings,
     DataLayout,
+    bool, //transposed
     DataType
     >>
 {
@@ -324,10 +325,11 @@ public:
 
         const auto act = std::get<TUPLE_ID_ACTIVATION>(params);
         const auto layout = std::get<TUPLE_ID_LAYOUT>(params);
+        const auto is_transposed = std::get<TUPLE_ID_IS_TRANSPOSED>(params);
         const auto dt = std::get<TUPLE_ID_DT>(params);
 
-        const auto fmt = std::format("activation_{}__layout_{}__datatype_{}",
-            get_activation_type_str(act.type), data_layout_name(layout), get_data_type_str(dt));
+        const auto fmt = std::format("activation_{}__layout_{}__datatype_{}__is_transposed_{}",
+            get_activation_type_str(act.type), data_layout_name(layout), get_data_type_str(dt), is_transposed);
         return fmt;
     }
 
@@ -336,6 +338,7 @@ protected:
     {
         TUPLE_ID_ACTIVATION = 0,
         TUPLE_ID_LAYOUT,
+        TUPLE_ID_IS_TRANSPOSED,
         TUPLE_ID_DT,
     };
 
@@ -361,7 +364,13 @@ protected:
         const auto params = GetParam();
         const auto activation = std::get<TUPLE_ID_ACTIVATION>(params);
         const auto layout = std::get<TUPLE_ID_LAYOUT>(params);
+        const auto is_transposed = std::get<TUPLE_ID_IS_TRANSPOSED>(params);
         const auto dt = std::get<TUPLE_ID_DT>(params);
+
+        if (is_transposed)
+        {
+            input_shape_.c = filter_shape_.n;
+        }
 
         ConvolutionBaseDispatcher::create_params_t opts{};
         opts.algo_winograd = false; // we should use auto anyway
@@ -371,10 +380,11 @@ protected:
         opts.output_layout = layout;
         opts.filter_layout = layout;
         opts.in_pad = input_pad_;
+        opts.transposed = is_transposed;
         opts.stride = TensorShape(1, 1, kernel_stride_, kernel_stride_);
         opts.managaed_weights = true;
-        opts.input_shape = input_shape_;
         opts.filter_shape = filter_shape_;
+        opts.input_shape = input_shape_;
         opts.no_bias = no_bias_;
         opts.allow_fp16_computations = dt == DataType::eFp16;
         opts.activation = activation;
@@ -428,6 +438,7 @@ INSTANTIATE_TEST_SUITE_P(
             ActivationSettings{ ActivationType::eTanh }
         ),
         testing::Values(DataLayout::eNCHW, DataLayout::eNHWC),
+        testing::Values(false, true), // is transposed
         testing::Values(DataType::eFp32, DataType::eFp16)),
     [](const testing::TestParamInfo<DnnlPluginNext_Convolution_Activations::ParamType>& info) {
         return DnnlPluginNext_Convolution_Activations::params_to_str(info);
