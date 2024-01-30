@@ -15,7 +15,7 @@ class DnnlPluginNext_Convolution : public NodeDispatcherBase, public testing::Te
 protected:
     DnnlPluginNext_Convolution() {
         // You can do set-up work for each test here.
-        params_.managaed_weights = true;
+        params_.managed_weights = true;
         params_.algo_winograd = false; // we should use auto anyway
         params_.use_dnnl_for_reference_calculations = true;
     }

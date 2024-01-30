@@ -98,7 +98,7 @@ protected:
         opts.groups = g;
         opts.stride = TensorShape(1u, 1u, kernel_stride_, kernel_stride_);
         opts.dilation = TensorShape(0u, 0u, dilation_, dilation_);
-        opts.managaed_weights = true;
+        opts.managed_weights = true;
         opts.transposed = is_transposed;
         opts.input_shape = TensorShape(batch, is_transposed ? oc : ic, h, w);
         opts.filter_shape = TensorShape(oc, ic, kernel_size_, kernel_size_);
@@ -259,7 +259,7 @@ protected:
         opts.filter_layout = DataLayout::eNCHW;
         opts.in_pad = 0;
         opts.stride = TensorShape(1, 1, 1, 1);
-        opts.managaed_weights = true;
+        opts.managed_weights = true;
         opts.filter_shape = TensorShape(16, 32, 1, 1);
         opts.transposed = is_transposed;
         opts.input_shape = TensorShape(1, is_transposed ? opts.filter_shape.n : opts.filter_shape.c, 64, 64);
@@ -391,7 +391,7 @@ protected:
         opts.in_pad = input_pad_;
         opts.transposed = is_transposed;
         opts.stride = TensorShape(1, 1, kernel_stride_, kernel_stride_);
-        opts.managaed_weights = true;
+        opts.managed_weights = true;
         opts.filter_shape = filter_shape_;
         opts.input_shape = input_shape_;
         opts.no_bias = no_bias_;
