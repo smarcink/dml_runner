@@ -235,16 +235,14 @@ public:
         {
             input_binds.push_back({ nullptr, 0, 0 });
         }
-        if (tensor_bias_desc_.has_value())
+
+        if (tensor_bias_desc_.has_value() && tensor_bias_desc_->Flags == DML_TENSOR_FLAG_OWNED_BY_DML)
         {
-            if (tensor_bias_desc_->Flags == DML_TENSOR_FLAG_OWNED_BY_DML)
-            {
-                input_binds.push_back({ resource_bias, 0, resource_bias->GetDesc().Width });
-            }
-            else
-            {
-                input_binds.push_back({ nullptr, 0, 0 });
-            }
+            input_binds.push_back({ resource_bias, 0, resource_bias->GetDesc().Width });
+        }
+        else
+        {
+            input_binds.push_back({ nullptr, 0, 0 });
         }
 
         DML_BUFFER_ARRAY_BINDING input_bind{};
@@ -286,7 +284,7 @@ public:
             input_bindings.push_back({ DML_BINDING_TYPE_BUFFER, &filter_buffer_binding });
         }
 
-        if (resource_bias && tensor_bias_desc_.has_value() && tensor_bias_desc_->Flags == DML_TENSOR_FLAG_OWNED_BY_DML)
+        if (!resource_bias || (tensor_bias_desc_.has_value() && tensor_bias_desc_->Flags == DML_TENSOR_FLAG_OWNED_BY_DML))
         {
             input_bindings.push_back({ DML_BINDING_TYPE_NONE, nullptr });
         }
