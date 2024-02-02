@@ -393,15 +393,25 @@ inline ComPtr<ID3D12Resource> create_buffer(ID3D12Device* d3d12_device, std::siz
     return ret;
 }
 
-
-inline void close_execute_reset_wait(ID3D12Device* d3d12_device, ID3D12CommandQueue* command_queue,
-    ID3D12CommandAllocator* command_allocator, ID3D12GraphicsCommandList* command_list)
+inline void close(ID3D12GraphicsCommandList* command_list)
 {
     throw_if_failed(command_list->Close(), "cmd list close");
+}
 
+inline void execute(ID3D12CommandQueue* command_queue, ID3D12GraphicsCommandList* command_list)
+{
     ID3D12CommandList* command_lists[] = { command_list };
     command_queue->ExecuteCommandLists(1, command_lists);
+}
 
+inline void reset(ID3D12CommandAllocator* command_allocator, ID3D12GraphicsCommandList* command_list)
+{
+    throw_if_failed(command_allocator->Reset(), "command allocator reset");
+    throw_if_failed(command_list->Reset(command_allocator, nullptr), "command list reset");
+}
+
+inline void wait(ID3D12Device* d3d12_device, ID3D12CommandQueue* command_queue)
+{
     ComPtr<ID3D12Fence> d3d12_fence;
     throw_if_failed(d3d12_device->CreateFence(0, D3D12_FENCE_FLAG_NONE,
         IID_PPV_ARGS(d3d12_fence.ReleaseAndGetAddressOf())), "create fence");
@@ -411,9 +421,16 @@ inline void close_execute_reset_wait(ID3D12Device* d3d12_device, ID3D12CommandQu
 
     throw_if_failed(command_queue->Signal(d3d12_fence.Get(), 1), "command queue signal");
     ::WaitForSingleObjectEx(fence_event_handle, INFINITE, FALSE);
+}
 
-    throw_if_failed(command_allocator->Reset(), "command allocator reset");
-    throw_if_failed(command_list->Reset(command_allocator, nullptr), "command list reset");
+inline void close_execute_reset_wait(ID3D12Device* d3d12_device, ID3D12CommandQueue* command_queue,
+    ID3D12CommandAllocator* command_allocator, ID3D12GraphicsCommandList* command_list)
+{
+    close(command_list);
+    execute(command_queue, command_list);
+    wait(d3d12_device, command_queue);
+    reset(command_allocator, command_list);
+
 }
 
 struct PerfCollectorDX12
@@ -425,6 +442,7 @@ struct PerfCollectorDX12
 
     inline void add_timestamp(ID3D12GraphicsCommandList* cmd_list)
     {
+        assert(cmd_list);
         cmd_list->EndQuery(timestamp_query_heap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, timestamp_index++);
     }
 };

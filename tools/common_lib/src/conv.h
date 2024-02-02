@@ -741,6 +741,13 @@ public:
         conv_.record_initialize(dml_cmd_recorder_, cmd_list, filter_buffer_.Get(), bias_buffer_.Get());
     }
 
+    void update_binding_table() override
+    {
+        // pass nullptr as dml cmd recorder and cmd list, so binding update will be update
+        // also pass clone of output buffer
+        conv_.record_execute(nullptr, nullptr, output_buffer_.Get(), input_buffer_.Get(), filter_buffer_.Get(), bias_buffer_.Get(), constant_buffer_.Get());
+    }
+
     void execute(ID3D12GraphicsCommandList* cmd_list) override
     {
         conv_.record_execute(dml_cmd_recorder_, cmd_list, output_buffer_.Get(), input_buffer_.Get(), filter_buffer_.Get(), bias_buffer_.Get(), constant_buffer_.Get());

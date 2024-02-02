@@ -322,7 +322,10 @@ protected:
         dml_exec_binding_table->BindInputs(static_cast<std::uint32_t>(input_bindings.size()), input_bindings.data());
         dml_exec_binding_table->BindOutputs(static_cast<std::uint32_t>(output_bindings.size()), output_bindings.data());
 
-        dml_cmd_recorder->RecordDispatch(cmd_list, dml_op_executor_.Get(), dml_exec_binding_table.Get());
+        if (dml_cmd_recorder && cmd_list)
+        {
+            dml_cmd_recorder->RecordDispatch(cmd_list, dml_op_executor_.Get(), dml_exec_binding_table.Get());
+        }
     }
 
 protected:

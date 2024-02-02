@@ -56,6 +56,7 @@ struct CliOptions
     std::uint32_t dispatch_iterations = 1;
     bool no_conformance_check = false;
     bool print_opts = false;
+    bool reuse_cmd_list = false;
 
     // generic type of layers params
     GemmBaseDispatcher::create_params_t gemm_opts{};
@@ -106,6 +107,7 @@ int main()
     dml_runner_app.add_option("--iters", opts.dispatch_iterations, "How many iterations to run.")->check(CLI::Range(1u, MAX_ITERATIONS));
     dml_runner_app.add_flag("--no_conform", opts.no_conformance_check);
     dml_runner_app.add_flag("--print_opts", opts.print_opts);
+    dml_runner_app.add_flag("--reuse_cmd_list", opts.reuse_cmd_list, "Late Binding. Use to test descriptor volatile.");
 
     // generic type of layers options
     auto gemm_option_groups = dml_runner_app.add_subcommand("gemm_opts", "Options for genn layer.");
@@ -269,13 +271,37 @@ int main()
         // 
         command_list->SetDescriptorHeaps(1, d3d12_descriptor_heaps);
 
-        for (std::uint32_t i = 0; i < opts.dispatch_iterations; ++i)
+        if (opts.reuse_cmd_list)
         {
+            std::cout << "Recording reusable cmd list! Performance collection only from last exuection."
+                "ToDo: enable perf collection for this mode for all iterations." << std::endl;
+            // record command list
             performance_collector.add_timestamp(command_list.Get());
             node->execute(command_list.Get());
             performance_collector.add_timestamp(command_list.Get());
+            close(command_list.Get());
+            execute(command_queue.Get(), command_list.Get());
+            wait(d3d12_device.Get(), command_queue.Get());
+
+            for (std::uint32_t i = 0; i < opts.dispatch_iterations; ++i)
+            {
+                node->update_binding_table();
+                execute(command_queue.Get(), command_list.Get());
+                wait(d3d12_device.Get(), command_queue.Get());
+            }
+            reset(command_allocator.Get(), command_list.Get());
         }
-        close_execute_reset_wait(d3d12_device.Get(), command_queue.Get(), command_allocator.Get(), command_list.Get());
+        else
+        {
+            for (std::uint32_t i = 0; i < opts.dispatch_iterations; ++i)
+            {
+                performance_collector.add_timestamp(command_list.Get());
+                node->execute(command_list.Get());
+                performance_collector.add_timestamp(command_list.Get());
+            }
+            close_execute_reset_wait(d3d12_device.Get(), command_queue.Get(), command_allocator.Get(), command_list.Get());
+        }
+
 
         const auto device_remove_reason = d3d12_device->GetDeviceRemovedReason();
         if (device_remove_reason != S_OK)
@@ -293,7 +319,6 @@ int main()
             std::cout << std::format("Conformance {}. Tested values (tensor out elements count): {} \n", conformance_result.passed, conformance_result.tested_samples_count);
             std::cout << std::format("Biggest difference in the output tensor: {}. It is in the epsilion range: {}. \n", conformance_result.biggest_difference, conformance_result.epsilon);
         }
-
         // Copy the timing data back
         command_list->ResolveQueryData(
             performance_collector.timestamp_query_heap.Get(),
