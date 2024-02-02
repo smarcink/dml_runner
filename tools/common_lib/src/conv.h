@@ -745,7 +745,14 @@ public:
     {
         // pass nullptr as dml cmd recorder and cmd list, so binding update will be update
         // also pass clone of output buffer
-        conv_.record_execute(nullptr, nullptr, output_buffer_.Get(), input_buffer_.Get(), filter_buffer_.Get(), bias_buffer_.Get(), constant_buffer_.Get());
+        if (!output_buffer_for_late_binding_)
+        {
+            const auto tensor_out_bytes_width = get_tensor_elements_count(get_output_shape(), params_.output_layout) * get_data_type_bytes_width(params_.dt);
+            output_buffer_for_late_binding_ = create_buffer(d3d12_device_, tensor_out_bytes_width,
+                D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+        }
+
+        conv_.record_execute(nullptr, nullptr, output_buffer_for_late_binding_.Get(), input_buffer_.Get(), filter_buffer_.Get(), bias_buffer_.Get(), constant_buffer_.Get());
     }
 
     void execute(ID3D12GraphicsCommandList* cmd_list) override
@@ -753,9 +760,22 @@ public:
         conv_.record_execute(dml_cmd_recorder_, cmd_list, output_buffer_.Get(), input_buffer_.Get(), filter_buffer_.Get(), bias_buffer_.Get(), constant_buffer_.Get());
     }
 
+    ConformanceResult validate_conformance(ID3D12CommandQueue* command_queue,
+        ID3D12CommandAllocator* command_allocator, ID3D12GraphicsCommandList* command_list, bool print_mismatche) override
+    {
+        // swap buffers for conformance validation
+        if (output_buffer_for_late_binding_)
+        {
+            output_buffer_ = output_buffer_for_late_binding_;
+        }
+        const auto ret = ConvolutionBaseDispatcher::validate_conformance(command_queue, command_allocator, command_list, print_mismatche);
+        return ret;
+    }
+
 private:
     gpu_op::Convolution conv_;
     IDMLCommandRecorder* dml_cmd_recorder_;
+    ComPtr<ID3D12Resource> output_buffer_for_late_binding_;
 };
 
 class ConvolutionUmdD3d12Dispatcher : public ConvolutionBaseDispatcher
