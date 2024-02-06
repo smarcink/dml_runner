@@ -50,7 +50,7 @@ public:
         const DML_TENSOR_DATA_TYPE data_type, const dml::TensorPolicy& input_tensor_policy, const dml::TensorPolicy& filter_tensor_policy, const dml::TensorPolicy& output_tensor_policy,
         const TensorShape& stride_shape, const TensorShape& dilation_shape, std::uint32_t input_pad, std::uint32_t output_pad, std::uint32_t group_count,
         bool use_bias, bool allow_fp16_computations, bool transposed, const ActivationSettings& activation_settings, bool managed_weights,
-        IDMLDevice* dml_device, ID3D12Device* d3d12_device, bool disable_mc = false)
+        IDMLDevice* dml_device, ID3D12Device* d3d12_device, bool disable_mc = false, bool allow_descriptors_volatile = true)
         : DirectMlBaseNode(dml_device, d3d12_device)
     {
 
@@ -164,7 +164,12 @@ public:
         throw_if_failed(dml_device->CreateOperator(
             &dml_operator_desc, IID_PPV_ARGS(dml_operator_.ReleaseAndGetAddressOf())), "create convolution operator");
 
-        DML_EXECUTION_FLAGS exec_flags = DML_EXECUTION_FLAG_DESCRIPTORS_VOLATILE;
+        DML_EXECUTION_FLAGS exec_flags = DML_EXECUTION_FLAG_NONE;
+        
+        if (allow_descriptors_volatile)
+        {
+            exec_flags |= DML_EXECUTION_FLAG_DESCRIPTORS_VOLATILE;
+        }
         if (allow_fp16_computations)
         {
             exec_flags |= DML_EXECUTION_FLAG_ALLOW_HALF_PRECISION_COMPUTATION;
@@ -439,7 +444,7 @@ public:
             D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
         if (use_bias())
         {
-            bias_buffer_ = create_buffer(d3d12_device, tensor_bias_bytes_width,
+            bias_buffer_ = create_buffer(d3d12_device, align(tensor_bias_bytes_width, 4),
                 D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
         }
         constant_buffer_ = create_buffer(d3d12_device, tensor_constant_bytes_width,
@@ -717,8 +722,7 @@ protected:
 class ConvolutionDirectMLDispatcher : public ConvolutionBaseDispatcher
 {
 public:
-
-    ConvolutionDirectMLDispatcher(create_params_t&& params, ID3D12Device* d3d12_device, IDMLDevice* dml_device, IDMLCommandRecorder* dml_cmd_recorder, ID3D12GraphicsCommandList* cmd_list)
+    ConvolutionDirectMLDispatcher(create_params_t&& params, bool allow_descriptors_volatile, ID3D12Device* d3d12_device, IDMLDevice* dml_device, IDMLCommandRecorder* dml_cmd_recorder, ID3D12GraphicsCommandList* cmd_list)
         : ConvolutionBaseDispatcher(std::move(params), d3d12_device, dml_device, dml_cmd_recorder, cmd_list)
         , dml_cmd_recorder_(dml_cmd_recorder)
         , conv_(params_.input_shape, params_.filter_shape, get_output_shape(),
@@ -726,7 +730,7 @@ public:
             to_dml_tensor_policy(params_.filter_layout), to_dml_tensor_policy(params_.output_layout),
             params_.stride, params_.dilation, params_.in_pad, params_.out_pad, params_.groups, !params_.no_bias,
             params_.allow_fp16_computations, params_.transposed, params_.activation, params_.managed_weights,
-            dml_device, d3d12_device)
+            dml_device, d3d12_device, false, allow_descriptors_volatile)
     {
     }
 

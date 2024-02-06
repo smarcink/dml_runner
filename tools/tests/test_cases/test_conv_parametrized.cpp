@@ -5,8 +5,9 @@
 #include <conv.h>
 
 #include "utils.h"
+#include "test_conv_base.h"
 
-class DnnlPluginNext_Convolution_Params : public NodeDispatcherBase, public testing::TestWithParam<std::tuple<
+class DnnlPluginNext_Convolution_Params : public ConvolutionBaseTestDispatcher, public testing::TestWithParam<std::tuple<
     std::int32_t, // batch
     std::int32_t, // IC
     std::int32_t, // OC
@@ -72,7 +73,7 @@ protected:
     void set_activation_setting(ActivationSettings act) { activation_ = std::move(act); };
 
 protected:
-    std::unique_ptr<NodeDispatcher> create_dispatcher_impl() override
+    ConvolutionBaseDispatcher::create_params_t get_params() override
     {
         const auto params = GetParam();
         const auto batch = std::get<TUPLE_ID_BATCH>(params);
@@ -105,14 +106,7 @@ protected:
         opts.no_bias = no_bias_;
         opts.allow_fp16_computations = dt == DataType::eFp16;
         opts.activation = activation_;
-        auto node = std::make_unique<ConvolutionUmdD3d12Dispatcher>(std::move(opts),
-            ConvolutionUmdD3d12Dispatcher::conv_umdd3d12_params_t{},
-            g_dx12_engine.intel_extension_d3d12,
-            g_dx12_engine.d3d12_device.Get(),
-            g_dx12_engine.dml_device.Get(),
-            g_dx12_engine.dml_command_recorder.Get(),
-            g_dx12_engine.command_list.Get());
-        return node;
+        return opts;
     }
 
 private:
@@ -200,7 +194,7 @@ INSTANTIATE_TEST_SUITE_P(
 
 
 
-class DnnlPluginNext_Convolution_ParamsUnpackedCases : public NodeDispatcherBase, public testing::TestWithParam<std::tuple<
+class DnnlPluginNext_Convolution_ParamsUnpackedCases : public ConvolutionBaseTestDispatcher, public testing::TestWithParam<std::tuple<
     DataLayout,  // in
     DataLayout,  // out
     bool, // transposed
@@ -242,7 +236,7 @@ protected:
     }
 
 protected:
-    std::unique_ptr<NodeDispatcher> create_dispatcher_impl() override
+    ConvolutionBaseDispatcher::create_params_t get_params() override
     {
         const auto params = GetParam();
         const auto in_layout = std::get<TUPLE_ID_IN_LAYOUT>(params);
@@ -265,14 +259,7 @@ protected:
         opts.input_shape = TensorShape(1, is_transposed ? opts.filter_shape.n : opts.filter_shape.c, 64, 64);
         opts.no_bias = false;
         opts.allow_fp16_computations = dt == DataType::eFp16;
-        auto node = std::make_unique<ConvolutionUmdD3d12Dispatcher>(std::move(opts),
-            ConvolutionUmdD3d12Dispatcher::conv_umdd3d12_params_t{},
-            g_dx12_engine.intel_extension_d3d12,
-            g_dx12_engine.d3d12_device.Get(),
-            g_dx12_engine.dml_device.Get(),
-            g_dx12_engine.dml_command_recorder.Get(),
-            g_dx12_engine.command_list.Get());
-        return node;
+        return opts;
     }
 };
 
@@ -318,7 +305,7 @@ INSTANTIATE_TEST_SUITE_P(
 
 
 
-class DnnlPluginNext_Convolution_Activations : public NodeDispatcherBase, public testing::TestWithParam<std::tuple<
+class DnnlPluginNext_Convolution_Activations : public ConvolutionBaseTestDispatcher, public testing::TestWithParam<std::tuple<
     ActivationSettings,
     DataLayout,
     bool, //transposed
@@ -351,12 +338,23 @@ protected:
 
 
 protected:
-    DnnlPluginNext_Convolution_Activations() {
-        // You can do set-up work for each test here.
+    DnnlPluginNext_Convolution_Activations() 
+    {
     }
 
     ~DnnlPluginNext_Convolution_Activations() override {
         // You can do clean-up work that doesn't throw exceptions here.
+    }
+
+    // Sets up the test fixture.
+    void SetUp() override
+    {
+        const auto params = GetParam();
+        const auto activation = std::get<TUPLE_ID_ACTIVATION>(params);
+        if (g_test_config.run_dml && activation.type == ActivationType::eGelu)
+        {
+            GTEST_SKIP() <<"DirectML does not fuse GELU activation to metacommand. Skipping test.";
+        }
     }
 
     void set_input_tensor_shape(TensorShape shape) { input_shape_ = std::move(shape); }
@@ -367,7 +365,7 @@ protected:
     void set_groups(std::uint32_t g) { groups_ = g; }
 
 protected:
-    std::unique_ptr<NodeDispatcher> create_dispatcher_impl() override
+    ConvolutionBaseDispatcher::create_params_t get_params() override
     {
         const auto params = GetParam();
         const auto activation = std::get<TUPLE_ID_ACTIVATION>(params);
@@ -397,14 +395,7 @@ protected:
         opts.no_bias = no_bias_;
         opts.allow_fp16_computations = dt == DataType::eFp16;
         opts.activation = activation;
-        auto node = std::make_unique<ConvolutionUmdD3d12Dispatcher>(std::move(opts),
-            ConvolutionUmdD3d12Dispatcher::conv_umdd3d12_params_t{},
-            g_dx12_engine.intel_extension_d3d12,
-            g_dx12_engine.d3d12_device.Get(),
-            g_dx12_engine.dml_device.Get(),
-            g_dx12_engine.dml_command_recorder.Get(),
-            g_dx12_engine.command_list.Get());
-        return node;
+        return opts;
     }
 
 private:
