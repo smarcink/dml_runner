@@ -113,7 +113,8 @@ class Gemm : public DirectMlBaseNode
 public:
     Gemm(GemmType gemm_type, const DML_TENSOR_DATA_TYPE data_type, const dml::TensorPolicy& tensor_policy,
         const TensorShape& shape_a, const TensorShape& shape_b, const TensorShape& shape_c, const TensorShape& shape_out,
-        bool b_managed, bool b_transposed, float alpha, float beta, bool allow_fp16_computations, const ActivationSettings& activation_settings,
+        bool a_managed, bool a_transposed, bool b_managed, bool b_transposed, float alpha, float beta,
+        bool allow_fp16_computations, const ActivationSettings& activation_settings,
         IDMLDevice* dml_device, ID3D12Device* d3d12_device, bool disable_mc = false)
         : DirectMlBaseNode(dml_device, d3d12_device)
         , type_(gemm_type)
@@ -139,7 +140,7 @@ public:
             dimensions_0.push_back(shape_a.c);
             dimensions_0.push_back(shape_a.h);
             dimensions_0.push_back(shape_a.w);
-            dml::TensorDesc desc_input_0 = { data_type, dimensions_0 };
+            dml::TensorDesc desc_input_0 = { data_type, a_managed ? DML_TENSOR_FLAG_OWNED_BY_DML : DML_TENSOR_FLAG_NONE, dimensions_0 };
             input_0_ = dml::InputTensor(graph_, 0, desc_input_0);
 
             dml::TensorDesc::Dimensions dimensions_1;
@@ -155,14 +156,14 @@ public:
                 dml::TensorDesc::Dimensions dimensions_2;
                 dimensions_2.push_back(shape_a.n);
                 dimensions_2.push_back(shape_a.c);
-                dimensions_2.push_back(shape_a.h);
+                dimensions_2.push_back(a_transposed ? shape_a.w : shape_a.h);
                 dimensions_2.push_back(b_transposed ? shape_b.h : shape_b.w);
                 dml::TensorDesc desc_input_2 = { data_type, dimensions_2 };
                 input_2_ = dml::InputTensor(graph_, 2, desc_input_2);
             }
 
             outputs_[0] = dml::Gemm(input_0_, input_1_, input_2_,
-                DML_MATRIX_TRANSFORM_NONE,
+                a_transposed ? DML_MATRIX_TRANSFORM_TRANSPOSE : DML_MATRIX_TRANSFORM_NONE,
                 b_transposed ? DML_MATRIX_TRANSFORM_TRANSPOSE : DML_MATRIX_TRANSFORM_NONE,
                 alpha, beta, fused_act);
         }
@@ -357,14 +358,26 @@ public:
     {
         assert(resource_a);
         assert(resource_out);
-        DML_BUFFER_BINDING input_a_buffer_binding{ resource_a, 0, resource_a->GetDesc().Width };
+        DML_BUFFER_BINDING input_a_buffer_binding{ nullptr, 0, 0 };
         DML_BUFFER_BINDING input_b_buffer_binding{ nullptr, 0, 0 }; 
         DML_BUFFER_BINDING input_c_buffer_binding{ nullptr, 0, 0 }; 
 
   
         std::vector<DML_BINDING_DESC> input_bindings;
         input_bindings.reserve(3);
-        input_bindings.push_back({ DML_BINDING_TYPE_BUFFER, &input_a_buffer_binding });
+        if (resource_a)
+        {
+            if (input_0_.GetOutputDesc().flags == DML_TENSOR_FLAG_OWNED_BY_DML)
+            {
+                input_a_buffer_binding = { nullptr, 0, 0 };
+                input_bindings.push_back({ DML_BINDING_TYPE_NONE, &input_a_buffer_binding });
+            }
+            else
+            {
+                input_a_buffer_binding = { resource_a, 0, resource_a->GetDesc().Width };
+                input_bindings.push_back({ DML_BINDING_TYPE_BUFFER, &input_a_buffer_binding });
+            }
+        }
         if (resource_b)
         {
             if (input_1_.GetOutputDesc().flags == DML_TENSOR_FLAG_OWNED_BY_DML)
@@ -402,7 +415,7 @@ public:
     }
 
 
-    virtual void record_initialize(IDMLCommandRecorder* dml_cmd_recorder, ID3D12GraphicsCommandList* cmd_list, ID3D12Resource* resource_b, ID3D12Resource* resource_c)
+    virtual void record_initialize(IDMLCommandRecorder* dml_cmd_recorder, ID3D12GraphicsCommandList* cmd_list, ID3D12Resource* resource_a, ID3D12Resource* resource_b, ID3D12Resource* resource_c)
     {
         const auto initialize_binding_properties = dml_op_initializer_->GetBindingProperties();
         if (initialize_binding_properties.TemporaryResourceSize > 0 && temporary_buffer_)
@@ -421,7 +434,15 @@ public:
         }
 
         std::vector<DML_BUFFER_BINDING> input_binds{};
-        input_binds.push_back({ nullptr, 0, 0 });  // tensor a
+        //tensor a
+        if (input_0_.GetOutputDesc().flags == DML_TENSOR_FLAG_OWNED_BY_DML)
+        {
+            input_binds.push_back({ resource_a, 0, resource_a->GetDesc().Width });
+        }
+        else
+        {
+            input_binds.push_back({ nullptr, 0, 0 });
+        }
 
         //tensor b
         if (input_1_.GetOutputDesc().flags == DML_TENSOR_FLAG_OWNED_BY_DML)
@@ -490,8 +511,10 @@ public:
         float alpha = 1.0f;
         float beta = 1.0f;
 
+        bool a_managed = false;
         bool b_managed = false;
         bool c_managed = false;
+        bool a_transposed = false;
         bool b_transposed = false;
 
         bool allow_fp16_computations = false;
@@ -507,7 +530,9 @@ public:
             opts->add_option("--shape_b", params.shape_b); 
             opts->add_option("--shape_c", params.shape_c); 
 
+            opts->add_flag("--a_transposed", params.a_transposed)->default_val(false);
             opts->add_flag("--b_transposed", params.b_transposed)->default_val(false);
+            opts->add_flag("--a_managed", params.a_managed)->default_val(false);
             opts->add_flag("--b_managed", params.b_managed)->default_val(false);
             opts->add_flag("--c_managed", params.c_managed)->default_val(false);
             opts->add_flag("--allow_fp16_computations", params.allow_fp16_computations);
@@ -627,8 +652,11 @@ public:
 
         upload_buffer_ = create_buffer(d3d12_device_, tensor_input_a_bytes_width + tensor_input_b_bytes_width + tensor_input_c_bytes_width,
             D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ);
-        input_buffer_a_ = create_buffer(d3d12_device, tensor_input_a_bytes_width,
-            D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+        if (tensor_input_a_bytes_width > 0)
+        {
+            input_buffer_a_ = create_buffer(d3d12_device, tensor_input_a_bytes_width,
+                D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+        }
         if (tensor_input_b_bytes_width > 0)
         {
             input_buffer_b_ = create_buffer(d3d12_device, tensor_input_b_bytes_width,
@@ -647,7 +675,12 @@ public:
         upload_buffer_->Map(0, nullptr, reinterpret_cast<void**>(&upload_mapped_ptr));
         std::size_t memcopy_offset = 0;
         std::memcpy(upload_mapped_ptr, input_data_a_.data(), tensor_input_a_bytes_width);
-        memcopy_offset += tensor_input_a_bytes_width;
+        //memcopy_offset += tensor_input_a_bytes_width;
+        if (tensor_input_a_bytes_width > 0)
+        {
+            std::memcpy(upload_mapped_ptr + memcopy_offset, input_data_a_.data(), tensor_input_a_bytes_width);
+            memcopy_offset += tensor_input_a_bytes_width;
+        }
         if (tensor_input_b_bytes_width > 0)
         {
             std::memcpy(upload_mapped_ptr + memcopy_offset, input_data_b_.data(), tensor_input_b_bytes_width);
@@ -663,7 +696,12 @@ public:
 
         memcopy_offset = 0;
         cmd_list->CopyBufferRegion(input_buffer_a_.Get(), 0, upload_buffer_.Get(), 0, tensor_input_a_bytes_width);
-        memcopy_offset += tensor_input_a_bytes_width;
+        //memcopy_offset += tensor_input_a_bytes_width;
+        if (tensor_input_a_bytes_width > 0)
+        {
+            cmd_list->CopyBufferRegion(input_buffer_a_.Get(), 0, upload_buffer_.Get(), memcopy_offset, tensor_input_a_bytes_width);
+            memcopy_offset += tensor_input_a_bytes_width;
+        }
         if (tensor_input_b_bytes_width > 0)
         {
             cmd_list->CopyBufferRegion(input_buffer_b_.Get(), 0, upload_buffer_.Get(), memcopy_offset, tensor_input_b_bytes_width);
@@ -752,7 +790,8 @@ public:
         {
             gpu_op::Gemm gemm_ref(params_.type, to_dml_data_type(params_.dt), to_dml_tensor_policy(params_.layout),
                 params_.shape_a, params_.shape_b, params_.shape_c, get_shape_output(),
-                false /*params_.b_managed*/, params_.b_transposed, params_.alpha, params_.beta, params_.allow_fp16_computations, params_.activation,
+                false /*params_.a_managed*/, params_.a_transposed, false /*params_.b_managed*/, params_.b_transposed, params_.alpha, params_.beta,
+                params_.allow_fp16_computations, params_.activation,
                 dml_device_, d3d12_device_, true);
             // bind descriptor heap
             auto descriptor_heap = create_descriptor_heap(d3d12_device_, gemm_ref.get_total_descriptor_count());
@@ -760,7 +799,7 @@ public:
             command_list->SetDescriptorHeaps(1, d3d12_descriptor_heaps);
 
             gemm_ref.create_binding_tables(descriptor_heap->GetCPUDescriptorHandleForHeapStart(), descriptor_heap->GetGPUDescriptorHandleForHeapStart());
-            gemm_ref.record_initialize(dml_cmd_recorder_, command_list, input_buffer_b_.Get(), input_buffer_c_.Get());
+            gemm_ref.record_initialize(dml_cmd_recorder_, command_list, input_buffer_a_.Get(), input_buffer_b_.Get(), input_buffer_c_.Get());
             close_execute_reset_wait(d3d12_device_, command_queue, command_allocator, command_list);
 
             command_list->SetDescriptorHeaps(1, d3d12_descriptor_heaps);
@@ -832,7 +871,7 @@ protected:
     {
         if (params_.type == GemmType::GemmType_AB || params_.type == GemmType::GemmType_SV_S_QKV || params_.type == GemmType::GemmType_SV_S_KV)
         {
-            return params_.shape_a.h;
+            return params_.a_transposed ? params_.shape_a.w : params_.shape_a.h;
         }
         else if (params_.type == GemmType::GemmType_QK_QKV || params_.type == GemmType::GemmType_QK_Q_KV)
         {
@@ -901,7 +940,8 @@ class GemmDmlDispatcher : public GemmBaseDispatcher
 public:
     GemmDmlDispatcher(create_params_t&& params, ID3D12Device* d3d12_device, IDMLDevice* dml_device, IDMLCommandRecorder* dml_cmd_recorder, ID3D12GraphicsCommandList* cmd_list)
         : GemmBaseDispatcher(std::move(params), d3d12_device, dml_device, dml_cmd_recorder, cmd_list)
-        , gemm_(params_.type, to_dml_data_type(params_.dt), to_dml_tensor_policy(params_.layout),  params_.shape_a, params_.shape_b, params_.shape_c, get_shape_output(), params_.b_managed, params_.b_transposed,
+        , gemm_(params_.type, to_dml_data_type(params_.dt), to_dml_tensor_policy(params_.layout),  params_.shape_a, params_.shape_b, params_.shape_c, get_shape_output(), 
+            params_.a_managed, params_.a_transposed, params_.b_managed, params_.b_transposed,
             params_.alpha, params_.beta, params_.allow_fp16_computations, params_.activation,
             dml_device, d3d12_device, false)
     {
@@ -920,7 +960,7 @@ public:
     void initialize(ID3D12GraphicsCommandList* cmd_list, D3D12_CPU_DESCRIPTOR_HANDLE cpu_handle, D3D12_GPU_DESCRIPTOR_HANDLE gpu_handle)
     {
         gemm_.create_binding_tables(cpu_handle, gpu_handle);
-        gemm_.record_initialize(dml_cmd_recorder_, cmd_list, input_buffer_b_.Get(), input_buffer_c_.Get());
+        gemm_.record_initialize(dml_cmd_recorder_, cmd_list, input_buffer_a_.Get(), input_buffer_b_.Get(), input_buffer_c_.Get());
     }
 
     void execute(ID3D12GraphicsCommandList* cmd_list)
@@ -944,7 +984,7 @@ public:
     {
         using namespace dnnl_utils;
 
-        input_a_memory_desc_ = to_dnnl_mem_desc(params_.shape_a, params_.layout, params_.dt);
+        const auto input_a_memory_desc = to_dnnl_mem_desc(params_.shape_a, params_.a_managed ? DataLayout::eWeightsLayoutStart : params_.layout, params_.dt);
         const auto input_b_memory_desc = to_dnnl_mem_desc(params_.shape_b, params_.b_managed ? DataLayout::eWeightsLayoutStart : params_.layout, params_.dt);
         output_memory_desc_ = to_dnnl_mem_desc(get_shape_output(), params_.layout, params_.dt);
 
@@ -999,7 +1039,7 @@ public:
         }();
 
         dnnl::matmul::primitive_desc matmul_desc(dnnl_engine_,
-            input_a_memory_desc_,
+            input_a_memory_desc,
             input_b_memory_desc,
             dnnl::memory::desc{},  // we dont use bias for C Tensor, we use binary add pos-
             output_memory_desc_,
@@ -1007,6 +1047,7 @@ public:
         );
         std::cout << "dnnl-umd kernel impl: " << matmul_desc.impl_info_str() << std::endl;
 
+        input_a_memory_desc_ = matmul_desc.query_md(dnnl::query::weights_md, 0);
         input_b_memory_desc_ = matmul_desc.query_md(dnnl::query::weights_md, 0);
         const auto persistent_resource_size = [&]()
         {
@@ -1014,6 +1055,11 @@ public:
             if (has_scaling_factors())
             {
                 ret += 2 * sizeof(float);
+            }
+
+            if (params_.a_managed)
+            {
+                ret += input_a_memory_desc_.get_size();
             }
 
             if (params_.b_managed)
@@ -1051,6 +1097,12 @@ public:
 
         // create convolution primitive
         gemm_ = dnnl::matmul(matmul_desc);
+        
+        if (params_.a_managed)
+        {
+            dnnl::reorder::primitive_desc reorder_desc(dnnl_engine_, to_dnnl_mem_desc(params_.shape_a, params_.layout, params_.dt), dnnl_engine_, input_a_memory_desc_);
+            reorder_input_a_ = dnnl::reorder(reorder_desc);
+        }
 
         if (params_.b_managed)
         {
@@ -1097,7 +1149,7 @@ public:
         base_cpu_handle_ = CD3DX12_CPU_DESCRIPTOR_HANDLE{ cpu_handle };
         base_gpu_handle_ = CD3DX12_GPU_DESCRIPTOR_HANDLE{ gpu_handle };
 
-        if (!reorder_input_b_ && !reorder_input_c_ && !copy_alpha_shader_)
+        if (!reorder_input_a_ && !reorder_input_b_ && !reorder_input_c_ && !copy_alpha_shader_)
         {
             // early exit, as no reordering needed or copy shader for alpha value not needed
             return;
@@ -1108,6 +1160,10 @@ public:
         if (persistent_buffer_)
         {
             resources_list.push_back({ DescType::eUav, persistent_buffer_.Get() });
+        }
+        if (reorder_input_a_)
+        {
+            resources_list.push_back({ DescType::eUav, input_buffer_a_.Get() });
         }
         if (reorder_input_b_)
         {
@@ -1138,6 +1194,20 @@ public:
         }
 
         // weights reorder
+        if (reorder_input_a_)
+        {
+            auto umd_input_mem = iumd::custom_metacommand::UmdD3d12Memory(gpu_handles[rsc_idx++]);
+
+            dnnl::memory input_memory = create_dnnl_memory(dnnl_utils::to_dnnl_mem_desc(params_.shape_a, params_.layout, params_.dt), umd_input_mem);
+            dnnl::memory reorder_memory = create_dnnl_memory(input_a_memory_desc_, umd_persistent_mem, persistent_mem_offset);
+
+            std::unordered_map<int, dnnl::memory> args;
+            args.insert({ DNNL_ARG_SRC, input_memory });
+            args.insert({ DNNL_ARG_DST, reorder_memory });
+
+            reorder_input_a_.execute(stream, args);
+            persistent_mem_offset += input_a_memory_desc_.get_size();
+        }
         if (reorder_input_b_)
         {  
             auto umd_input_mem = iumd::custom_metacommand::UmdD3d12Memory(gpu_handles[rsc_idx++]);
@@ -1180,6 +1250,10 @@ public:
         {
             resources_list.push_back({ DescType::eUav, persistent_buffer_.Get() });
         }
+        if (!reorder_input_a_)
+        {
+            resources_list.push_back({ DescType::eUav, input_buffer_a_.Get() });
+        }
         if (!reorder_input_b_)
         {
             resources_list.push_back({ DescType::eUav, input_buffer_b_.Get()});
@@ -1197,8 +1271,8 @@ public:
         const auto gpu_handles = create_resource_views_and_handles(d3d12_device_, resources_list, base_cpu_handle_, base_gpu_handle_);
 
         std::size_t res_idx = 0;
-        auto umd_input_a_memory_ = iumd::custom_metacommand::UmdD3d12Memory(gpu_handles[res_idx++]);
         auto umd_persitent_memory = persistent_buffer_ ? iumd::custom_metacommand::UmdD3d12Memory(gpu_handles[res_idx++]) : iumd::custom_metacommand::UmdD3d12Memory();
+        auto umd_input_a_memory_ = reorder_input_a_ ? umd_persitent_memory : iumd::custom_metacommand::UmdD3d12Memory(gpu_handles[res_idx++]);
         auto umd_input_b_memory_ = reorder_input_b_ ? umd_persitent_memory : iumd::custom_metacommand::UmdD3d12Memory(gpu_handles[res_idx++]);
         auto umd_output_memory_ = iumd::custom_metacommand::UmdD3d12Memory(gpu_handles[res_idx++]);
         auto umd_input_c_memory_ = [&]()
@@ -1235,6 +1309,16 @@ public:
             beta_factor_memory = create_dnnl_memory(dnnl_utils::to_dnnl_mem_desc(TensorShape(1, 0, 0, 0), DataLayout::eW, params_.dt), umd_alpha_beta_memory_, sizeof(float));
             persistent_mem_offset += 2 * sizeof(float);
         }
+        dnnl::memory input_a_memory = [&]()
+        {
+            std::size_t offset = 0ull;
+            if (reorder_input_a_ && has_scaling_factors())
+            {
+                offset = persistent_mem_offset;
+                persistent_mem_offset += input_a_memory_desc_.get_size();
+            }
+            return create_dnnl_memory(input_a_memory_desc_, umd_input_b_memory_, offset);
+        }();
         dnnl::memory input_b_memory = [&]()
         {
             std::size_t offset = 0ull;
@@ -1311,6 +1395,7 @@ private:
     dnnl::engine dnnl_engine_;
 
     dnnl::matmul gemm_;
+    dnnl::reorder reorder_input_a_;
     dnnl::reorder reorder_input_b_;
     dnnl::reorder reorder_input_c_;
 
