@@ -380,10 +380,15 @@ inline ComPtr<ID3D12DescriptorHeap> create_descriptor_heap(ID3D12Device* d3d12_d
 
 inline ComPtr<ID3D12Resource> create_buffer(ID3D12Device* d3d12_device, std::size_t bytes_width, D3D12_HEAP_TYPE heap_type, D3D12_RESOURCE_STATES init_state, D3D12_RESOURCE_FLAGS resource_flag = D3D12_RESOURCE_FLAG_NONE)
 {
+    auto align_size = [](const auto value, const auto alignment)
+    {
+        assert(alignment >= 1);
+        return ((value + alignment - 1) / alignment) * alignment;
+    };
+
     ComPtr<ID3D12Resource> ret;
     const auto heap_props = CD3DX12_HEAP_PROPERTIES(heap_type);
-    //const auto buffer_desc = CD3DX12_RESOURCE_DESC::Buffer(align(bytes_width, 256), resource_flag);
-    const auto buffer_desc = CD3DX12_RESOURCE_DESC::Buffer(bytes_width, resource_flag);
+    const auto buffer_desc = CD3DX12_RESOURCE_DESC::Buffer(align_size(bytes_width, 4), resource_flag);
     throw_if_failed(d3d12_device->CreateCommittedResource(
         &heap_props,
         D3D12_HEAP_FLAG_NONE,

@@ -444,7 +444,7 @@ public:
             D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
         if (use_bias())
         {
-            bias_buffer_ = create_buffer(d3d12_device, align(tensor_bias_bytes_width, 4),
+            bias_buffer_ = create_buffer(d3d12_device, tensor_bias_bytes_width,
                 D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
         }
         constant_buffer_ = create_buffer(d3d12_device, tensor_constant_bytes_width,
