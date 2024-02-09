@@ -7,6 +7,7 @@ project(${PROJECT_NAME})
 set(MAIN_LABEL "")
 set(MAIN_SOURCES
     main.cpp
+    config.h
 )
 
 # add the test cases
@@ -20,6 +21,7 @@ set(TEST_CASES_SOURCES
     ${TEST_CASES_DIR}/test_api.cpp
     
     ${TEST_CASES_DIR}/utils.h
+    ${TEST_CASES_DIR}/test_conv_base.h
 )
 
 

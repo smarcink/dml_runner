@@ -28,12 +28,24 @@
 *
 \*****************************************************************************/
 
+#include <CLI/CLI.hpp>
 #include "gtest/gtest.h"
 
-
+#include "config.h"
 
 int main( int argc, char* argv[ ] )
 {
+    CLI::App tests_app{ "App to tests dml kernels.", "Tester." };
+    tests_app.allow_extras(true);
+    tests_app.add_flag("--run_dml", g_test_config.run_dml, "Run DirectML dispatcher instead of POC umd d3d12 dispatcher class.");
+    try {
+        tests_app.parse();
+    }
+    catch (const CLI::ParseError& e) {
+        return tests_app.exit(e);
+    }
+
+
     ::testing::InitGoogleTest(&argc, argv);
 
     return RUN_ALL_TESTS();

@@ -5,11 +5,11 @@
 #include <conv.h>
 
 #include "utils.h"
+#include "test_conv_base.h"
 
 
 
-
-class DnnlPluginNext_Convolution : public NodeDispatcherBase, public testing::Test
+class DnnlPluginNext_Convolution : public ConvolutionBaseTestDispatcher, public testing::Test
 {
 
 protected:
@@ -25,16 +25,9 @@ protected:
     }
 
 protected:
-    std::unique_ptr<NodeDispatcher> create_dispatcher_impl() override
+    ConvolutionBaseDispatcher::create_params_t get_params() override
     {
-        auto node = std::make_unique<ConvolutionUmdD3d12Dispatcher>(std::move(params_),
-            ConvolutionUmdD3d12Dispatcher::conv_umdd3d12_params_t{},
-            g_dx12_engine.intel_extension_d3d12,
-            g_dx12_engine.d3d12_device.Get(),
-            g_dx12_engine.dml_device.Get(),
-            g_dx12_engine.dml_command_recorder.Get(),
-            g_dx12_engine.command_list.Get());
-        return node;
+        return params_;
     }
 
 protected:

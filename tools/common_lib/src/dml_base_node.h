@@ -78,6 +78,57 @@ namespace
         props.guaranteedBaseOffsetAlignment = 0;
         return props;
     }
+
+    inline static dml::TensorProperties compute_nhwc_alignh40_tensor_policy(
+        DML_TENSOR_DATA_TYPE dataType,
+        DML_TENSOR_FLAGS /*flags*/,
+        std::span<const uint32_t> sizes)
+    {
+        uint32_t dimensionCount = static_cast<uint32_t>(sizes.size());
+        dml::TensorStrides strides(dimensionCount);
+
+        enum Axes { N, C, H, W /* more dims*/ };
+
+        dml::TensorDimensions dims(dimensionCount);
+        for (std::uint32_t i = 0; i < dimensionCount; i++)
+        {
+            dims[i] = sizes[i];
+        }
+        dims[H] = align(dims[H], 40);
+
+        // N dimension strides
+        if (dimensionCount >= 1)
+        {
+            strides[N] = 1;
+            for (uint32_t i = 1; i < dimensionCount; ++i)
+            {
+                strides[N] *= dims[i];
+            }
+        }
+
+        // C dimension strides
+        if (dimensionCount >= 2)
+        {
+            strides[C] = 1;
+        }
+
+        // Spatial dimension strides
+        if (dimensionCount >= 3)
+        {
+            uint32_t stride = dims[C];
+            for (uint32_t i = dimensionCount - 1; i >= 2; --i)
+            {
+                strides[i] = stride;
+                stride *= dims[i];
+            }
+        }
+
+        dml::TensorProperties props;
+        props.strides = std::move(strides);
+        props.totalTensorSizeInBytes = DMLCalcBufferTensorSize(dataType, dimensionCount, sizes.data(), props.strides->data());
+        props.guaranteedBaseOffsetAlignment = 0;
+        return props;
+    }
 }
 
 inline std::string to_string(const std::string& value) { return value; }
@@ -103,6 +154,7 @@ inline dml::TensorPolicy to_dml_tensor_policy(DataLayout layout)
     case DataLayout::eNHWC: return dml::TensorPolicy::InterleavedChannel();
     case DataLayout::eW: return dml::TensorPolicy(compute_w_tensor_policy);
     case DataLayout::eNCHW_AlignW320: return dml::TensorPolicy(compute_nchw_alignw320_tensor_policy);
+    case DataLayout::eNHWC_AlignH48: return dml::TensorPolicy(compute_nhwc_alignh40_tensor_policy);
     default:
         assert(false && "Unknown data layout.");
     }
@@ -277,26 +329,14 @@ protected:
 
         if (temporary_resource_size != 0)
         {
-            const auto heap_props = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
-            const auto buffer_desc = CD3DX12_RESOURCE_DESC::Buffer(temporary_resource_size, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
-            throw_if_failed(d3d12_device_->CreateCommittedResource(
-                &heap_props,
-                D3D12_HEAP_FLAG_NONE,
-                &buffer_desc,
-                D3D12_RESOURCE_STATE_COMMON,
-                nullptr, IID_PPV_ARGS(temporary_buffer_.ReleaseAndGetAddressOf())), "create buffer resource");
+            temporary_buffer_ = create_buffer(d3d12_device_, temporary_resource_size,
+                D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
         }
 
         if (persistent_resource_size != 0)
-        {
-            const auto heap_props = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
-            const auto buffder_desc = CD3DX12_RESOURCE_DESC::Buffer(persistent_resource_size, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
-            throw_if_failed(d3d12_device_->CreateCommittedResource(
-                &heap_props,
-                D3D12_HEAP_FLAG_NONE,
-                &buffder_desc,
-                D3D12_RESOURCE_STATE_COMMON,
-                nullptr, IID_PPV_ARGS(persistent_buffer_.ReleaseAndGetAddressOf())), "create buffer resource");
+        {           
+            persistent_buffer_ = create_buffer(d3d12_device_, persistent_resource_size,
+                D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
         }
     }
 
