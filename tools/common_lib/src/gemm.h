@@ -423,7 +423,7 @@ namespace gpu_op
 
             std::vector<DML_BUFFER_BINDING> input_binds{};
             input_binds.push_back({ nullptr, 0, 0 });  // tensor a
-            
+
             //tensor b
             if (input_1_.GetOutputDesc().flags == DML_TENSOR_FLAG_OWNED_BY_DML)
             {
@@ -755,7 +755,7 @@ public:
         {
             gpu_op::Gemm gemm_ref(params_.type, to_dml_data_type(params_.dt), to_dml_tensor_policy(params_.layout),
                 params_.shape_a, params_.shape_b, params_.shape_c, get_shape_output(),
-                params_.a_transposed, false /*params_.b_managed*/, params_.b_transposed, params_.alpha, params_.beta,
+                params_.a_transposed, false /*params_.b_managed*/, params_.b_transposed, params_.alpha, params_.beta, 
                 params_.allow_fp16_computations, params_.activation,
                 dml_device_, d3d12_device_, true);
             // bind descriptor heap
@@ -850,7 +850,7 @@ protected:
     {
         if (params_.type == GemmType::GemmType_AB || params_.type == GemmType::GemmType_SV_S_QKV || params_.type == GemmType::GemmType_SV_S_KV)
         {
-            return params_.a_transposed ? params_.shape_a.h : params_.shape_a.w;;
+            return params_.a_transposed ? params_.shape_a.h : params_.shape_a.w;
         }
         else if (params_.type == GemmType::GemmType_QK_QKV)
         {
@@ -905,7 +905,7 @@ class GemmDmlDispatcher : public GemmBaseDispatcher
 public:
     GemmDmlDispatcher(create_params_t&& params, ID3D12Device* d3d12_device, IDMLDevice* dml_device, IDMLCommandRecorder* dml_cmd_recorder, ID3D12GraphicsCommandList* cmd_list)
         : GemmBaseDispatcher(std::move(params), d3d12_device, dml_device, dml_cmd_recorder, cmd_list)
-        , gemm_(params_.type, to_dml_data_type(params_.dt), to_dml_tensor_policy(params_.layout), params_.shape_a, params_.shape_b, params_.shape_c, get_shape_output(),
+        , gemm_(params_.type, to_dml_data_type(params_.dt), to_dml_tensor_policy(params_.layout), params_.shape_a, params_.shape_b, params_.shape_c, get_shape_output(), 
             params_.a_transposed, params_.b_managed, params_.b_transposed,
             params_.alpha, params_.beta, params_.allow_fp16_computations, params_.activation,
             dml_device, d3d12_device, false)
