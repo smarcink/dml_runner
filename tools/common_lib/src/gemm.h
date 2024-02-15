@@ -1628,35 +1628,35 @@ public:
         cmd_list->Dispatch(thg_x, thg_y, thg_z);
     }
 
-private:
-    std::vector<std::uint32_t> get_gws() const
-    {
-        std::uint32_t gws_x = 0;
-        std::uint32_t gws_y = 0;
-        std::uint32_t gws_z = 0;
-        if (params_.type == GemmType::GemmType_SV_S_QKV)
+    private:
+        std::vector<std::uint32_t> get_gws() const
         {
-            gws_x = get_M() / cm_params_.tile_m;
-            gws_y = get_N() / cm_params_.tile_n;
-            gws_z = get_batch() * get_channels() * cm_params_.slice_k;
+            std::uint32_t gws_x = 0;
+            std::uint32_t gws_y = 0;
+            std::uint32_t gws_z = 0;
+            if (params_.type == GemmType::GemmType_SV_S_QKV)
+            {
+                gws_x = get_M() / cm_params_.tile_m;
+                gws_y = get_N() / cm_params_.tile_n;
+                gws_z = get_batch() * get_channels() * cm_params_.slice_k;
+            }
+            else if (params_.type == GemmType::GemmType_QK_QKV)
+            {
+                gws_x = get_N() / cm_params_.tile_n;  // n first
+                gws_y = get_M() / cm_params_.tile_m;  // m second
+                gws_z = get_batch() * get_channels() * cm_params_.slice_k;
+            }
+            else
+            {
+                gws_x = get_M() / cm_params_.tile_m;
+                gws_y = get_N() / cm_params_.tile_n;
+                gws_z = get_batch() * get_channels() * cm_params_.slice_k;
+            }
+            assert(gws_x != 0);
+            assert(gws_y != 0);
+            assert(gws_z != 0);
+            return { gws_x, gws_y, gws_z };
         }
-        else if (params_.type == GemmType::GemmType_QK_QKV)
-        {
-            gws_x = get_N() / cm_params_.tile_n;  // n first
-            gws_y = get_M() / cm_params_.tile_m;  // m second
-            gws_z = get_batch() * get_channels() * cm_params_.slice_k;
-        }
-        else
-        {
-            gws_x = get_M() / cm_params_.tile_m;
-            gws_y = get_N() / cm_params_.tile_n;
-            gws_z = get_batch() * get_channels() * cm_params_.slice_k;
-        }
-        assert(gws_x != 0);
-        assert(gws_y != 0);
-        assert(gws_z != 0);
-        return { gws_x, gws_y, gws_z };
-    }
 
 private:
     cm_params_t cm_params_;
