@@ -122,235 +122,235 @@ public:
     {
 
         const auto fused_act = [](const auto& activation_settings)
+        {
+            auto ret = dml::FusedActivation::None();
+            if (activation_settings.type != ActivationType::eUnknown)
             {
-                auto ret = dml::FusedActivation::None();
-                if (activation_settings.type != ActivationType::eUnknown)
-                {
-                    const auto activation = to_dml_activation_setting(activation_settings);
-                    ret = dml::FusedActivation(activation.desc.Type, activation_settings.alpha, activation_settings.beta);
-                }
-                return ret;
-            }(activation_settings);
-
-            outputs_.resize(1);
-            if (type_ == GemmType::GemmType_AB)
-            {
-                dml::TensorDesc::Dimensions dimensions_0;
-                dimensions_0.push_back(shape_a.n);
-                dimensions_0.push_back(shape_a.c);
-                dimensions_0.push_back(shape_a.h);
-                dimensions_0.push_back(shape_a.w);
-                dml::TensorDesc desc_input_0 = { data_type, dimensions_0 };
-                input_0_ = dml::InputTensor(graph_, 0, desc_input_0);
-
-                dml::TensorDesc::Dimensions dimensions_1;
-                dimensions_1.push_back(shape_b.n);
-                dimensions_1.push_back(shape_b.c);
-                dimensions_1.push_back(shape_b.h);
-                dimensions_1.push_back(shape_b.w);
-                dml::TensorDesc desc_input_1 = { data_type, b_managed ? DML_TENSOR_FLAG_OWNED_BY_DML : DML_TENSOR_FLAG_NONE, dimensions_1 };
-                input_1_ = dml::InputTensor(graph_, 1, desc_input_1);
-
-                if (shape_c.get_dims_count() > 0)
-                {
-                    dml::TensorDesc::Dimensions dimensions_2;
-                    dimensions_2.push_back(shape_a.n);
-                    dimensions_2.push_back(shape_a.c);
-                    dimensions_2.push_back(a_transposed ? shape_a.w : shape_a.h);
-                    dimensions_2.push_back(b_transposed ? shape_b.h : shape_b.w);
-                    dml::TensorDesc desc_input_2 = { data_type, dimensions_2 };
-                    input_2_ = dml::InputTensor(graph_, 2, desc_input_2);
-                }
-
-                outputs_[0] = dml::Gemm(input_0_, input_1_, input_2_,
-                    a_transposed ? DML_MATRIX_TRANSFORM_TRANSPOSE : DML_MATRIX_TRANSFORM_NONE,
-                    b_transposed ? DML_MATRIX_TRANSFORM_TRANSPOSE : DML_MATRIX_TRANSFORM_NONE,
-                    alpha, beta, fused_act);
+                const auto activation = to_dml_activation_setting(activation_settings);
+                ret = dml::FusedActivation(activation.desc.Type, activation_settings.alpha, activation_settings.beta);
             }
-            else if (type_ == GemmType::GemmType_QK_QKV)
+            return ret;
+        }(activation_settings);
+
+        outputs_.resize(1);
+        if (type_ == GemmType::GemmType_AB)
+        {
+            dml::TensorDesc::Dimensions dimensions_0;
+            dimensions_0.push_back(shape_a.n);
+            dimensions_0.push_back(shape_a.c);
+            dimensions_0.push_back(shape_a.h);
+            dimensions_0.push_back(shape_a.w);
+            dml::TensorDesc desc_input_0 = { data_type, dimensions_0 };
+            input_0_ = dml::InputTensor(graph_, 0, desc_input_0);
+
+            dml::TensorDesc::Dimensions dimensions_1;
+            dimensions_1.push_back(shape_b.n);
+            dimensions_1.push_back(shape_b.c);
+            dimensions_1.push_back(shape_b.h);
+            dimensions_1.push_back(shape_b.w);
+            dml::TensorDesc desc_input_1 = { data_type, b_managed ? DML_TENSOR_FLAG_OWNED_BY_DML : DML_TENSOR_FLAG_NONE, dimensions_1 };
+            input_1_ = dml::InputTensor(graph_, 1, desc_input_1);
+
+            if (shape_c.get_dims_count() > 0)
             {
-                dml::TensorDesc::Dimensions dimensions_0;
-                dimensions_0.push_back(shape_a.n);
-                dimensions_0.push_back(shape_a.c);
-                dimensions_0.push_back(shape_a.d);
-                dimensions_0.push_back(shape_a.h);
-                dimensions_0.push_back(shape_a.w);
-                dml::TensorDesc desc_input_0 = { data_type, dimensions_0 };
-                input_0_ = dml::InputTensor(graph_, 0, desc_input_0);
-
-                // split the single input
-                std::vector<std::uint32_t> after_split_dims = { 1, 1, 1 };
-                auto split_outputs = dml::Split(input_0_, 3, after_split_dims);
-
-                // reshape, we care only about Q and K for this case
-                dml::TensorDimensions reshaped_dimss{ shape_a.n, shape_a.c, shape_a.d, shape_a.w };
-                decltype(split_outputs) reshaped_splits(2);
-                for (auto i = 0; i < reshaped_splits.size(); i++)
-                {
-                    auto& sout = split_outputs[i];
-                    reshaped_splits[i] = dml::Reinterpret(sout, reshaped_dimss, dml::NullOpt);
-                }
-
-                const auto batch = reshaped_dimss[0];
-                const auto seq = reshaped_dimss[1];
-                const auto head_count = reshaped_dimss[2];
-                const auto head_size = reshaped_dimss[3];
-
-                // transpose logical
-                const auto head_size_stride = 1;
-                const auto head_count_stride = head_size * head_size_stride;
-                const auto seq_stride = head_count * head_count_stride;
-                const auto batch_stride = seq * seq_stride;
-                dml::TensorStrides strides_0 = { batch_stride, head_count_stride, seq_stride, head_size_stride };
-                dml::TensorStrides strides_1 = { batch_stride, head_count_stride, head_size_stride, seq_stride };
-                auto gemm_inp_a = dml::Reinterpret(reshaped_splits[0], dml::TensorDimensions{batch, head_count, seq, head_size }, strides_0);
-                auto gemm_inp_b = dml::Reinterpret(reshaped_splits[1], dml::TensorDimensions{batch, head_count, head_size, seq }, strides_1);
-                outputs_[0] = dml::Gemm(gemm_inp_a, gemm_inp_b, dml::NullOpt, DML_MATRIX_TRANSFORM_NONE, DML_MATRIX_TRANSFORM_NONE, alpha, beta, fused_act);
-            }
-            else if (type_ == GemmType::GemmType_SV_S_QKV)
-            {
-                dml::TensorDesc::Dimensions dimensions_0;
-                dimensions_0.push_back(shape_a.n);
-                dimensions_0.push_back(shape_a.c);
-                dimensions_0.push_back(shape_a.h);
-                dimensions_0.push_back(shape_a.w);
-                dml::TensorDesc desc_input_0 = { data_type, dimensions_0 };
-                input_0_ = dml::InputTensor(graph_, 0, desc_input_0);
-
-                dml::TensorDesc::Dimensions dimensions_1;
-                dimensions_1.push_back(shape_b.n);
-                dimensions_1.push_back(shape_b.c);
-                dimensions_1.push_back(shape_b.d);
-                dimensions_1.push_back(shape_b.h);
-                dimensions_1.push_back(shape_b.w);
-                dml::TensorDesc desc_input_1 = { data_type, dimensions_1 };
-                input_1_ = dml::InputTensor(graph_, 1, desc_input_1);
-
-                // split the 2nd input
-                std::vector<std::uint32_t> after_split_dims = { 1, 1, 1 };
-                auto split_outputs = dml::Split(input_1_, 3, after_split_dims);
-
-                // reshape, we care only about V for this case
-                dml::TensorDimensions reshaped_dims{ shape_b.n, shape_b.c, shape_b.d, shape_b.w };
-                auto reshaped_split = dml::Reinterpret(split_outputs[2], reshaped_dims, dml::NullOpt);
-
-                const auto batch = reshaped_dims[0];
-                const auto seq = reshaped_dims[1];
-                const auto head_count = reshaped_dims[2];
-                const auto head_size = reshaped_dims[3];
-
-                // transpose logical
-                const auto head_size_stride = 1;
-                const auto head_count_stride = head_size * head_size_stride;
-                const auto seq_stride = head_count * head_count_stride;
-                const auto batch_stride = seq * seq_stride;
-                dml::TensorStrides strides_1 = { batch_stride, head_count_stride, seq_stride, head_size_stride };
-                auto gemm_inp_b = dml::Reinterpret(reshaped_split,  dml::TensorDimensions{batch, head_count, seq, head_size }, strides_1);
-                auto gemm_out = dml::Gemm(input_0_, gemm_inp_b, dml::NullOpt, DML_MATRIX_TRANSFORM_NONE, DML_MATRIX_TRANSFORM_NONE, alpha, beta, fused_act);
-                const auto& gemm_out_sizes = gemm_out.GetOutputDesc().sizes;
-                outputs_[0] = dml_transpose(gemm_out, dml::TensorDimensions{ gemm_out_sizes[0], gemm_out_sizes[2], gemm_out_sizes[1], gemm_out_sizes[3]},
-                    dml::TensorPolicy(&compute_transpose_nchw_to_nhcw));
-            }
-            else if (type_ == GemmType::GemmType_QK_Q_KV)
-            {
-                dml::TensorDesc::Dimensions dimensions_0;
-                dimensions_0.push_back(shape_a.n);
-                dimensions_0.push_back(shape_a.c);
-                dimensions_0.push_back(shape_a.h);
-                dimensions_0.push_back(1);
-                dml::TensorDesc desc_input_0 = { data_type, dimensions_0 };
-                input_0_ = dml::InputTensor(graph_, 0, desc_input_0);
-
-                dml::TensorDesc::Dimensions dimensions_1;
-                dimensions_1.push_back(shape_b.n);
-                dimensions_1.push_back(shape_b.c);
-                dimensions_1.push_back(shape_b.d);
-                dimensions_1.push_back(shape_b.h);
-                dimensions_1.push_back(shape_b.w);
-                dml::TensorDesc desc_input_1 = { data_type, dimensions_1 };
-                input_1_ = dml::InputTensor(graph_, 1, desc_input_1);
-
-                const auto batch = shape_a.n;
-                const auto seq = shape_a.c;
-                const auto head_count = shape_b.d;
-                const auto head_size = shape_a.h / head_count;
-                const auto N = shape_b.c;
-
-                // reshape and transpose first input
-                const auto head_size_stride = 1;
-                const auto head_count_stride = head_size * head_size_stride;
-                const auto seq_stride = head_count * head_count_stride;
-                const auto batch_stride = seq * seq_stride;
-                dml::TensorStrides input_0_strides = { batch_stride, head_count_stride, seq_stride, head_size_stride };
-                auto gemm_inp_a = dml::Reinterpret(input_0_, dml::TensorDimensions{ batch, head_count, seq, head_size }, input_0_strides);
-
-                // split the 2nd input
-                std::vector<std::uint32_t> after_split_dims = { 1, 1};
-                auto split_outputs = dml::Split(input_1_, 3, after_split_dims);
-
-                // reshape, we care only about V for this case
-                dml::TensorDimensions reshaped_dims{ batch, N, head_count, head_size };
-                auto reshaped_split = dml::Reinterpret(split_outputs[0], reshaped_dims, dml::NullOpt);
-
-                // transpose logical
-                dml::TensorStrides input_1_strides = { N * head_count * head_size, head_size, 1, head_count * head_size };
-                auto gemm_inp_b = dml::Reinterpret(reshaped_split, dml::TensorDimensions{ batch, head_count, head_size, N }, input_1_strides);
-                outputs_[0] = dml::Gemm(gemm_inp_a, gemm_inp_b, dml::NullOpt, DML_MATRIX_TRANSFORM_NONE, DML_MATRIX_TRANSFORM_NONE, alpha, beta, fused_act);
-            }
-            else if (type_ == GemmType::GemmType_SV_S_KV)
-            {
-                dml::TensorDesc::Dimensions dimensions_0;
-                dimensions_0.push_back(shape_a.n);
-                dimensions_0.push_back(shape_a.c);
-                dimensions_0.push_back(shape_a.h);
-                dimensions_0.push_back(shape_a.w);
-                dml::TensorDesc desc_input_0 = { data_type, dimensions_0 };
-                input_0_ = dml::InputTensor(graph_, 0, desc_input_0);
-
-                dml::TensorDesc::Dimensions dimensions_1;
-                dimensions_1.push_back(shape_b.n);
-                dimensions_1.push_back(shape_b.c);
-                dimensions_1.push_back(shape_b.d);
-                dimensions_1.push_back(shape_b.h);
-                dimensions_1.push_back(shape_b.w);
-                dml::TensorDesc desc_input_1 = { data_type, dimensions_1 };
-                input_1_ = dml::InputTensor(graph_, 1, desc_input_1);
-
-                const auto batch = shape_b.n;
-                const auto seq = shape_b.c;
-                const auto head_count = shape_b.d;
-                const auto head_size = shape_b.w;
-
-                // split the 2nd input
-                std::vector<std::uint32_t> after_split_dims = { 1, 1 };
-                auto split_outputs = dml::Split(input_1_, 3, after_split_dims);
-
-                // reshape, we care only about V for this case
-                dml::TensorDimensions reshaped_dims{ batch, seq, head_count, head_size };
-                auto reshaped_split = dml::Reinterpret(split_outputs[1], reshaped_dims, dml::NullOpt);
-
-                // transpose logical
-                dml::TensorStrides input_1_strides = { seq * head_count * head_size, head_size, head_count * head_size , 1};
-                auto gemm_inp_b = dml::Reinterpret(reshaped_split, dml::TensorDimensions{ batch, head_count, seq, head_size }, input_1_strides);
-                outputs_[0] = dml::Gemm(input_0_, gemm_inp_b, dml::NullOpt, DML_MATRIX_TRANSFORM_NONE, DML_MATRIX_TRANSFORM_NONE, alpha, beta, fused_act);
-            }
-            else
-            {
-                assert(false && "Unsupported gemm type!");
+                dml::TensorDesc::Dimensions dimensions_2;
+                dimensions_2.push_back(shape_a.n);
+                dimensions_2.push_back(shape_a.c);
+                dimensions_2.push_back(a_transposed ? shape_a.w : shape_a.h);
+                dimensions_2.push_back(b_transposed ? shape_b.h : shape_b.w);
+                dml::TensorDesc desc_input_2 = { data_type, dimensions_2 };
+                input_2_ = dml::InputTensor(graph_, 2, desc_input_2);
             }
 
-            DML_EXECUTION_FLAGS execution_flags = DML_EXECUTION_FLAG_DESCRIPTORS_VOLATILE;
-            if (allow_fp16_computations)
+            outputs_[0] = dml::Gemm(input_0_, input_1_, input_2_,
+                a_transposed ? DML_MATRIX_TRANSFORM_TRANSPOSE : DML_MATRIX_TRANSFORM_NONE,
+                b_transposed ? DML_MATRIX_TRANSFORM_TRANSPOSE : DML_MATRIX_TRANSFORM_NONE,
+                alpha, beta, fused_act);
+        }
+        else if (type_ == GemmType::GemmType_QK_QKV)
+        {
+            dml::TensorDesc::Dimensions dimensions_0;
+            dimensions_0.push_back(shape_a.n);
+            dimensions_0.push_back(shape_a.c);
+            dimensions_0.push_back(shape_a.d);
+            dimensions_0.push_back(shape_a.h);
+            dimensions_0.push_back(shape_a.w);
+            dml::TensorDesc desc_input_0 = { data_type, dimensions_0 };
+            input_0_ = dml::InputTensor(graph_, 0, desc_input_0);
+
+            // split the single input
+            std::vector<std::uint32_t> after_split_dims = { 1, 1, 1 };
+            auto split_outputs = dml::Split(input_0_, 3, after_split_dims);
+
+            // reshape, we care only about Q and K for this case
+            dml::TensorDimensions reshaped_dimss{ shape_a.n, shape_a.c, shape_a.d, shape_a.w };
+            decltype(split_outputs) reshaped_splits(2);
+            for (auto i = 0; i < reshaped_splits.size(); i++)
             {
-                execution_flags |= DML_EXECUTION_FLAG_ALLOW_HALF_PRECISION_COMPUTATION;
+                auto& sout = split_outputs[i];
+                reshaped_splits[i] = dml::Reinterpret(sout, reshaped_dimss, dml::NullOpt);
             }
-            if (disable_mc)
-            {
-                execution_flags |= DML_EXECUTION_FLAG_DISABLE_META_COMMANDS;
-            }
-            assert(!outputs_.empty());
-            dml_op_executor_ = graph_.Compile(execution_flags, outputs_);
-            create_operator_impl();
+
+            const auto batch = reshaped_dimss[0];
+            const auto seq = reshaped_dimss[1];
+            const auto head_count = reshaped_dimss[2];
+            const auto head_size = reshaped_dimss[3];
+
+            // transpose logical
+            const auto head_size_stride = 1;
+            const auto head_count_stride = head_size * head_size_stride;
+            const auto seq_stride = head_count * head_count_stride;
+            const auto batch_stride = seq * seq_stride;
+            dml::TensorStrides strides_0 = { batch_stride, head_count_stride, seq_stride, head_size_stride };
+            dml::TensorStrides strides_1 = { batch_stride, head_count_stride, head_size_stride, seq_stride };
+            auto gemm_inp_a = dml::Reinterpret(reshaped_splits[0], dml::TensorDimensions{batch, head_count, seq, head_size }, strides_0);
+            auto gemm_inp_b = dml::Reinterpret(reshaped_splits[1], dml::TensorDimensions{batch, head_count, head_size, seq }, strides_1);
+            outputs_[0] = dml::Gemm(gemm_inp_a, gemm_inp_b, dml::NullOpt, DML_MATRIX_TRANSFORM_NONE, DML_MATRIX_TRANSFORM_NONE, alpha, beta, fused_act);
+        }
+        else if (type_ == GemmType::GemmType_SV_S_QKV)
+        {
+            dml::TensorDesc::Dimensions dimensions_0;
+            dimensions_0.push_back(shape_a.n);
+            dimensions_0.push_back(shape_a.c);
+            dimensions_0.push_back(shape_a.h);
+            dimensions_0.push_back(shape_a.w);
+            dml::TensorDesc desc_input_0 = { data_type, dimensions_0 };
+            input_0_ = dml::InputTensor(graph_, 0, desc_input_0);
+
+            dml::TensorDesc::Dimensions dimensions_1;
+            dimensions_1.push_back(shape_b.n);
+            dimensions_1.push_back(shape_b.c);
+            dimensions_1.push_back(shape_b.d);
+            dimensions_1.push_back(shape_b.h);
+            dimensions_1.push_back(shape_b.w);
+            dml::TensorDesc desc_input_1 = { data_type, dimensions_1 };
+            input_1_ = dml::InputTensor(graph_, 1, desc_input_1);
+
+            // split the 2nd input
+            std::vector<std::uint32_t> after_split_dims = { 1, 1, 1 };
+            auto split_outputs = dml::Split(input_1_, 3, after_split_dims);
+
+            // reshape, we care only about V for this case
+            dml::TensorDimensions reshaped_dims{ shape_b.n, shape_b.c, shape_b.d, shape_b.w };
+            auto reshaped_split = dml::Reinterpret(split_outputs[2], reshaped_dims, dml::NullOpt);
+
+            const auto batch = reshaped_dims[0];
+            const auto seq = reshaped_dims[1];
+            const auto head_count = reshaped_dims[2];
+            const auto head_size = reshaped_dims[3];
+
+            // transpose logical
+            const auto head_size_stride = 1;
+            const auto head_count_stride = head_size * head_size_stride;
+            const auto seq_stride = head_count * head_count_stride;
+            const auto batch_stride = seq * seq_stride;
+            dml::TensorStrides strides_1 = { batch_stride, head_count_stride, seq_stride, head_size_stride };
+            auto gemm_inp_b = dml::Reinterpret(reshaped_split,  dml::TensorDimensions{batch, head_count, seq, head_size }, strides_1);
+            auto gemm_out = dml::Gemm(input_0_, gemm_inp_b, dml::NullOpt, DML_MATRIX_TRANSFORM_NONE, DML_MATRIX_TRANSFORM_NONE, alpha, beta, fused_act);
+            const auto& gemm_out_sizes = gemm_out.GetOutputDesc().sizes;
+            outputs_[0] = dml_transpose(gemm_out, dml::TensorDimensions{ gemm_out_sizes[0], gemm_out_sizes[2], gemm_out_sizes[1], gemm_out_sizes[3]},
+                dml::TensorPolicy(&compute_transpose_nchw_to_nhcw));
+        }
+        else if (type_ == GemmType::GemmType_QK_Q_KV)
+        {
+            dml::TensorDesc::Dimensions dimensions_0;
+            dimensions_0.push_back(shape_a.n);
+            dimensions_0.push_back(shape_a.c);
+            dimensions_0.push_back(shape_a.h);
+            dimensions_0.push_back(1);
+            dml::TensorDesc desc_input_0 = { data_type, dimensions_0 };
+            input_0_ = dml::InputTensor(graph_, 0, desc_input_0);
+
+            dml::TensorDesc::Dimensions dimensions_1;
+            dimensions_1.push_back(shape_b.n);
+            dimensions_1.push_back(shape_b.c);
+            dimensions_1.push_back(shape_b.d);
+            dimensions_1.push_back(shape_b.h);
+            dimensions_1.push_back(shape_b.w);
+            dml::TensorDesc desc_input_1 = { data_type, dimensions_1 };
+            input_1_ = dml::InputTensor(graph_, 1, desc_input_1);
+
+            const auto batch = shape_a.n;
+            const auto seq = shape_a.c;
+            const auto head_count = shape_b.d;
+            const auto head_size = shape_a.h / head_count;
+            const auto N = shape_b.c;
+
+            // reshape and transpose first input
+            const auto head_size_stride = 1;
+            const auto head_count_stride = head_size * head_size_stride;
+            const auto seq_stride = head_count * head_count_stride;
+            const auto batch_stride = seq * seq_stride;
+            dml::TensorStrides input_0_strides = { batch_stride, head_count_stride, seq_stride, head_size_stride };
+            auto gemm_inp_a = dml::Reinterpret(input_0_, dml::TensorDimensions{ batch, head_count, seq, head_size }, input_0_strides);
+
+            // split the 2nd input
+            std::vector<std::uint32_t> after_split_dims = { 1, 1};
+            auto split_outputs = dml::Split(input_1_, 3, after_split_dims);
+
+            // reshape, we care only about V for this case
+            dml::TensorDimensions reshaped_dims{ batch, N, head_count, head_size };
+            auto reshaped_split = dml::Reinterpret(split_outputs[0], reshaped_dims, dml::NullOpt);
+
+            // transpose logical
+            dml::TensorStrides input_1_strides = { N * head_count * head_size, head_size, 1, head_count * head_size };
+            auto gemm_inp_b = dml::Reinterpret(reshaped_split, dml::TensorDimensions{ batch, head_count, head_size, N }, input_1_strides);
+            outputs_[0] = dml::Gemm(gemm_inp_a, gemm_inp_b, dml::NullOpt, DML_MATRIX_TRANSFORM_NONE, DML_MATRIX_TRANSFORM_NONE, alpha, beta, fused_act);
+        }
+        else if (type_ == GemmType::GemmType_SV_S_KV)
+        {
+            dml::TensorDesc::Dimensions dimensions_0;
+            dimensions_0.push_back(shape_a.n);
+            dimensions_0.push_back(shape_a.c);
+            dimensions_0.push_back(shape_a.h);
+            dimensions_0.push_back(shape_a.w);
+            dml::TensorDesc desc_input_0 = { data_type, dimensions_0 };
+            input_0_ = dml::InputTensor(graph_, 0, desc_input_0);
+
+            dml::TensorDesc::Dimensions dimensions_1;
+            dimensions_1.push_back(shape_b.n);
+            dimensions_1.push_back(shape_b.c);
+            dimensions_1.push_back(shape_b.d);
+            dimensions_1.push_back(shape_b.h);
+            dimensions_1.push_back(shape_b.w);
+            dml::TensorDesc desc_input_1 = { data_type, dimensions_1 };
+            input_1_ = dml::InputTensor(graph_, 1, desc_input_1);
+
+            const auto batch = shape_b.n;
+            const auto seq = shape_b.c;
+            const auto head_count = shape_b.d;
+            const auto head_size = shape_b.w;
+
+            // split the 2nd input
+            std::vector<std::uint32_t> after_split_dims = { 1, 1 };
+            auto split_outputs = dml::Split(input_1_, 3, after_split_dims);
+
+            // reshape, we care only about V for this case
+            dml::TensorDimensions reshaped_dims{ batch, seq, head_count, head_size };
+            auto reshaped_split = dml::Reinterpret(split_outputs[1], reshaped_dims, dml::NullOpt);
+
+            // transpose logical
+            dml::TensorStrides input_1_strides = { seq * head_count * head_size, head_size, head_count * head_size , 1};
+            auto gemm_inp_b = dml::Reinterpret(reshaped_split, dml::TensorDimensions{ batch, head_count, seq, head_size }, input_1_strides);
+            outputs_[0] = dml::Gemm(input_0_, gemm_inp_b, dml::NullOpt, DML_MATRIX_TRANSFORM_NONE, DML_MATRIX_TRANSFORM_NONE, alpha, beta, fused_act);
+        }
+        else
+        {
+            assert(false && "Unsupported gemm type!");
+        }
+
+        DML_EXECUTION_FLAGS execution_flags = DML_EXECUTION_FLAG_DESCRIPTORS_VOLATILE;
+        if (allow_fp16_computations)
+        {
+            execution_flags |= DML_EXECUTION_FLAG_ALLOW_HALF_PRECISION_COMPUTATION;
+        }
+        if (disable_mc)
+        {
+            execution_flags |= DML_EXECUTION_FLAG_DISABLE_META_COMMANDS;
+        }
+        assert(!outputs_.empty());
+        dml_op_executor_ = graph_.Compile(execution_flags, outputs_);
+        create_operator_impl();
     }
 
     void record_execute(IDMLCommandRecorder* dml_cmd_recorder, ID3D12GraphicsCommandList* cmd_list,
@@ -361,7 +361,6 @@ public:
         DML_BUFFER_BINDING input_a_buffer_binding{ resource_a, 0, resource_a->GetDesc().Width };
         DML_BUFFER_BINDING input_b_buffer_binding{ nullptr, 0, 0 };
         DML_BUFFER_BINDING input_c_buffer_binding{ nullptr, 0, 0 };
-
 
         std::vector<DML_BINDING_DESC> input_bindings;
         input_bindings.reserve(3);
@@ -543,12 +542,12 @@ public:
         input_data_a_.resize(get_tensor_elements_count(params_.shape_b, params_.layout) * get_data_type_bytes_width(params_.dt));
         input_data_b_.resize(get_tensor_elements_count(params_.shape_b, params_.layout) * get_data_type_bytes_width(params_.dt));
         input_data_c_.resize(get_tensor_elements_count(params_.shape_c, params_.layout) * get_data_type_bytes_width(params_.dt));
-  
+ 
         if (params_.type == GemmType::GemmType_AB)
         {
             assert(params_.shape_a.get_dims_count() == 4);
             assert(params_.shape_b.get_dims_count() == 4);
-
+ 
             assert(!input_data_a_.empty());
             assert(!input_data_b_.empty());
         }
@@ -751,7 +750,7 @@ public:
             opts.activation = params_.activation;
             ref_untyped_result = dnnl_gemm_op::gemm(bindings, opts);
         }
-        else  
+        else   
         {
             gpu_op::Gemm gemm_ref(params_.type, to_dml_data_type(params_.dt), to_dml_tensor_policy(params_.layout),
                 params_.shape_a, params_.shape_b, params_.shape_c, get_shape_output(),
@@ -957,7 +956,7 @@ public:
         {
             input_c_memory_desc_.emplace(to_dnnl_mem_desc(params_.shape_c, params_.layout, params_.dt));
         }
-
+        
         const dnnl::primitive_attr attr = [this]()
         {
             // create a post-op with relu
@@ -989,7 +988,7 @@ public:
             // beta
             if (has_scaling_factors())
             {
-                ops.append_binary(dnnl::algorithm::binary_mul,
+                ops.append_binary(dnnl::algorithm::binary_mul, 
                     to_dnnl_mem_desc(TensorShape{ 1, 0, 0, 0 }, DataLayout::eW, DataType::eFp32));
             }
 
@@ -1046,7 +1045,7 @@ public:
         const auto temporary_resoruce_size = [&]()
         {
             return scratchpad_memory_desc_->get_size();
-        }();
+        }(); 
         if (temporary_resoruce_size != 0)
         {
             const auto heap_props = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
@@ -1227,7 +1226,7 @@ public:
         throw_if_failed(cmd_list->QueryInterface(&cmd_list4), "cant cast d3d12 device to ID3D12Device5");
         iumd::custom_metacommand::UmdD3d12CommandList cmd(cmd_list4);
         dnnl::stream stream = dnnl::iumd_interop::make_stream(dnnl_engine_, &cmd);
-
+        
         // memory resources are created in execute(...), because in MetaCommand these objects can be different from execute-to-execute
         dnnl::memory input_memory = create_dnnl_memory(input_a_memory_desc_, umd_input_a_memory_);
 
@@ -1493,7 +1492,7 @@ public:
             }
 
             build_options += pre_jit + name + between_name_and_value + value_str + post_jit;
-            };
+        };
 
         add_define("SIZE_B", B);
         add_define("SIZE_C", C);
