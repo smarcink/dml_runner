@@ -726,11 +726,13 @@ public:
             bindings.input_a.dt = params_.dt;
             bindings.input_a.layout = params_.layout;
             bindings.input_a.shape = params_.shape_a;
+            bindings.input_a.transposed = params_.a_transposed;
 
             bindings.input_b.data = input_data_b_.data();
             bindings.input_b.dt = params_.dt;
             bindings.input_b.layout = params_.layout;
             bindings.input_b.shape = params_.shape_b;
+            bindings.input_b.transposed = params_.b_transposed;
 
             if (input_buffer_c_)
             {
