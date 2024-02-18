@@ -55,6 +55,8 @@ protected:
     void set_alpha_value(float v) { alpha_ = v; }
     void set_beta_value(float v) { beta_ = v; }
     void set_activation_setting(ActivationSettings act) { activation_ = std::move(act); };
+    void set_a_transposed() { use_a_transposed_ = true; }
+    void set_b_transposed() { use_b_transposed_ = true; }
 
 protected:
     std::unique_ptr<NodeDispatcher> create_dispatcher_impl() override
@@ -80,7 +82,8 @@ protected:
         opts.beta = beta_;
         opts.b_managed = use_b_managed_;
         opts.c_managed = false;
-        opts.b_transposed = false;
+        opts.a_transposed = use_a_transposed_;
+        opts.b_transposed = use_b_transposed_;
         opts.activation = activation_;
         auto node = std::make_unique<GemmUmdD3d12Dispatcher>(std::move(opts),
             g_dx12_engine.intel_extension_d3d12,
@@ -97,6 +100,8 @@ private:
     float alpha_ = 1.0f;
     float beta_ = 1.0f;
     ActivationSettings activation_ = {};
+    bool use_a_transposed_ = false;
+    bool use_b_transposed_ = false;
 };
 
 
@@ -151,6 +156,25 @@ TEST_P(DnnlPluginNext_GEMM_Params, WithCtensorAndAlphaAndBetaAndActivation)
 TEST_P(DnnlPluginNext_GEMM_Params, WithBmanaged)
 {
     set_b_managed();
+    run();
+}
+
+TEST_P(DnnlPluginNext_GEMM_Params, WithATransposed)
+{
+    set_a_transposed();
+    run();
+}
+
+TEST_P(DnnlPluginNext_GEMM_Params, WithBTransposed)
+{
+    set_b_transposed();
+    run();
+}
+
+TEST_P(DnnlPluginNext_GEMM_Params, WithAandBTransposed)
+{
+    set_a_transposed();
+    set_b_transposed();
     run();
 }
 
