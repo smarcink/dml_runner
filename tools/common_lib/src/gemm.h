@@ -950,8 +950,26 @@ public:
     {
         using namespace dnnl_utils;
 
-        input_a_memory_desc_ = to_dnnl_mem_desc(params_.a_transposed ? TensorShape{ params_.shape_a.n, params_.shape_a.c, params_.shape_a.w, params_.shape_a.h } : params_.shape_a, params_.layout, params_.dt);
-        const auto input_b_memory_desc = to_dnnl_mem_desc(params_.b_transposed ? TensorShape{ params_.shape_b.n, params_.shape_b.c, params_.shape_b.w, params_.shape_b.h } : params_.shape_b, params_.b_managed ? DataLayout::eWeightsLayoutStart : params_.layout, params_.dt);
+        //input_a_memory_desc_ = to_dnnl_mem_desc(params_.a_transposed ? TensorShape{ params_.shape_a.n, params_.shape_a.c, params_.shape_a.w, params_.shape_a.h } : params_.shape_a, params_.layout, params_.dt);
+        if (params_.a_transposed)
+        {
+            input_a_memory_desc_ = to_dnnl_mem_desc(params_.shape_a, params_.layout, params_.dt);
+            input_a_memory_desc_ = gemm_matrix_transpose(input_a_memory_desc_, params_.dt);
+        }
+        else
+        {
+            input_a_memory_desc_ = to_dnnl_mem_desc(params_.shape_a, params_.layout, params_.dt);
+        }
+        // const auto input_b_memory_desc = to_dnnl_mem_desc(params_.b_transposed ? TensorShape{ params_.shape_b.n, params_.shape_b.c, params_.shape_b.w, params_.shape_b.h } : params_.shape_b, params_.b_managed ? DataLayout::eWeightsLayoutStart : params_.layout, params_.dt);
+        if (params_.b_transposed)
+        {
+            input_b_memory_desc = to_dnnl_mem_desc(params_.shape_b, params_.b_managed ? DataLayout::eWeightsLayoutStart : params_.layout, params_.dt);
+            input_b_memory_desc = gemm_matrix_transpose(input_b_memory_desc, params_.dt);
+        }
+        else
+        {
+            input_b_memory_desc = to_dnnl_mem_desc(params_.shape_b, params_.b_managed ? DataLayout::eWeightsLayoutStart : params_.layout, params_.dt);
+        }
         output_memory_desc_ = to_dnnl_mem_desc(get_shape_output(), params_.layout, params_.dt);
 
         if (has_c_tensor())
@@ -1324,6 +1342,7 @@ private:
 
     dnnl::memory::desc input_a_memory_desc_;
     dnnl::memory::desc input_b_memory_desc_;
+    dnnl::memory::desc input_b_memory_desc;
     dnnl::memory::desc output_memory_desc_;
     std::optional<dnnl::memory::desc> input_c_memory_desc_;
     std::optional<dnnl::memory::desc> scratchpad_memory_desc_;
