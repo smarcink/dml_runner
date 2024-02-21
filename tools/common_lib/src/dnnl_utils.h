@@ -85,14 +85,13 @@ inline dnnl::memory::desc to_dnnl_mem_desc(const TensorShape& shape, const DataL
     return dnnl::memory::desc{ to_dnnl_dims(shape), to_dnnl_data_type(t), to_dnnl_format(l) };
 }
 
-inline dnnl::memory::desc gemm_matrix_transpose(const dnnl::memory::desc& nchw_desc, const DataType& t)
+inline dnnl::memory::desc matrix_transpose(const dnnl::memory::desc& nchw_desc, const DataType& t)
 {
     auto dims = nchw_desc.get_dims();
     auto ndims = dims.size();
     assert(ndims == 4);
 
-    std::swap(dims[2], dims[3]); // Swap channels and height
-
+    //std::swap(dims[2], dims[3]); // Swap channels and height
     // Create and return a new memory descriptor with NCWH format
     return dnnl::memory::desc(dims, to_dnnl_data_type(t), dnnl::memory::format_tag::abdc);
 }

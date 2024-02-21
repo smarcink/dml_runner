@@ -138,16 +138,16 @@ public:
             dml::TensorDesc::Dimensions dimensions_0;
             dimensions_0.push_back(shape_a.n);
             dimensions_0.push_back(shape_a.c);
-            dimensions_0.push_back(shape_a.h);
-            dimensions_0.push_back(shape_a.w);
+            dimensions_0.push_back(a_transposed ? shape_a.w : shape_a.h); // to make cmd arguments have normal matrix with transpose internal to each dispatcher
+            dimensions_0.push_back(a_transposed ? shape_a.h : shape_a.w); // to make cmd arguments have normal matrix with transpose internal to each dispatcher
             dml::TensorDesc desc_input_0 = { data_type, dimensions_0 };
             input_0_ = dml::InputTensor(graph_, 0, desc_input_0);
 
             dml::TensorDesc::Dimensions dimensions_1;
             dimensions_1.push_back(shape_b.n);
             dimensions_1.push_back(shape_b.c);
-            dimensions_1.push_back(shape_b.h);
-            dimensions_1.push_back(shape_b.w);
+            dimensions_1.push_back(b_transposed ? shape_b.w : shape_b.h); // to make cmd arguments have normal matrix with transpose internal to each dispatcher
+            dimensions_1.push_back(b_transposed ? shape_b.h : shape_b.w); // to make cmd arguments have normal matrix with transpose internal to each dispatcher
             dml::TensorDesc desc_input_1 = { data_type, b_managed ? DML_TENSOR_FLAG_OWNED_BY_DML : DML_TENSOR_FLAG_NONE, dimensions_1 };
             input_1_ = dml::InputTensor(graph_, 1, desc_input_1);
 
@@ -837,7 +837,7 @@ protected:
     {
         if (params_.type == GemmType::GemmType_AB || params_.type == GemmType::GemmType_SV_S_QKV || params_.type == GemmType::GemmType_SV_S_KV)
         {
-            return params_.a_transposed ? params_.shape_a.w : params_.shape_a.h;
+            return params_.shape_a.h;
         }
         else if (params_.type == GemmType::GemmType_QK_QKV || params_.type == GemmType::GemmType_QK_Q_KV)
         {
@@ -851,7 +851,7 @@ protected:
     {
         if (params_.type == GemmType::GemmType_AB || params_.type == GemmType::GemmType_SV_S_QKV || params_.type == GemmType::GemmType_SV_S_KV)
         {
-            return params_.a_transposed ? params_.shape_a.h : params_.shape_a.w;
+            return params_.shape_a.w;
         }
         else if (params_.type == GemmType::GemmType_QK_QKV)
         {
@@ -869,7 +869,7 @@ protected:
     {
         if (params_.type == GemmType::GemmType_AB || params_.type == GemmType::GemmType_SV_S_QKV || params_.type == GemmType::GemmType_SV_S_KV)
         {
-            return params_.b_transposed ? params_.shape_b.h : params_.shape_b.w;
+            return params_.shape_b.w;
         }
         else if (params_.type == GemmType::GemmType_QK_QKV)
         {
@@ -954,7 +954,7 @@ public:
         if (params_.a_transposed)
         {
             input_a_memory_desc_ = to_dnnl_mem_desc(params_.shape_a, params_.layout, params_.dt);
-            input_a_memory_desc_ = gemm_matrix_transpose(input_a_memory_desc_, params_.dt);
+            input_a_memory_desc_ = matrix_transpose(input_a_memory_desc_, params_.dt);
         }
         else
         {
@@ -964,7 +964,7 @@ public:
         if (params_.b_transposed)
         {
             input_b_memory_desc = to_dnnl_mem_desc(params_.shape_b, params_.b_managed ? DataLayout::eWeightsLayoutStart : params_.layout, params_.dt);
-            input_b_memory_desc = gemm_matrix_transpose(input_b_memory_desc, params_.dt);
+            input_b_memory_desc = matrix_transpose(input_b_memory_desc, params_.dt);
         }
         else
         {

@@ -12,14 +12,32 @@ std::vector<std::byte> dnnl_gemm_op::gemm(const bindings_t& bindings, opts_t opt
 
     dnnl::memory input_a_memory = [&](const auto& binding)
     {
-        auto ret = dnnl::memory(to_dnnl_mem_desc(binding.transposed ? TensorShape{binding.shape.n, binding.shape.c, binding.shape.w, binding.shape.h} : binding.shape, binding.layout, binding.dt), engine);
+        dnnl::memory ret;
+        if (binding.transposed)
+        {
+            dnnl::memory::desc transposed_desc = matrix_transpose(to_dnnl_mem_desc(binding.shape, binding.layout, binding.dt), binding.dt);
+            ret = dnnl::memory(transposed_desc, engine);
+        }
+        else
+        {
+            ret = dnnl::memory(to_dnnl_mem_desc(binding.shape, binding.layout, binding.dt), engine);
+        }
         copy_to_dnnl_memory(ret, binding.data);
         return ret;
     }(bindings.input_a);
 
     dnnl::memory input_b_memory = [&](const auto& binding)
     {
-        auto ret = dnnl::memory(to_dnnl_mem_desc(binding.transposed ? TensorShape{ binding.shape.n, binding.shape.c, binding.shape.w, binding.shape.h } : binding.shape, binding.layout, binding.dt), engine);
+        dnnl::memory ret;
+        if (binding.transposed)
+        {
+            dnnl::memory::desc transposed_desc = matrix_transpose(to_dnnl_mem_desc(binding.shape, binding.layout, binding.dt), binding.dt);
+            ret = dnnl::memory(transposed_desc, engine);
+        }
+        else
+        {
+            auto ret = dnnl::memory(to_dnnl_mem_desc(binding.shape, binding.layout, binding.dt), engine);
+        }
         copy_to_dnnl_memory(ret, binding.data);
         return ret;
     }(bindings.input_b);
