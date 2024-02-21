@@ -954,21 +954,28 @@ public:
         if (params_.a_transposed)
         {
             input_a_memory_desc_ = to_dnnl_mem_desc(params_.shape_a, params_.layout, params_.dt);
-            input_a_memory_desc_ = matrix_transpose(input_a_memory_desc_, params_.dt);
+            input_a_memory_desc_ = convert_to_ncwh_format(input_a_memory_desc_);
         }
         else
         {
             input_a_memory_desc_ = to_dnnl_mem_desc(params_.shape_a, params_.layout, params_.dt);
         }
         // const auto input_b_memory_desc = to_dnnl_mem_desc(params_.b_transposed ? TensorShape{ params_.shape_b.n, params_.shape_b.c, params_.shape_b.w, params_.shape_b.h } : params_.shape_b, params_.b_managed ? DataLayout::eWeightsLayoutStart : params_.layout, params_.dt);
-        if (params_.b_transposed)
+        if (params_.b_managed)
         {
-            input_b_memory_desc = to_dnnl_mem_desc(params_.shape_b, params_.b_managed ? DataLayout::eWeightsLayoutStart : params_.layout, params_.dt);
-            input_b_memory_desc = matrix_transpose(input_b_memory_desc, params_.dt);
+            input_b_memory_desc = to_dnnl_mem_desc(params_.shape_b, DataLayout::eWeightsLayoutStart, params_.dt);
         }
         else
         {
-            input_b_memory_desc = to_dnnl_mem_desc(params_.shape_b, params_.b_managed ? DataLayout::eWeightsLayoutStart : params_.layout, params_.dt);
+            if (params_.b_transposed)
+            {
+                input_b_memory_desc = to_dnnl_mem_desc(params_.shape_b, params_.layout, params_.dt);
+                input_b_memory_desc = convert_to_ncwh_format(input_b_memory_desc);
+            }
+            else
+            {
+                input_b_memory_desc = to_dnnl_mem_desc(params_.shape_b, params_.layout, params_.dt);
+            }
         }
         output_memory_desc_ = to_dnnl_mem_desc(get_shape_output(), params_.layout, params_.dt);
 

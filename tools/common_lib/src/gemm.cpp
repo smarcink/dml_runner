@@ -15,7 +15,7 @@ std::vector<std::byte> dnnl_gemm_op::gemm(const bindings_t& bindings, opts_t opt
         dnnl::memory ret;
         if (binding.transposed)
         {
-            dnnl::memory::desc transposed_desc = matrix_transpose(to_dnnl_mem_desc(binding.shape, binding.layout, binding.dt), binding.dt);
+            dnnl::memory::desc transposed_desc = convert_to_ncwh_format(to_dnnl_mem_desc(binding.shape, binding.layout, binding.dt));
             ret = dnnl::memory(transposed_desc, engine);
         }
         else
@@ -31,7 +31,7 @@ std::vector<std::byte> dnnl_gemm_op::gemm(const bindings_t& bindings, opts_t opt
         dnnl::memory ret;
         if (binding.transposed)
         {
-            dnnl::memory::desc transposed_desc = matrix_transpose(to_dnnl_mem_desc(binding.shape, binding.layout, binding.dt), binding.dt);
+            dnnl::memory::desc transposed_desc = convert_to_ncwh_format(to_dnnl_mem_desc(binding.shape, binding.layout, binding.dt));
             ret = dnnl::memory(transposed_desc, engine);
         }
         else
