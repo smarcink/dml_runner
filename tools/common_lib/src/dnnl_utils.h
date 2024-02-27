@@ -17,7 +17,6 @@ struct binding_t
     DataType dt = DataType::eCount;
     DataLayout layout = DataLayout::eCount;
     TensorShape shape;
-    bool transposed = false;
 };
 
 inline dnnl::memory::dim dimensions_product(const dnnl::memory::dims& dims)

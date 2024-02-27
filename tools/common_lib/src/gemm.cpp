@@ -13,7 +13,7 @@ std::vector<std::byte> dnnl_gemm_op::gemm(const bindings_t& bindings, opts_t opt
     dnnl::memory input_a_memory = [&](const auto& binding)
     {
         dnnl::memory ret;
-        if (binding.transposed)
+        if (opts.a_transposed)
         {
             dnnl::memory::desc transposed_desc = convert_to_ncwh_format(to_dnnl_mem_desc(binding.shape, binding.layout, binding.dt));
             ret = dnnl::memory(transposed_desc, engine);
@@ -29,7 +29,7 @@ std::vector<std::byte> dnnl_gemm_op::gemm(const bindings_t& bindings, opts_t opt
     dnnl::memory input_b_memory = [&](const auto& binding)
     {
         dnnl::memory ret;
-        if (binding.transposed)
+        if (opts.b_transposed)
         {
             dnnl::memory::desc transposed_desc = convert_to_ncwh_format(to_dnnl_mem_desc(binding.shape, binding.layout, binding.dt));
             ret = dnnl::memory(transposed_desc, engine);

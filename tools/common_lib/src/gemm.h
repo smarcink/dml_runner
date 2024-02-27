@@ -45,6 +45,8 @@ struct opts_t
     DataLayout out_layout = DataLayout::eCount;
     bool force_fp32_accumulator = false;
     ActivationSettings activation{};
+    bool a_transposed = false;
+    bool b_transposed = false;
 
     float alpha = 1.0f;
     float beta = 1.0f;
@@ -726,13 +728,11 @@ public:
             bindings.input_a.dt = params_.dt;
             bindings.input_a.layout = params_.layout;
             bindings.input_a.shape = params_.shape_a;
-            bindings.input_a.transposed = params_.a_transposed;
 
             bindings.input_b.data = input_data_b_.data();
             bindings.input_b.dt = params_.dt;
             bindings.input_b.layout = params_.layout;
             bindings.input_b.shape = params_.shape_b;
-            bindings.input_b.transposed = params_.b_transposed;
 
             if (input_buffer_c_)
             {
@@ -750,6 +750,8 @@ public:
             opts.alpha = params_.alpha;
             opts.beta = params_.beta;
             opts.activation = params_.activation;
+            opts.a_transposed = params_.a_transposed;
+            opts.b_transposed = params_.b_transposed;
             ref_untyped_result = dnnl_gemm_op::gemm(bindings, opts);
         }
         else   
@@ -951,30 +953,22 @@ public:
         using namespace dnnl_utils;
 
         //input_a_memory_desc_ = to_dnnl_mem_desc(params_.a_transposed ? TensorShape{ params_.shape_a.n, params_.shape_a.c, params_.shape_a.w, params_.shape_a.h } : params_.shape_a, params_.layout, params_.dt);
+        input_a_memory_desc_ = to_dnnl_mem_desc(params_.shape_a, params_.layout, params_.dt);
         if (params_.a_transposed)
         {
-            input_a_memory_desc_ = to_dnnl_mem_desc(params_.shape_a, params_.layout, params_.dt);
             input_a_memory_desc_ = convert_to_ncwh_format(input_a_memory_desc_);
-        }
-        else
-        {
-            input_a_memory_desc_ = to_dnnl_mem_desc(params_.shape_a, params_.layout, params_.dt);
         }
         // const auto input_b_memory_desc = to_dnnl_mem_desc(params_.b_transposed ? TensorShape{ params_.shape_b.n, params_.shape_b.c, params_.shape_b.w, params_.shape_b.h } : params_.shape_b, params_.b_managed ? DataLayout::eWeightsLayoutStart : params_.layout, params_.dt);
         if (params_.b_managed)
         {
-            input_b_memory_desc = to_dnnl_mem_desc(params_.shape_b, DataLayout::eWeightsLayoutStart, params_.dt);
+            input_b_memory_desc_ = to_dnnl_mem_desc(params_.shape_b, DataLayout::eWeightsLayoutStart, params_.dt);
         }
         else
         {
+            input_b_memory_desc_ = to_dnnl_mem_desc(params_.shape_b, params_.layout, params_.dt);
             if (params_.b_transposed)
             {
-                input_b_memory_desc = to_dnnl_mem_desc(params_.shape_b, params_.layout, params_.dt);
-                input_b_memory_desc = convert_to_ncwh_format(input_b_memory_desc);
-            }
-            else
-            {
-                input_b_memory_desc = to_dnnl_mem_desc(params_.shape_b, params_.layout, params_.dt);
+                input_b_memory_desc_ = convert_to_ncwh_format(input_b_memory_desc_);
             }
         }
         output_memory_desc_ = to_dnnl_mem_desc(get_shape_output(), params_.layout, params_.dt);
@@ -1031,7 +1025,7 @@ public:
 
         dnnl::matmul::primitive_desc matmul_desc(dnnl_engine_,
             input_a_memory_desc_,
-            input_b_memory_desc,
+            input_b_memory_desc_,
             dnnl::memory::desc{},  // we dont use bias for C Tensor, we use binary add pos-
             output_memory_desc_,
             attr
@@ -1349,7 +1343,6 @@ private:
 
     dnnl::memory::desc input_a_memory_desc_;
     dnnl::memory::desc input_b_memory_desc_;
-    dnnl::memory::desc input_b_memory_desc;
     dnnl::memory::desc output_memory_desc_;
     std::optional<dnnl::memory::desc> input_c_memory_desc_;
     std::optional<dnnl::memory::desc> scratchpad_memory_desc_;
