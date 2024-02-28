@@ -45,6 +45,8 @@ struct opts_t
     DataLayout out_layout = DataLayout::eCount;
     bool force_fp32_accumulator = false;
     ActivationSettings activation{};
+    bool a_transposed = false;
+    bool b_transposed = false;
 
     float alpha = 1.0f;
     float beta = 1.0f;
@@ -113,7 +115,8 @@ class Gemm : public DirectMlBaseNode
 public:
     Gemm(GemmType gemm_type, const DML_TENSOR_DATA_TYPE data_type, const dml::TensorPolicy& tensor_policy,
         const TensorShape& shape_a, const TensorShape& shape_b, const TensorShape& shape_c, const TensorShape& shape_out,
-        bool b_managed, bool b_transposed, float alpha, float beta, bool allow_fp16_computations, const ActivationSettings& activation_settings,
+        bool a_transposed, bool b_managed, bool b_transposed, float alpha, float beta,
+        bool allow_fp16_computations, const ActivationSettings& activation_settings,
         IDMLDevice* dml_device, ID3D12Device* d3d12_device, bool disable_mc = false)
         : DirectMlBaseNode(dml_device, d3d12_device)
         , type_(gemm_type)
@@ -137,16 +140,16 @@ public:
             dml::TensorDesc::Dimensions dimensions_0;
             dimensions_0.push_back(shape_a.n);
             dimensions_0.push_back(shape_a.c);
-            dimensions_0.push_back(shape_a.h);
-            dimensions_0.push_back(shape_a.w);
+            dimensions_0.push_back(a_transposed ? shape_a.w : shape_a.h); // to make cmd arguments have normal matrix with transpose internal to each dispatcher
+            dimensions_0.push_back(a_transposed ? shape_a.h : shape_a.w); // to make cmd arguments have normal matrix with transpose internal to each dispatcher
             dml::TensorDesc desc_input_0 = { data_type, dimensions_0 };
             input_0_ = dml::InputTensor(graph_, 0, desc_input_0);
 
             dml::TensorDesc::Dimensions dimensions_1;
             dimensions_1.push_back(shape_b.n);
             dimensions_1.push_back(shape_b.c);
-            dimensions_1.push_back(shape_b.h);
-            dimensions_1.push_back(shape_b.w);
+            dimensions_1.push_back(b_transposed ? shape_b.w : shape_b.h); // to make cmd arguments have normal matrix with transpose internal to each dispatcher
+            dimensions_1.push_back(b_transposed ? shape_b.h : shape_b.w); // to make cmd arguments have normal matrix with transpose internal to each dispatcher
             dml::TensorDesc desc_input_1 = { data_type, b_managed ? DML_TENSOR_FLAG_OWNED_BY_DML : DML_TENSOR_FLAG_NONE, dimensions_1 };
             input_1_ = dml::InputTensor(graph_, 1, desc_input_1);
 
@@ -155,14 +158,14 @@ public:
                 dml::TensorDesc::Dimensions dimensions_2;
                 dimensions_2.push_back(shape_a.n);
                 dimensions_2.push_back(shape_a.c);
-                dimensions_2.push_back(shape_a.h);
+                dimensions_2.push_back(a_transposed ? shape_a.w : shape_a.h);
                 dimensions_2.push_back(b_transposed ? shape_b.h : shape_b.w);
                 dml::TensorDesc desc_input_2 = { data_type, dimensions_2 };
                 input_2_ = dml::InputTensor(graph_, 2, desc_input_2);
             }
 
             outputs_[0] = dml::Gemm(input_0_, input_1_, input_2_,
-                DML_MATRIX_TRANSFORM_NONE,
+                a_transposed ? DML_MATRIX_TRANSFORM_TRANSPOSE : DML_MATRIX_TRANSFORM_NONE,
                 b_transposed ? DML_MATRIX_TRANSFORM_TRANSPOSE : DML_MATRIX_TRANSFORM_NONE,
                 alpha, beta, fused_act);
         }
@@ -358,10 +361,9 @@ public:
         assert(resource_a);
         assert(resource_out);
         DML_BUFFER_BINDING input_a_buffer_binding{ resource_a, 0, resource_a->GetDesc().Width };
-        DML_BUFFER_BINDING input_b_buffer_binding{ nullptr, 0, 0 }; 
-        DML_BUFFER_BINDING input_c_buffer_binding{ nullptr, 0, 0 }; 
+        DML_BUFFER_BINDING input_b_buffer_binding{ nullptr, 0, 0 };
+        DML_BUFFER_BINDING input_c_buffer_binding{ nullptr, 0, 0 };
 
-  
         std::vector<DML_BINDING_DESC> input_bindings;
         input_bindings.reserve(3);
         input_bindings.push_back({ DML_BINDING_TYPE_BUFFER, &input_a_buffer_binding });
@@ -492,6 +494,7 @@ public:
 
         bool b_managed = false;
         bool c_managed = false;
+        bool a_transposed = false;
         bool b_transposed = false;
 
         bool allow_fp16_computations = false;
@@ -507,6 +510,7 @@ public:
             opts->add_option("--shape_b", params.shape_b); 
             opts->add_option("--shape_c", params.shape_c); 
 
+            opts->add_flag("--a_transposed", params.a_transposed)->default_val(false);
             opts->add_flag("--b_transposed", params.b_transposed)->default_val(false);
             opts->add_flag("--b_managed", params.b_managed)->default_val(false);
             opts->add_flag("--c_managed", params.c_managed)->default_val(false);
@@ -540,12 +544,12 @@ public:
         input_data_a_.resize(get_tensor_elements_count(params_.shape_b, params_.layout) * get_data_type_bytes_width(params_.dt));
         input_data_b_.resize(get_tensor_elements_count(params_.shape_b, params_.layout) * get_data_type_bytes_width(params_.dt));
         input_data_c_.resize(get_tensor_elements_count(params_.shape_c, params_.layout) * get_data_type_bytes_width(params_.dt));
-
+ 
         if (params_.type == GemmType::GemmType_AB)
         {
             assert(params_.shape_a.get_dims_count() == 4);
             assert(params_.shape_b.get_dims_count() == 4);
-  
+ 
             assert(!input_data_a_.empty());
             assert(!input_data_b_.empty());
         }
@@ -746,13 +750,16 @@ public:
             opts.alpha = params_.alpha;
             opts.beta = params_.beta;
             opts.activation = params_.activation;
+            opts.a_transposed = params_.a_transposed;
+            opts.b_transposed = params_.b_transposed;
             ref_untyped_result = dnnl_gemm_op::gemm(bindings, opts);
         }
         else   
         {
             gpu_op::Gemm gemm_ref(params_.type, to_dml_data_type(params_.dt), to_dml_tensor_policy(params_.layout),
                 params_.shape_a, params_.shape_b, params_.shape_c, get_shape_output(),
-                false /*params_.b_managed*/, params_.b_transposed, params_.alpha, params_.beta, params_.allow_fp16_computations, params_.activation,
+                params_.a_transposed, false /*params_.b_managed*/, params_.b_transposed, params_.alpha, params_.beta, 
+                params_.allow_fp16_computations, params_.activation,
                 dml_device_, d3d12_device_, true);
             // bind descriptor heap
             auto descriptor_heap = create_descriptor_heap(d3d12_device_, gemm_ref.get_total_descriptor_count());
@@ -864,7 +871,7 @@ protected:
     {
         if (params_.type == GemmType::GemmType_AB || params_.type == GemmType::GemmType_SV_S_QKV || params_.type == GemmType::GemmType_SV_S_KV)
         {
-            return params_.b_transposed ? params_.shape_b.h : params_.shape_b.w;
+            return params_.shape_b.w;
         }
         else if (params_.type == GemmType::GemmType_QK_QKV)
         {
@@ -901,7 +908,8 @@ class GemmDmlDispatcher : public GemmBaseDispatcher
 public:
     GemmDmlDispatcher(create_params_t&& params, ID3D12Device* d3d12_device, IDMLDevice* dml_device, IDMLCommandRecorder* dml_cmd_recorder, ID3D12GraphicsCommandList* cmd_list)
         : GemmBaseDispatcher(std::move(params), d3d12_device, dml_device, dml_cmd_recorder, cmd_list)
-        , gemm_(params_.type, to_dml_data_type(params_.dt), to_dml_tensor_policy(params_.layout),  params_.shape_a, params_.shape_b, params_.shape_c, get_shape_output(), params_.b_managed, params_.b_transposed,
+        , gemm_(params_.type, to_dml_data_type(params_.dt), to_dml_tensor_policy(params_.layout), params_.shape_a, params_.shape_b, params_.shape_c, get_shape_output(), 
+            params_.a_transposed, params_.b_managed, params_.b_transposed,
             params_.alpha, params_.beta, params_.allow_fp16_computations, params_.activation,
             dml_device, d3d12_device, false)
     {
@@ -944,15 +952,32 @@ public:
     {
         using namespace dnnl_utils;
 
+        //input_a_memory_desc_ = to_dnnl_mem_desc(params_.a_transposed ? TensorShape{ params_.shape_a.n, params_.shape_a.c, params_.shape_a.w, params_.shape_a.h } : params_.shape_a, params_.layout, params_.dt);
         input_a_memory_desc_ = to_dnnl_mem_desc(params_.shape_a, params_.layout, params_.dt);
-        const auto input_b_memory_desc = to_dnnl_mem_desc(params_.shape_b, params_.b_managed ? DataLayout::eWeightsLayoutStart : params_.layout, params_.dt);
+        if (params_.a_transposed)
+        {
+            input_a_memory_desc_ = convert_to_ncwh_format(input_a_memory_desc_);
+        }
+        // const auto input_b_memory_desc = to_dnnl_mem_desc(params_.b_transposed ? TensorShape{ params_.shape_b.n, params_.shape_b.c, params_.shape_b.w, params_.shape_b.h } : params_.shape_b, params_.b_managed ? DataLayout::eWeightsLayoutStart : params_.layout, params_.dt);
+        if (params_.b_managed)
+        {
+            input_b_memory_desc_ = to_dnnl_mem_desc(params_.shape_b, DataLayout::eWeightsLayoutStart, params_.dt);
+        }
+        else
+        {
+            input_b_memory_desc_ = to_dnnl_mem_desc(params_.shape_b, params_.layout, params_.dt);
+            if (params_.b_transposed)
+            {
+                input_b_memory_desc_ = convert_to_ncwh_format(input_b_memory_desc_);
+            }
+        }
         output_memory_desc_ = to_dnnl_mem_desc(get_shape_output(), params_.layout, params_.dt);
 
         if (has_c_tensor())
         {
             input_c_memory_desc_.emplace(to_dnnl_mem_desc(params_.shape_c, params_.layout, params_.dt));
         }
-            
+        
         const dnnl::primitive_attr attr = [this]()
         {
             // create a post-op with relu
@@ -1000,7 +1025,7 @@ public:
 
         dnnl::matmul::primitive_desc matmul_desc(dnnl_engine_,
             input_a_memory_desc_,
-            input_b_memory_desc,
+            input_b_memory_desc_,
             dnnl::memory::desc{},  // we dont use bias for C Tensor, we use binary add pos-
             output_memory_desc_,
             attr
@@ -1142,7 +1167,12 @@ public:
         {  
             auto umd_input_mem = iumd::custom_metacommand::UmdD3d12Memory(gpu_handles[rsc_idx++]);
 
-            dnnl::memory input_memory = create_dnnl_memory(dnnl_utils::to_dnnl_mem_desc(params_.shape_b, params_.layout, params_.dt), umd_input_mem);
+            auto input_memory_desc_ = dnnl_utils::to_dnnl_mem_desc(params_.shape_b, params_.layout, params_.dt);
+            if (params_.b_transposed)
+            {
+                input_memory_desc_ = dnnl_utils::convert_to_ncwh_format(input_memory_desc_);
+            }
+            dnnl::memory input_memory = create_dnnl_memory(input_memory_desc_, umd_input_mem);
             dnnl::memory reorder_memory = create_dnnl_memory(input_b_memory_desc_, umd_persistent_mem, persistent_mem_offset);
 
             std::unordered_map<int, dnnl::memory> args;

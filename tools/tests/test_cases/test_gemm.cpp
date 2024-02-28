@@ -20,6 +20,7 @@ protected:
         params_.beta = 1.0f;
         params_.b_managed = false;
         params_.c_managed = false;
+        params_.a_transposed = false;
         params_.b_transposed = false;
         params_.use_dnnl_for_reference_calculations = true;
     }
@@ -169,5 +170,77 @@ TEST_F(DnnlPluginNext_GEMM, LLaMa_v2_case_2)
     params_.shape_b = TensorShape(1, 1, 11008, 4096);
     params_.dt = DataType::eFp16;
     params_.allow_fp16_computations = true;
+    run();
+}
+
+TEST_F(DnnlPluginNext_GEMM, TransposedCases_Normal_FP32)
+{
+    params_.shape_a = TensorShape(1, 1, 32, 128);
+    params_.shape_b = TensorShape(1, 1, 128, 64);
+    run();
+}
+
+TEST_F(DnnlPluginNext_GEMM, TransposedCases_A_Transpose_FP32)
+{
+    params_.shape_a = TensorShape(1, 1, 256, 512);
+    params_.shape_b = TensorShape(1, 1, 512, 1024);
+    params_.a_transposed = true;
+    run();
+}
+
+TEST_F(DnnlPluginNext_GEMM, TransposedCases_B_Transpose_FP32)
+{
+    params_.shape_a = TensorShape(1, 1, 1024, 2048);
+    params_.shape_b = TensorShape(1, 1, 2048, 4096);
+    params_.b_transposed = true;
+    run();
+}
+
+TEST_F(DnnlPluginNext_GEMM, TransposeCases_A_B_Transpose_FP32)
+{
+    params_.shape_a = TensorShape(1, 1, 8192, 4096);
+    params_.shape_b = TensorShape(1, 1, 4096, 2048);
+    params_.a_transposed = true;
+    params_.b_transposed = true;
+    run();
+}
+
+TEST_F(DnnlPluginNext_GEMM, TransposedCases_Normal_FP16)
+{
+    params_.shape_a = TensorShape(1, 1, 8192, 4096);
+    params_.shape_b = TensorShape(1, 1, 4096, 2048);
+    params_.dt = DataType::eFp16;
+    params_.allow_fp16_computations = true;
+    run();
+}
+
+TEST_F(DnnlPluginNext_GEMM, TransposedCases_A_Transpose_FP16)
+{
+    params_.shape_a = TensorShape(1, 1, 512, 2048);
+    params_.shape_b = TensorShape(1, 1, 2048, 128);
+    params_.dt = DataType::eFp16;
+    params_.allow_fp16_computations = true;
+    params_.a_transposed = true;
+    run();
+}
+
+TEST_F(DnnlPluginNext_GEMM, TransposedCases_B_Transpose_FP16)
+{
+    params_.shape_a = TensorShape(1, 1, 128, 256);
+    params_.shape_b = TensorShape(1, 1, 256, 512);
+    params_.dt = DataType::eFp16;
+    params_.allow_fp16_computations = true;
+    params_.b_transposed = true;
+    run();
+}
+
+TEST_F(DnnlPluginNext_GEMM, TransposeCases_A_B_Transpose_FP16)
+{
+    params_.shape_a = TensorShape(1, 1, 32, 128);
+    params_.shape_b = TensorShape(1, 1, 128, 64);
+    params_.dt = DataType::eFp16;
+    params_.allow_fp16_computations = true;
+    params_.a_transposed = true;
+    params_.b_transposed = true;
     run();
 }

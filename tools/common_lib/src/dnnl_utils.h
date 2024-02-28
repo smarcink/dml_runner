@@ -84,6 +84,15 @@ inline dnnl::memory::desc to_dnnl_mem_desc(const TensorShape& shape, const DataL
     return dnnl::memory::desc{ to_dnnl_dims(shape), to_dnnl_data_type(t), to_dnnl_format(l) };
 }
 
+inline dnnl::memory::desc convert_to_ncwh_format(const dnnl::memory::desc& nchw_desc)
+{
+    auto dims = nchw_desc.get_dims();
+    auto dt = nchw_desc.get_data_type();
+
+    // Create and return a new memory descriptor with NCWH format
+    return dnnl::memory::desc(dims, dt, dnnl::memory::format_tag::abdc);
+}
+
 inline void copy_to_dnnl_memory(dnnl::memory& dst_memory, const std::byte* input_data)
 {
     const auto desc = dst_memory.get_desc();
