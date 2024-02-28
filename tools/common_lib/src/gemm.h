@@ -1167,7 +1167,12 @@ public:
         {  
             auto umd_input_mem = iumd::custom_metacommand::UmdD3d12Memory(gpu_handles[rsc_idx++]);
 
-            dnnl::memory input_memory = create_dnnl_memory(dnnl_utils::to_dnnl_mem_desc(params_.shape_b, params_.layout, params_.dt), umd_input_mem);
+            auto input_memory_desc_ = dnnl_utils::to_dnnl_mem_desc(params_.shape_b, params_.layout, params_.dt);
+            if (params_.b_transposed)
+            {
+                input_memory_desc_ = dnnl_utils::convert_to_ncwh_format(input_memory_desc_);
+            }
+            dnnl::memory input_memory = create_dnnl_memory(input_memory_desc_, umd_input_mem);
             dnnl::memory reorder_memory = create_dnnl_memory(input_b_memory_desc_, umd_persistent_mem, persistent_mem_offset);
 
             std::unordered_map<int, dnnl::memory> args;
