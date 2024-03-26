@@ -35,6 +35,8 @@ struct opts_t
     bool force_winograd = false;
     bool dump_weights = false;
     bool dump_scratchpad = false;
+
+    std::size_t execution_iterations = 1ul; // set it to bigger value to run more iterations
 };
 std::vector<std::byte> convolution(const bindings_t& bindings, opts_t opts);
 std::vector<std::byte> deconvolution(const bindings_t& bindings, opts_t opts);
@@ -343,6 +345,7 @@ public:
 
         bool dump_weights = false;
         bool use_dnnl_for_reference_calculations = false;
+        std::uint32_t dnnl_reference_iterations = 1u; // used for reference performance benchmark
 
         inline static void add_cli_options(CLI::App* opts, create_params_t& params)
         {
@@ -364,6 +367,7 @@ public:
             opts->add_flag("--algo_winograd", params.algo_winograd);
             opts->add_flag("--transposed", params.transposed);
             opts->add_flag("--dnnl_reference", params.use_dnnl_for_reference_calculations)->default_val(false);
+            opts->add_option("--dnnl_reference_iterations", params.dnnl_reference_iterations)->default_val(1);
 
             opts->add_flag("--dump_weights", params.dump_weights);
         }
@@ -645,6 +649,7 @@ protected:
         {
             return dnnl_conv_op::deconvolution(bindings, opts);
         }
+        opts.execution_iterations = params_.dnnl_reference_iterations;
         return dnnl_conv_op::convolution(bindings, opts);
     }
 

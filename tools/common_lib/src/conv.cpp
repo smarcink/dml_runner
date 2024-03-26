@@ -31,7 +31,17 @@ inline std::vector<std::byte> run_inference(const dnnl_conv_op::bindings_t& bind
 {
     using namespace dnnl_utils;
     static dnnl::engine engine(dnnl::engine::kind::gpu, 0);
-    static dnnl::stream stream(engine);
+
+    const auto enable_profiling = opts.execution_iterations > 1;
+    dnnl::stream stream = [&]()
+    {
+        auto stream_flags = dnnl::stream::flags::default_flags;
+        if (enable_profiling)
+        {
+            stream_flags |= dnnl::stream::flags::profiling;
+        }
+        return dnnl::stream(engine, stream_flags);
+    }();
     const auto engine_kind = engine.get_kind();
 
     dnnl::set_jit_dump(false);
@@ -157,10 +167,27 @@ inline std::vector<std::byte> run_inference(const dnnl_conv_op::bindings_t& bind
     const auto guery_impl_str = conv_desc.impl_info_str();
     std::cout << "ref query impl: " << guery_impl_str << std::endl;
 
+    const auto start = std::chrono::steady_clock::now();
+
+    if (enable_profiling)
+    {
+        dnnl::reset_profiling(stream);
+    }
+
     T convolution(conv_desc.get());
-    convolution.execute(stream, { { DNNL_ARG_SRC, input_memory }, {DNNL_ARG_WEIGHTS, filter_memory}, {DNNL_ARG_BIAS, bias_memory}, {DNNL_ARG_DST, output_memory}, 
-        {DNNL_ARG_SCRATCHPAD, scratchpad_memory} });
+    for (int i = 0; i < opts.execution_iterations; i++)
+    {
+        convolution.execute(stream, { { DNNL_ARG_SRC, input_memory }, {DNNL_ARG_WEIGHTS, filter_memory}, {DNNL_ARG_BIAS, bias_memory}, {DNNL_ARG_DST, output_memory},
+            {DNNL_ARG_SCRATCHPAD, scratchpad_memory} });
+    }
     stream.wait();
+
+    if (enable_profiling)
+    {
+        const auto profiling_usecs_data = dnnl::get_profiling_data(stream, dnnl::profiling_data_kind::time);
+        const auto avg_perf = std::accumulate(profiling_usecs_data.begin(), profiling_usecs_data.end(), 0.0) / profiling_usecs_data.size();
+        std::cout << "OneDNN avg performance time: " << (float)avg_perf / 1000.0f << " ms." << std::endl;
+    }
 
     if (opts.dump_scratchpad)
     {

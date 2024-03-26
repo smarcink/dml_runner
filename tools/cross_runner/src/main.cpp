@@ -46,7 +46,7 @@ inline void print_performance_stats(const std::vector<TimeType>& timings)
     }
 
     std::cout << "Avg: " << avg << std::endl;
-    std::cout << "Median: " << avg << std::endl;
+    std::cout << "Median: " << median << std::endl;
     std::cout << "Best: " << best << std::endl;
 }
 
