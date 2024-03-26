@@ -35,6 +35,8 @@ struct opts_t
     bool force_winograd = false;
     bool dump_weights = false;
     bool dump_scratchpad = false;
+
+    std::size_t execution_iterations = 1ul; // set it to bigger value to run more iterations
 };
 std::vector<std::byte> convolution(const bindings_t& bindings, opts_t opts);
 std::vector<std::byte> deconvolution(const bindings_t& bindings, opts_t opts);
@@ -499,7 +501,7 @@ public:
     }
 
     ConformanceResult validate_conformance(ID3D12CommandQueue* command_queue,
-        ID3D12CommandAllocator* command_allocator, ID3D12GraphicsCommandList* command_list, bool print_mismatches) override
+        ID3D12CommandAllocator* command_allocator, ID3D12GraphicsCommandList* command_list, bool print_mismatches, std::size_t reference_dispatch_iterations) override
     {
         const auto tensor_out_bytes_width = output_buffer_->GetDesc().Width;
 
@@ -520,7 +522,7 @@ public:
         std::vector<std::byte> ref_untyped_result;
         if (params_.use_dnnl_for_reference_calculations)
         {
-            ref_untyped_result = get_dnnl_result();
+            ref_untyped_result = get_dnnl_result(reference_dispatch_iterations);
         }
         else
         {
@@ -601,7 +603,7 @@ protected:
         return !params_.no_bias;
     }
 
-    std::vector<std::byte> get_dnnl_result() const
+    std::vector<std::byte> get_dnnl_result(std::size_t reference_dispatch_iterations) const
     {
         const auto output_shape = get_output_shape();
 
@@ -645,6 +647,7 @@ protected:
         {
             return dnnl_conv_op::deconvolution(bindings, opts);
         }
+        opts.execution_iterations = reference_dispatch_iterations;
         return dnnl_conv_op::convolution(bindings, opts);
     }
 
@@ -1132,7 +1135,7 @@ private:
     };
 
     ConformanceResult validate_conformance(ID3D12CommandQueue* command_queue,
-        ID3D12CommandAllocator* command_allocator, ID3D12GraphicsCommandList* command_list, bool print_mismatche) override
+        ID3D12CommandAllocator* command_allocator, ID3D12GraphicsCommandList* command_list, bool print_mismatche, std::size_t reference_dispatch_iterations) override
     {
         auto dump_buffer_to_file = [&](const auto& buffer, const auto& file_name)
         {
@@ -1171,7 +1174,7 @@ private:
             dump_buffer_to_file(temporary_buffer_, "umd_scratchpad_data.dat");
         }
 
-        const auto ret = ConvolutionBaseDispatcher::validate_conformance(command_queue, command_allocator, command_list, print_mismatche);
+        const auto ret = ConvolutionBaseDispatcher::validate_conformance(command_queue, command_allocator, command_list, print_mismatche, reference_dispatch_iterations);
         return ret;
     }
 
@@ -1465,13 +1468,13 @@ public:
     }
 
     ConformanceResult validate_conformance(ID3D12CommandQueue* command_queue,
-        ID3D12CommandAllocator* command_allocator, ID3D12GraphicsCommandList* command_list, bool print_mismatches) override
+        ID3D12CommandAllocator* command_allocator, ID3D12GraphicsCommandList* command_list, bool print_mismatches, std::size_t reference_dispatch_iterations) override
     {
         if (weights_reorder_.has_value())
         {
-            weights_reorder_->validate_conformance(command_queue, command_allocator, command_list, print_mismatches);
+            weights_reorder_->validate_conformance(command_queue, command_allocator, command_list, print_mismatches, reference_dispatch_iterations);
         }
-        const auto ret = ConvolutionBaseDispatcher::validate_conformance(command_queue, command_allocator, command_list, print_mismatches);
+        const auto ret = ConvolutionBaseDispatcher::validate_conformance(command_queue, command_allocator, command_list, print_mismatches, reference_dispatch_iterations);
         return ret;
     }
 
@@ -1699,7 +1702,7 @@ private:
 
 
         ConformanceResult validate_conformance(ID3D12CommandQueue* command_queue,
-            ID3D12CommandAllocator* command_allocator, ID3D12GraphicsCommandList* command_list, bool print_mismatches) override
+            ID3D12CommandAllocator* command_allocator, ID3D12GraphicsCommandList* command_list, bool print_mismatches, std::size_t reference_dispatch_iterations) override
         {
             // optional weights conformance check
             if (false)
