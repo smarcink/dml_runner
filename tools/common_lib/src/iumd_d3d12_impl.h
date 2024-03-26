@@ -141,7 +141,9 @@ namespace custom_metacommand
 
         bool can_use_systolic() const override
         {
-            if (sku_.igfx == UMD_IGFX::eDG2)
+            if (sku_.igfx == UMD_IGFX::eDG2 ||
+                sku_.igfx == UMD_IGFX::eLNL ||
+                sku_.igfx == UMD_IGFX::eBMG)
             {
                 return true;
             }

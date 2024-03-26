@@ -95,6 +95,14 @@ iumd::custom_metacommand::UmdD3d12Device::UmdD3d12Device(ID3D12Device* device, I
         {
             return UMD_IGFX::eDG2;
         }
+        else if (std::wcscmp(name, L"Battlemage") == 0)
+        {
+            return UMD_IGFX::eBMG;
+        }
+        else if (std::wcscmp(name, L"Lunarlake") == 0)
+        {
+            return UMD_IGFX::eLNL;
+        }
         return UMD_IGFX::eUNKNOWN;
     }(extension_info.IntelDeviceInfo.GTGenerationName);
 
@@ -110,6 +118,12 @@ iumd::custom_metacommand::UmdD3d12Device::UmdD3d12Device(ID3D12Device* device, I
         sku_.eu_per_dss = 16;
         sku_.threads_per_eu = 7;
         sku_.hw_simd_size = 8;
+    }
+    else if (sku_.igfx == UMD_IGFX::eLNL || sku_.igfx == UMD_IGFX::eBMG)
+    {
+        sku_.eu_per_dss = 16;
+        sku_.threads_per_eu = 8;
+        sku_.hw_simd_size = 16;
     }
 }
 
@@ -176,7 +190,8 @@ bool iumd::custom_metacommand::UmdD3d12Device::do_support_ngen_kernels() const
 {
     // look at OneDNN for OpenCL runtime - they compile dummy kernel to get information if NGEN is supported - this is good and roboust solution.
     printf("Add proper NGEN support detection mechanism!\n"); 
-    if (sku_.igfx == UMD_IGFX::eDG2 || sku_.igfx == UMD_IGFX::eMETEORLAKE)
+    if (sku_.igfx == UMD_IGFX::eDG2 || sku_.igfx == UMD_IGFX::eMETEORLAKE || 
+        sku_.igfx == UMD_IGFX::eLNL || sku_.igfx == UMD_IGFX::eBMG)
     {
         return true;
     }
