@@ -1285,9 +1285,19 @@ public:
             return dnnl::memory{};
         }();
 
-        dnnl::memory scratchpad_memory = has_scratchpad_tensor() ?
-            create_dnnl_memory(scratchpad_memory_desc_.value(), umd_scratchpad_memory_) :
-            dnnl::memory{};
+        // dnnl::memory scratchpad_memory = has_scratchpad_tensor() ?
+        //     create_dnnl_memory(scratchpad_memory_desc_.value(), umd_scratchpad_memory_) :
+        //     dnnl::memory{};
+
+        std::optional<dnnl::memory> scratchpad_memory;
+        if(has_scratchpad_tensor())
+        {
+            if (scratchpad_memory_desc_)
+            {
+                scratchpad_memory.emplace(create_dnnl_memory(scratchpad_memory_desc_.value(), umd_scratchpad_memory_));
+            }
+        }
+         
 
         dnnl::memory output_memory = create_dnnl_memory(output_memory_desc_, umd_output_memory_);
 
@@ -1305,6 +1315,11 @@ public:
             args.insert({ DNNL_ARG_ATTR_SCALES | DNNL_ARG_WEIGHTS, alpha_factor_memory });
             args.insert({ DNNL_ARG_ATTR_MULTIPLE_POST_OP(post_ops_idx) | DNNL_ARG_SRC_1, beta_factor_memory });
             post_ops_idx++;
+        }
+
+        if (scratchpad_memory_desc_)
+        {
+            args.insert({ DNNL_ARG_SCRATCHPAD, scratchpad_memory.value() });
         }
 
         args.insert({ DNNL_ARG_DST, output_memory });
