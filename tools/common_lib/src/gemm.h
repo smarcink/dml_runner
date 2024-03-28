@@ -541,7 +541,7 @@ public:
         , d3d12_device_(d3d12_device)
 
     {
-        input_data_a_.resize(get_tensor_elements_count(params_.shape_b, params_.layout) * get_data_type_bytes_width(params_.dt));
+        input_data_a_.resize(get_tensor_elements_count(params_.shape_a, params_.layout) * get_data_type_bytes_width(params_.dt));
         input_data_b_.resize(get_tensor_elements_count(params_.shape_b, params_.layout) * get_data_type_bytes_width(params_.dt));
         input_data_c_.resize(get_tensor_elements_count(params_.shape_c, params_.layout) * get_data_type_bytes_width(params_.dt));
  
