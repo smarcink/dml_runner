@@ -46,7 +46,7 @@ inline void print_performance_stats(const std::vector<TimeType>& timings)
     }
 
     std::cout << "Avg: " << avg << std::endl;
-    std::cout << "Median: " << avg << std::endl;
+    std::cout << "Median: " << median << std::endl;
     std::cout << "Best: " << best << std::endl;
 }
 
@@ -289,7 +289,7 @@ int main()
         }
         else
         {
-            const auto conformance_result = node->validate_conformance(command_queue.Get(), command_allocator.Get(), command_list.Get(), true);
+            const auto conformance_result = node->validate_conformance(command_queue.Get(), command_allocator.Get(), command_list.Get(), true, opts.dispatch_iterations);
             std::cout << std::format("Conformance {}. Tested values (tensor out elements count): {} \n", conformance_result.passed, conformance_result.tested_samples_count);
             std::cout << std::format("Biggest difference in the output tensor: {}. It is in the epsilion range: {}. \n", conformance_result.biggest_difference, conformance_result.epsilon);
         }
