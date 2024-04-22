@@ -50,6 +50,8 @@ struct opts_t
 
     float alpha = 1.0f;
     float beta = 1.0f;
+
+    std::size_t execution_iterations = 1ul; // set it to bigger value to run more iterations
 };
 std::vector<std::byte> gemm(const bindings_t& bindings, opts_t opts);
 }
@@ -752,6 +754,7 @@ public:
             opts.activation = params_.activation;
             opts.a_transposed = params_.a_transposed;
             opts.b_transposed = params_.b_transposed;
+            opts.execution_iterations = reference_dispatch_iterations;
             ref_untyped_result = dnnl_gemm_op::gemm(bindings, opts);
         }
         else   
