@@ -170,170 +170,242 @@ int main()
         return -1;
     }
 
-    try
+    const auto params_ = opts.gemm_opts;
+    std::vector<std::byte> input_data_a_;
+    std::vector<std::byte> input_data_b_;
+    std::vector<std::byte> input_data_c_;
+
+    input_data_a_.resize(get_tensor_elements_count(params_.shape_a, params_.layout) * get_data_type_bytes_width(params_.dt));
+    input_data_b_.resize(get_tensor_elements_count(params_.shape_b, params_.layout) * get_data_type_bytes_width(params_.dt));
+    input_data_c_.resize(get_tensor_elements_count(params_.shape_c, params_.layout) * get_data_type_bytes_width(params_.dt));
+
+    // randomize data
+    std::mt19937 random_generator(42); // static, create it once!
+    std::uniform_real_distribution<float> uniform_distribution(-1.0f, 1.0f);
+
+    if (params_.dt == DataType::eFp32)
     {
-        ComPtr<ID3D12Device> d3d12_device;
-        ComPtr<ID3D12CommandQueue> command_queue;
-        ComPtr<ID3D12CommandAllocator> command_allocator;
-        ComPtr<ID3D12GraphicsCommandList> command_list;
-        initalize_d3d12(d3d12_device, command_queue, command_allocator, command_list);
-        auto dml_device = create_dml_device(d3d12_device.Get());
-        assert(opts.dispatch_iterations < MAX_ITERATIONS);
-        auto performance_collector = initialize_d3d12_performance_collector(d3d12_device.Get(), MAX_ITERATIONS);
-
-        auto intel_extension_d3d12 = IntelExtension(d3d12_device.Get());
-        // The command recorder is a stateless object that records Dispatches into an existing Direct3D 12 command list.
-        ComPtr<IDMLCommandRecorder> dml_command_recorder;
-        throw_if_failed(dml_device->CreateCommandRecorder(IID_PPV_ARGS(dml_command_recorder.ReleaseAndGetAddressOf())), "create dml command recorder");
-
-        std::unique_ptr<NodeDispatcher> node;
-        if (opts.node_type == NodeType::eGemmDml)
-        {
-            node = std::make_unique<GemmDmlDispatcher>(std::move(opts.gemm_opts), 
-                d3d12_device.Get(), dml_device.Get(), dml_command_recorder.Get(), command_list.Get());
-        }
-        else if (opts.node_type == NodeType::eGemmCm)
-        {
-            node = std::make_unique<GemmCmDispatcher>(std::move(opts.gemm_opts), std::move(opts.gemm_cm_params),
-                intel_extension_d3d12, d3d12_device.Get(), dml_device.Get(), dml_command_recorder.Get(), command_list.Get());
-        }
-        else if (opts.node_type == NodeType::eGemmUmdD3d12)
-        {
-            node = std::make_unique<GemmUmdD3d12Dispatcher>(std::move(opts.gemm_opts),
-                intel_extension_d3d12, d3d12_device.Get(), dml_device.Get(), dml_command_recorder.Get(), command_list.Get());
-        }
-        else if (opts.node_type == NodeType::eConvDml)
-        {
-            node = std::make_unique<ConvolutionDirectMLDispatcher>(std::move(opts.conv_opts), true,
-                d3d12_device.Get(), dml_device.Get(), dml_command_recorder.Get(), command_list.Get());
-        }
-        else if (opts.node_type == NodeType::eConvCm)
-        {
-            node = std::make_unique<ConvolutionCmDispatcher>(std::move(opts.conv_opts), std::move(opts.conv_cm_params),
-                intel_extension_d3d12, d3d12_device.Get(), dml_device.Get(), dml_command_recorder.Get(), command_list.Get());
-        }
-        else if (opts.node_type == NodeType::eConvUmdD3d12)
-        {
-            node = std::make_unique<ConvolutionUmdD3d12Dispatcher>(std::move(opts.conv_opts), std::move(opts.conv_umdd3d12_params),
-                intel_extension_d3d12, d3d12_device.Get(), dml_device.Get(), dml_command_recorder.Get(), command_list.Get());
-        }
-        else if (opts.node_type == NodeType::eSoftmaxDml)
-        {
-            node = std::make_unique<SoftmaxDmlDispatcher>(std::move(opts.softmax_opts),
-                d3d12_device.Get(), dml_device.Get(), dml_command_recorder.Get(), command_list.Get());
-        }
-        else if (opts.node_type == NodeType::eSoftmaxCm)
-        {
-            node = std::make_unique<SoftmaxCmDispatcher>(std::move(opts.softmax_opts), std::move(opts.softmax_cm_params),
-                intel_extension_d3d12, d3d12_device.Get(), dml_device.Get(), dml_command_recorder.Get(), command_list.Get());
-        }
-        else if (opts.node_type == NodeType::eMvnDml)
-        {
-            node = std::make_unique<MvnDmlDispatcher>(std::move(opts.mvn_opts),
-                d3d12_device.Get(), dml_device.Get(), dml_command_recorder.Get(), command_list.Get());
-        }
-        else if (opts.node_type == NodeType::eMvnCm)
-        {
-            node = std::make_unique<MvnCmDispatcher>(std::move(opts.mvn_opts), std::move(opts.mvn_cm_params),
-                intel_extension_d3d12, d3d12_device.Get(), dml_device.Get(), dml_command_recorder.Get(), command_list.Get());
-        }
-        else if (opts.node_type == NodeType::eMhaDml)
-        {
-            node = std::make_unique<MhaDmlDispatcher>(std::move(opts.mha_opts),
-                d3d12_device.Get(), dml_device.Get(), dml_command_recorder.Get(), command_list.Get());
-        }
-        else if (opts.node_type == NodeType::eMemoryBandwidth)
-        {
-            node = std::make_unique<gpu_op::MemoryBandwidthDispatcher>(std::move(opts.memory_bw_params), d3d12_device.Get(), command_list.Get(), intel_extension_d3d12);
-        }
-        else
-        {
-            assert(false && "Unknown node type!");
-        }
-
-        close_execute_reset_wait(d3d12_device.Get(), command_queue.Get(), command_allocator.Get(), command_list.Get());
-        const auto descriptors_count = node->get_total_descriptor_count();
-        
-        // bind descriptor heap
-        auto descriptor_heap = create_descriptor_heap(d3d12_device.Get(), descriptors_count);
-        ID3D12DescriptorHeap* d3d12_descriptor_heaps[] = { descriptor_heap.Get() };
-        command_list->SetDescriptorHeaps(1, d3d12_descriptor_heaps);
-
-        // initalize
-        node->initialize(command_list.Get(), descriptor_heap->GetCPUDescriptorHandleForHeapStart(), descriptor_heap->GetGPUDescriptorHandleForHeapStart());
-        close_execute_reset_wait(d3d12_device.Get(), command_queue.Get(), command_allocator.Get(), command_list.Get());
-
-        // 
-        // Bind and execute the operator on the GPU.
-        // 
-        // 
-        command_list->SetDescriptorHeaps(1, d3d12_descriptor_heaps);
-
-        for (std::uint32_t i = 0; i < opts.dispatch_iterations; ++i)
-        {
-            performance_collector.add_timestamp(command_list.Get());
-            node->execute(command_list.Get());
-            performance_collector.add_timestamp(command_list.Get());
-        }
-        close_execute_reset_wait(d3d12_device.Get(), command_queue.Get(), command_allocator.Get(), command_list.Get());
-
-        const auto device_remove_reason = d3d12_device->GetDeviceRemovedReason();
-        if (device_remove_reason != S_OK)
-        {
-            std::cout << std::format("Device removal. Reason: {}\n", device_remove_reason);
-        }
-
-        if (opts.no_conformance_check)
-        {
-            std::cout << std::format("Skipping conformance check as requested by cmd line.\n");
-        }
-        else
-        {
-            const auto conformance_result = node->validate_conformance(command_queue.Get(), command_allocator.Get(), command_list.Get(), true, opts.dispatch_iterations);
-            std::cout << std::format("Conformance {}. Tested values (tensor out elements count): {} \n", conformance_result.passed, conformance_result.tested_samples_count);
-            std::cout << std::format("Biggest difference in the output tensor: {}. It is in the epsilion range: {}. \n", conformance_result.biggest_difference, conformance_result.epsilon);
-        }
-
-        // Copy the timing data back
-        command_list->ResolveQueryData(
-            performance_collector.timestamp_query_heap.Get(),
-            D3D12_QUERY_TYPE_TIMESTAMP,
-            0,
-            performance_collector.timestamp_index,
-            performance_collector.timestamp_readback_buffer.Get(),
-            0);
-        close_execute_reset_wait(d3d12_device.Get(), command_queue.Get(), command_allocator.Get(), command_list.Get());
-
-        uint64_t timestamp_frequency = 0;
-        command_queue->GetTimestampFrequency(&timestamp_frequency);
-
-        const auto timestamps_timings = get_timestamps_timings_from_ptr<std::chrono::microseconds>(timestamp_frequency, performance_collector.timestamp_readback, performance_collector.timestamp_index);
-        performance_collector.timestamp_index = 0;
-
-        std::vector<std::chrono::microseconds> timings(timestamps_timings.size() / 2);
-        for (uint32_t i = 0; i < timings.size(); i++)
-        {
-            const auto t0 = timestamps_timings[i * 2];
-            const auto t1 = timestamps_timings[i * 2 + 1];
-            timings[i] = t1 - t0;
-        }
-
-        print_performance_stats(timings);
+        randomize_linear_container_float(random_generator, uniform_distribution, input_data_a_);
+        randomize_linear_container_float(random_generator, uniform_distribution, input_data_b_);
+        randomize_linear_container_float(random_generator, uniform_distribution, input_data_c_);
     }
-    catch (dnnl::error e)
+    else if (params_.dt == DataType::eFp16)
     {
-        std::cerr << std::format("DNNL exception caught: {} \n", e.what());
-        return -1;
+        randomize_linear_container_half(random_generator, uniform_distribution, input_data_a_);
+        randomize_linear_container_half(random_generator, uniform_distribution, input_data_b_);
+        randomize_linear_container_half(random_generator, uniform_distribution, input_data_c_);
     }
-    catch (std::exception e)
+    else
     {
-        std::cerr << std::format("STD exception caught: {} \n", e.what());
-        return -1; 
+        assert(false && "Unsupported data type in convolution dispatcher!");
     }
-    catch (...)
+
+    auto get_output_shape = [&params_]()
+        {
+            TensorShape ret{};
+            ret.n = 1;
+            ret.c = 1;
+            ret.h = params_.shape_a.h;
+            ret.w = params_.shape_b.w;
+            return ret;
+        };
+
+    dnnl_gemm_op::bindings_t bindings{};
+    bindings.input_a.data = input_data_a_.data();
+    bindings.input_a.dt = params_.dt;
+    bindings.input_a.layout = params_.layout;
+    bindings.input_a.shape = params_.shape_a;
+
+    bindings.input_b.data = input_data_b_.data();
+    bindings.input_b.dt = params_.dt;
+    bindings.input_b.layout = params_.layout;
+    bindings.input_b.shape = params_.shape_b;
+
+    if (!input_data_c_.empty())
     {
-        std::cerr << std::format("Unknwon exception caught.");
-        return -1;
+        bindings.input_c.data = input_data_c_.data();
+        bindings.input_c.dt = params_.dt;
+        bindings.input_c.layout = params_.layout;
+        bindings.input_c.shape = params_.shape_c;
     }
+
+    dnnl_gemm_op::opts_t opts_onednn{};
+    opts_onednn.out_dt = params_.dt;
+    opts_onednn.out_layout = params_.layout;
+    opts_onednn.output_shape = get_output_shape();
+    opts_onednn.force_fp32_accumulator = params_.dt == DataType::eFp16 && !params_.allow_fp16_computations;
+    opts_onednn.alpha = params_.alpha;
+    opts_onednn.beta = params_.beta;
+    opts_onednn.activation = params_.activation;
+    opts_onednn.a_transposed = params_.a_transposed;
+    opts_onednn.b_transposed = params_.b_transposed;
+    opts_onednn.execution_iterations = 1;
+    const auto ref_untyped_result = dnnl_gemm_op::gemm(bindings, opts_onednn);
+
+    //try
+    //{
+    //    ComPtr<ID3D12Device> d3d12_device;
+    //    ComPtr<ID3D12CommandQueue> command_queue;
+    //    ComPtr<ID3D12CommandAllocator> command_allocator;
+    //    ComPtr<ID3D12GraphicsCommandList> command_list;
+    //    initalize_d3d12(d3d12_device, command_queue, command_allocator, command_list);
+    //    auto dml_device = create_dml_device(d3d12_device.Get());
+    //    assert(opts.dispatch_iterations < MAX_ITERATIONS);
+    //    auto performance_collector = initialize_d3d12_performance_collector(d3d12_device.Get(), MAX_ITERATIONS);
+
+    //    auto intel_extension_d3d12 = IntelExtension(d3d12_device.Get());
+    //    // The command recorder is a stateless object that records Dispatches into an existing Direct3D 12 command list.
+    //    ComPtr<IDMLCommandRecorder> dml_command_recorder;
+    //    throw_if_failed(dml_device->CreateCommandRecorder(IID_PPV_ARGS(dml_command_recorder.ReleaseAndGetAddressOf())), "create dml command recorder");
+
+    //    std::unique_ptr<NodeDispatcher> node;
+    //    if (opts.node_type == NodeType::eGemmDml)
+    //    {
+    //        node = std::make_unique<GemmDmlDispatcher>(std::move(opts.gemm_opts), 
+    //            d3d12_device.Get(), dml_device.Get(), dml_command_recorder.Get(), command_list.Get());
+    //    }
+    //    else if (opts.node_type == NodeType::eGemmCm)
+    //    {
+    //        node = std::make_unique<GemmCmDispatcher>(std::move(opts.gemm_opts), std::move(opts.gemm_cm_params),
+    //            intel_extension_d3d12, d3d12_device.Get(), dml_device.Get(), dml_command_recorder.Get(), command_list.Get());
+    //    }
+    //    else if (opts.node_type == NodeType::eGemmUmdD3d12)
+    //    {
+    //        node = std::make_unique<GemmUmdD3d12Dispatcher>(std::move(opts.gemm_opts),
+    //            intel_extension_d3d12, d3d12_device.Get(), dml_device.Get(), dml_command_recorder.Get(), command_list.Get());
+    //    }
+    //    else if (opts.node_type == NodeType::eConvDml)
+    //    {
+    //        node = std::make_unique<ConvolutionDirectMLDispatcher>(std::move(opts.conv_opts), true,
+    //            d3d12_device.Get(), dml_device.Get(), dml_command_recorder.Get(), command_list.Get());
+    //    }
+    //    else if (opts.node_type == NodeType::eConvCm)
+    //    {
+    //        node = std::make_unique<ConvolutionCmDispatcher>(std::move(opts.conv_opts), std::move(opts.conv_cm_params),
+    //            intel_extension_d3d12, d3d12_device.Get(), dml_device.Get(), dml_command_recorder.Get(), command_list.Get());
+    //    }
+    //    else if (opts.node_type == NodeType::eConvUmdD3d12)
+    //    {
+    //        node = std::make_unique<ConvolutionUmdD3d12Dispatcher>(std::move(opts.conv_opts), std::move(opts.conv_umdd3d12_params),
+    //            intel_extension_d3d12, d3d12_device.Get(), dml_device.Get(), dml_command_recorder.Get(), command_list.Get());
+    //    }
+    //    else if (opts.node_type == NodeType::eSoftmaxDml)
+    //    {
+    //        node = std::make_unique<SoftmaxDmlDispatcher>(std::move(opts.softmax_opts),
+    //            d3d12_device.Get(), dml_device.Get(), dml_command_recorder.Get(), command_list.Get());
+    //    }
+    //    else if (opts.node_type == NodeType::eSoftmaxCm)
+    //    {
+    //        node = std::make_unique<SoftmaxCmDispatcher>(std::move(opts.softmax_opts), std::move(opts.softmax_cm_params),
+    //            intel_extension_d3d12, d3d12_device.Get(), dml_device.Get(), dml_command_recorder.Get(), command_list.Get());
+    //    }
+    //    else if (opts.node_type == NodeType::eMvnDml)
+    //    {
+    //        node = std::make_unique<MvnDmlDispatcher>(std::move(opts.mvn_opts),
+    //            d3d12_device.Get(), dml_device.Get(), dml_command_recorder.Get(), command_list.Get());
+    //    }
+    //    else if (opts.node_type == NodeType::eMvnCm)
+    //    {
+    //        node = std::make_unique<MvnCmDispatcher>(std::move(opts.mvn_opts), std::move(opts.mvn_cm_params),
+    //            intel_extension_d3d12, d3d12_device.Get(), dml_device.Get(), dml_command_recorder.Get(), command_list.Get());
+    //    }
+    //    else if (opts.node_type == NodeType::eMhaDml)
+    //    {
+    //        node = std::make_unique<MhaDmlDispatcher>(std::move(opts.mha_opts),
+    //            d3d12_device.Get(), dml_device.Get(), dml_command_recorder.Get(), command_list.Get());
+    //    }
+    //    else if (opts.node_type == NodeType::eMemoryBandwidth)
+    //    {
+    //        node = std::make_unique<gpu_op::MemoryBandwidthDispatcher>(std::move(opts.memory_bw_params), d3d12_device.Get(), command_list.Get(), intel_extension_d3d12);
+    //    }
+    //    else
+    //    {
+    //        assert(false && "Unknown node type!");
+    //    }
+
+    //    close_execute_reset_wait(d3d12_device.Get(), command_queue.Get(), command_allocator.Get(), command_list.Get());
+    //    const auto descriptors_count = node->get_total_descriptor_count();
+    //    
+    //    // bind descriptor heap
+    //    auto descriptor_heap = create_descriptor_heap(d3d12_device.Get(), descriptors_count);
+    //    ID3D12DescriptorHeap* d3d12_descriptor_heaps[] = { descriptor_heap.Get() };
+    //    command_list->SetDescriptorHeaps(1, d3d12_descriptor_heaps);
+
+    //    // initalize
+    //    node->initialize(command_list.Get(), descriptor_heap->GetCPUDescriptorHandleForHeapStart(), descriptor_heap->GetGPUDescriptorHandleForHeapStart());
+    //    close_execute_reset_wait(d3d12_device.Get(), command_queue.Get(), command_allocator.Get(), command_list.Get());
+
+    //    // 
+    //    // Bind and execute the operator on the GPU.
+    //    // 
+    //    // 
+    //    command_list->SetDescriptorHeaps(1, d3d12_descriptor_heaps);
+
+    //    for (std::uint32_t i = 0; i < opts.dispatch_iterations; ++i)
+    //    {
+    //        performance_collector.add_timestamp(command_list.Get());
+    //        node->execute(command_list.Get());
+    //        performance_collector.add_timestamp(command_list.Get());
+    //    }
+    //    close_execute_reset_wait(d3d12_device.Get(), command_queue.Get(), command_allocator.Get(), command_list.Get());
+
+    //    const auto device_remove_reason = d3d12_device->GetDeviceRemovedReason();
+    //    if (device_remove_reason != S_OK)
+    //    {
+    //        std::cout << std::format("Device removal. Reason: {}\n", device_remove_reason);
+    //    }
+
+    //    if (opts.no_conformance_check)
+    //    {
+    //        std::cout << std::format("Skipping conformance check as requested by cmd line.\n");
+    //    }
+    //    else
+    //    {
+    //        const auto conformance_result = node->validate_conformance(command_queue.Get(), command_allocator.Get(), command_list.Get(), true, opts.dispatch_iterations);
+    //        std::cout << std::format("Conformance {}. Tested values (tensor out elements count): {} \n", conformance_result.passed, conformance_result.tested_samples_count);
+    //        std::cout << std::format("Biggest difference in the output tensor: {}. It is in the epsilion range: {}. \n", conformance_result.biggest_difference, conformance_result.epsilon);
+    //    }
+
+    //    // Copy the timing data back
+    //    command_list->ResolveQueryData(
+    //        performance_collector.timestamp_query_heap.Get(),
+    //        D3D12_QUERY_TYPE_TIMESTAMP,
+    //        0,
+    //        performance_collector.timestamp_index,
+    //        performance_collector.timestamp_readback_buffer.Get(),
+    //        0);
+    //    close_execute_reset_wait(d3d12_device.Get(), command_queue.Get(), command_allocator.Get(), command_list.Get());
+
+    //    uint64_t timestamp_frequency = 0;
+    //    command_queue->GetTimestampFrequency(&timestamp_frequency);
+
+    //    const auto timestamps_timings = get_timestamps_timings_from_ptr<std::chrono::microseconds>(timestamp_frequency, performance_collector.timestamp_readback, performance_collector.timestamp_index);
+    //    performance_collector.timestamp_index = 0;
+
+    //    std::vector<std::chrono::microseconds> timings(timestamps_timings.size() / 2);
+    //    for (uint32_t i = 0; i < timings.size(); i++)
+    //    {
+    //        const auto t0 = timestamps_timings[i * 2];
+    //        const auto t1 = timestamps_timings[i * 2 + 1];
+    //        timings[i] = t1 - t0;
+    //    }
+
+    //    print_performance_stats(timings);
+    //}
+    //catch (dnnl::error e)
+    //{
+    //    std::cerr << std::format("DNNL exception caught: {} \n", e.what());
+    //    return -1;
+    //}
+    //catch (std::exception e)
+    //{
+    //    std::cerr << std::format("STD exception caught: {} \n", e.what());
+    //    return -1; 
+    //}
+    //catch (...)
+    //{
+    //    std::cerr << std::format("Unknwon exception caught.");
+    //    return -1;
+    //}
     return 0;
 }
