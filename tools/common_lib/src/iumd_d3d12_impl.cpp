@@ -121,7 +121,7 @@ iumd::custom_metacommand::UmdD3d12Device::UmdD3d12Device(ID3D12Device* device, I
     }
     else if (sku_.igfx == UMD_IGFX::eLNL || sku_.igfx == UMD_IGFX::eBMG)
     {
-        sku_.eu_per_dss = 16;
+        sku_.eu_per_dss = 8;
         sku_.threads_per_eu = 8;
         sku_.hw_simd_size = 16;
     }
