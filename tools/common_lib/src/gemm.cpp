@@ -69,7 +69,7 @@ std::vector<std::byte> dnnl_gemm_op::gemm(const bindings_t& bindings, opts_t opt
         return dnnl::memory(to_dnnl_mem_desc(opts.output_shape, opts.out_layout, opts.out_dt), engine);
     }();
 
-    dnnl::memory alpha_scale_memory = [&]()
+    /*dnnl::memory alpha_scale_memory = [&]()
     {
         const float alpha = opts.alpha / (opts.beta == 0.0f ? 1.0f : opts.beta);
         return create_dnnl_memory(binding_t{ reinterpret_cast<const std::byte*>(&alpha), DataType::eFp32, DataLayout::eW, TensorShape{1, 0, 0, 0} }, engine);
@@ -78,7 +78,7 @@ std::vector<std::byte> dnnl_gemm_op::gemm(const bindings_t& bindings, opts_t opt
     dnnl::memory beta_scale_memory = [&]()
     {
         return create_dnnl_memory(binding_t{ reinterpret_cast<const std::byte*>(&opts.beta), DataType::eFp32, DataLayout::eW, TensorShape{1, 0, 0, 0} }, engine);
-    }();
+    }();*/
 
     dnnl::post_ops po{};
     dnnl::primitive_attr attrs{};
@@ -87,7 +87,7 @@ std::vector<std::byte> dnnl_gemm_op::gemm(const bindings_t& bindings, opts_t opt
         attrs.set_accumulation_mode(dnnl::accumulation_mode::strict);
     }
 
-    auto has_scaling_factors = [&]()
+    /*auto has_scaling_factors = [&]()
     {
         return opts.alpha != 1.0f || opts.beta != 1.0f;
     };
@@ -95,6 +95,10 @@ std::vector<std::byte> dnnl_gemm_op::gemm(const bindings_t& bindings, opts_t opt
     if (has_scaling_factors())
     {
         attrs.set_scales_mask(DNNL_ARG_WEIGHTS, 0);
+    }*/
+    if (opts.alpha != 1.0f) {
+        po.append_eltwise(dnnl::algorithm::eltwise_linear, opts.alpha, 0.0f);
+
     }
 
     if (input_c_memory)
@@ -102,9 +106,12 @@ std::vector<std::byte> dnnl_gemm_op::gemm(const bindings_t& bindings, opts_t opt
         po.append_binary(dnnl::algorithm::binary_add, input_c_memory.get_desc());
     }
 
-    if (has_scaling_factors())
-    {
-        po.append_binary(dnnl::algorithm::binary_mul, beta_scale_memory.get_desc());
+    //if (has_scaling_factors())
+    //{
+    //    po.append_binary(dnnl::algorithm::binary_mul, beta_scale_memory.get_desc());
+    //}
+    if (opts.beta != 0.0f) {
+        po.append_sum(opts.beta);
     }
 
     if (opts.activation.type != ActivationType::eUnknown)
@@ -137,12 +144,12 @@ std::vector<std::byte> dnnl_gemm_op::gemm(const bindings_t& bindings, opts_t opt
         post_ops_idx++;
     }
 
-    if (has_scaling_factors())
+    /*if (has_scaling_factors())
     {
         args.insert({ DNNL_ARG_ATTR_SCALES | DNNL_ARG_WEIGHTS, alpha_scale_memory });
         args.insert({ DNNL_ARG_ATTR_MULTIPLE_POST_OP(post_ops_idx) | DNNL_ARG_SRC_1, beta_scale_memory });
         post_ops_idx++;
-    }
+    }*/
 
     for (int i = 0; i < opts.execution_iterations; i++)
     {
