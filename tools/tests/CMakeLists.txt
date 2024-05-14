@@ -22,6 +22,7 @@ set(TEST_CASES_SOURCES
     
     ${TEST_CASES_DIR}/utils.h
     ${TEST_CASES_DIR}/test_conv_base.h
+    ${TEST_CASES_DIR}/test_gemm_base.h
 )
 
 

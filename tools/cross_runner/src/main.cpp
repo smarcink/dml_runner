@@ -189,7 +189,7 @@ int main()
         std::unique_ptr<NodeDispatcher> node;
         if (opts.node_type == NodeType::eGemmDml)
         {
-            node = std::make_unique<GemmDmlDispatcher>(std::move(opts.gemm_opts), 
+            node = std::make_unique<GemmDmlDispatcher>(std::move(opts.gemm_opts), true, 
                 d3d12_device.Get(), dml_device.Get(), dml_command_recorder.Get(), command_list.Get());
         }
         else if (opts.node_type == NodeType::eGemmCm)

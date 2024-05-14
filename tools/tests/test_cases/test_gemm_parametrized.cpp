@@ -7,7 +7,9 @@
 #include "utils.h"
 #include "layers_utils.h"
 
-class DnnlPluginNext_GEMM_Params : public NodeDispatcherBase, public testing::TestWithParam<std::tuple<
+#include "test_gemm_base.h"
+
+class DnnlPluginNext_GEMM_Params : public GemmBaseTestDispatcher, public testing::TestWithParam<std::tuple<
     std::int32_t, // batch
     std::int32_t, // M
     std::int32_t, // K
@@ -59,7 +61,7 @@ protected:
     void set_b_transposed() { use_b_transposed_ = true; }
 
 protected:
-    std::unique_ptr<NodeDispatcher> create_dispatcher_impl() override
+    GemmBaseDispatcher::create_params_t get_params() override
     {
         const auto params = GetParam();
         const auto batch = std::get<TUPLE_ID_BATCH>(params);
@@ -85,13 +87,7 @@ protected:
         opts.a_transposed = use_a_transposed_;
         opts.b_transposed = use_b_transposed_;
         opts.activation = activation_;
-        auto node = std::make_unique<GemmUmdD3d12Dispatcher>(std::move(opts),
-            g_dx12_engine.intel_extension_d3d12,
-            g_dx12_engine.d3d12_device.Get(),
-            g_dx12_engine.dml_device.Get(),
-            g_dx12_engine.dml_command_recorder.Get(),
-            g_dx12_engine.command_list.Get());
-        return node;
+        return opts;
     }
 
 private:

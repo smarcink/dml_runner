@@ -119,7 +119,7 @@ public:
         const TensorShape& shape_a, const TensorShape& shape_b, const TensorShape& shape_c, const TensorShape& shape_out,
         bool a_transposed, bool b_managed, bool b_transposed, float alpha, float beta,
         bool allow_fp16_computations, const ActivationSettings& activation_settings,
-        IDMLDevice* dml_device, ID3D12Device* d3d12_device, bool disable_mc = false)
+        IDMLDevice* dml_device, ID3D12Device* d3d12_device, bool allow_descriptors_volatile, bool disable_mc = false)
         : DirectMlBaseNode(dml_device, d3d12_device)
         , type_(gemm_type)
         , graph_(dml_device)
@@ -343,7 +343,13 @@ public:
             assert(false && "Unsupported gemm type!");
         }
 
-        DML_EXECUTION_FLAGS execution_flags = DML_EXECUTION_FLAG_DESCRIPTORS_VOLATILE;
+        DML_EXECUTION_FLAGS execution_flags = DML_EXECUTION_FLAG_NONE;
+        
+        if (allow_descriptors_volatile)
+        {
+            execution_flags |= DML_EXECUTION_FLAG_DESCRIPTORS_VOLATILE;
+        }
+        ;
         if (allow_fp16_computations)
         {
             execution_flags |= DML_EXECUTION_FLAG_ALLOW_HALF_PRECISION_COMPUTATION;
@@ -767,7 +773,7 @@ public:
                 params_.shape_a, params_.shape_b, params_.shape_c, get_shape_output(),
                 params_.a_transposed, false /*params_.b_managed*/, params_.b_transposed, params_.alpha, params_.beta, 
                 params_.allow_fp16_computations, params_.activation,
-                dml_device_, d3d12_device_, true);
+                dml_device_, d3d12_device_, false, true);
             // bind descriptor heap
             auto descriptor_heap = create_descriptor_heap(d3d12_device_, gemm_ref.get_total_descriptor_count());
             ID3D12DescriptorHeap* d3d12_descriptor_heaps[] = { descriptor_heap.Get() };
@@ -913,12 +919,12 @@ protected:
 class GemmDmlDispatcher : public GemmBaseDispatcher
 {
 public:
-    GemmDmlDispatcher(create_params_t&& params, ID3D12Device* d3d12_device, IDMLDevice* dml_device, IDMLCommandRecorder* dml_cmd_recorder, ID3D12GraphicsCommandList* cmd_list)
+    GemmDmlDispatcher(create_params_t&& params, bool allow_descriptors_volatile, ID3D12Device* d3d12_device, IDMLDevice* dml_device, IDMLCommandRecorder* dml_cmd_recorder, ID3D12GraphicsCommandList* cmd_list)
         : GemmBaseDispatcher(std::move(params), d3d12_device, dml_device, dml_cmd_recorder, cmd_list)
         , gemm_(params_.type, to_dml_data_type(params_.dt), to_dml_tensor_policy(params_.layout), params_.shape_a, params_.shape_b, params_.shape_c, get_shape_output(), 
             params_.a_transposed, params_.b_managed, params_.b_transposed,
             params_.alpha, params_.beta, params_.allow_fp16_computations, params_.activation,
-            dml_device, d3d12_device, false)
+            dml_device, d3d12_device, allow_descriptors_volatile, false)
     {
         if (params_.c_managed)
         {
