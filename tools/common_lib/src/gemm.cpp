@@ -81,7 +81,7 @@ std::vector<std::byte> dnnl_gemm_op::gemm(const bindings_t& bindings, opts_t opt
     {
         return opts.beta != 0.0f || opts.beta != 1.0f;
     };
-    if (opts.alpha != 1.0f ) {
+    if (opts.alpha != 1.0f || has_beta_scaling_factors() ) {
         po.append_eltwise(dnnl::algorithm::eltwise_linear, has_beta_scaling_factors() ? opts.alpha / opts.beta : opts.alpha , 0.0f);
     }
 
@@ -118,7 +118,7 @@ std::vector<std::byte> dnnl_gemm_op::gemm(const bindings_t& bindings, opts_t opt
     args.insert({ DNNL_ARG_DST, output_memory });
 
     std::size_t post_ops_idx = 0ull;
-    if (opts.alpha != 1)
+    if (opts.alpha != 1 || has_beta_scaling_factors())
     {
         post_ops_idx++;
     }

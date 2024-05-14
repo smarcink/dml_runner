@@ -1003,7 +1003,7 @@ public:
             }
 
             // alpha
-            if (params_.alpha != 1.0f)
+            if (params_.alpha != 1.0f || has_beta_scaling_factors())
             {
                ops.append_eltwise(dnnl::algorithm::eltwise_linear, has_beta_scaling_factors() ? params_.alpha / params_.beta : params_.alpha , 0.0f);
             }
@@ -1258,7 +1258,7 @@ public:
         args.insert({ DNNL_ARG_SRC, input_memory });
         args.insert({ DNNL_ARG_WEIGHTS, input_b_memory });
         std::size_t post_ops_idx = 0ull;
-        if(params_.alpha!=1)
+        if(params_.alpha!=1 || has_beta_scaling_factors())
         {
             post_ops_idx++;
         }
