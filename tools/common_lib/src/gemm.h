@@ -1003,14 +1003,14 @@ public:
             }
 
             // alpha
-            if (params_.alpha != 1.0f) {
-                ops.append_eltwise(dnnl::algorithm::eltwise_linear, params_.alpha, 0.0f);
+            // if (params_.alpha != 1.0f) {
+            //     ops.append_eltwise(dnnl::algorithm::eltwise_linear, params_.alpha, 0.0f);
+            // }
+            if (params_.alpha != 1.0f)
+            {
+               ops.append_eltwise(dnnl::algorithm::eltwise_linear, params_.alpha/params_.beta, 0.0f);
+               //attr.set_scales_mask(DNNL_ARG_WEIGHTS, 0);  // alpha / beta
             }
-            //if (has_scaling_factors())
-            //{
-            //    
-            //    attr.set_scales_mask(DNNL_ARG_WEIGHTS, 0);  // alpha / beta
-            //}
 
             if (has_c_tensor())
             {
@@ -1018,14 +1018,15 @@ public:
             }
 
             // beta
-            if (params_.beta != 0.0f) {
-                ops.append_sum( params_.beta );
-            }
-            /*if (has_scaling_factors())
+            // if (params_.beta != 0.0f) {
+            //     ops.append_sum( params_.beta );
+            // }
+            if (params_.beta != 1.0f)
             {
-                ops.append_binary(dnnl::algorithm::binary_mul, 
-                    to_dnnl_mem_desc(TensorShape{ 1, 0, 0, 0 }, DataLayout::eW, DataType::eFp32));
-            }*/
+                // ops.append_binary(dnnl::algorithm::binary_mul, 
+                //     to_dnnl_mem_desc(TensorShape{ 1, 0, 0, 0 }, DataLayout::eW, DataType::eFp32));
+                ops.append_eltwise(dnnl::algorithm::eltwise_linear, params_.beta, 0.0f);
+            }
 
             if (params_.activation.type != ActivationType::eUnknown)
             {

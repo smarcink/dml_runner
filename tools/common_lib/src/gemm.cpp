@@ -97,7 +97,7 @@ std::vector<std::byte> dnnl_gemm_op::gemm(const bindings_t& bindings, opts_t opt
         attrs.set_scales_mask(DNNL_ARG_WEIGHTS, 0);
     }*/
     if (opts.alpha != 1.0f) {
-        po.append_eltwise(dnnl::algorithm::eltwise_linear, opts.alpha, 0.0f);
+        po.append_eltwise(dnnl::algorithm::eltwise_linear, opts.alpha/opts.beta, 0.0f);
 
     }
 
@@ -110,8 +110,9 @@ std::vector<std::byte> dnnl_gemm_op::gemm(const bindings_t& bindings, opts_t opt
     //{
     //    po.append_binary(dnnl::algorithm::binary_mul, beta_scale_memory.get_desc());
     //}
-    if (opts.beta != 0.0f) {
-        po.append_sum(opts.beta);
+    if (opts.beta != 1.0f) {
+        //po.append_sum(opts.beta);
+        po.append_eltwise(dnnl::algorithm::eltwise_linear, opts.beta, 0.0f);
     }
 
     if (opts.activation.type != ActivationType::eUnknown)
