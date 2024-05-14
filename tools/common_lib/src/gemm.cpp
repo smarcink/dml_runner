@@ -125,7 +125,7 @@ std::vector<std::byte> dnnl_gemm_op::gemm(const bindings_t& bindings, opts_t opt
     dnnl::matmul::primitive_desc matmul_desc(engine,
         input_a_memory.get_desc(),
         input_b_memory.get_desc(),
-        {}, // we dont use bias for c_tensir
+        //{}, // we dont use bias for c_tensir
         output_memory.get_desc(),
         attrs
     );

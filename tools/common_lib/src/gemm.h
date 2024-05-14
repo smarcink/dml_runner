@@ -1041,7 +1041,7 @@ public:
         dnnl::matmul::primitive_desc matmul_desc(dnnl_engine_,
             input_a_memory_desc_,
             input_b_memory_desc_,
-            dnnl::memory::desc{},  // we dont use bias for C Tensor, we use binary add pos-
+           // dnnl::memory::desc{},  // we dont use bias for C Tensor, we use binary add pos-
             output_memory_desc_,
             attr
         );
