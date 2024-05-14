@@ -502,6 +502,8 @@ public:
         bool allow_fp16_computations = false;
         bool use_dnnl_for_reference_calculations = false;
 
+        bool dump_resource = false;
+
         inline static void add_cli_options(CLI::App* opts, create_params_t& params)
         {
             add_data_type_cli_option(opts, "--data_type", params.dt)->required();
@@ -532,6 +534,8 @@ public:
                     { "qk_q_kv", GemmType::GemmType_QK_Q_KV },
                     { "sv_s_kv", GemmType::GemmType_SV_S_KV },
             }, CLI::ignore_case))->required();
+
+            opts->add_flag("--dump_resource", params.dump_resource);
 
         }
     };
@@ -999,9 +1003,9 @@ public:
             }
 
             // alpha
-            if (has_scaling_factors())
+            if (params_.alpha != 1.0f || has_beta_scaling_factors())
             {
-                attr.set_scales_mask(DNNL_ARG_WEIGHTS, 0);  // alpha / beta
+               ops.append_eltwise(dnnl::algorithm::eltwise_linear, has_beta_scaling_factors() ? params_.alpha / params_.beta : params_.alpha , 0.0f);
             }
 
             if (has_c_tensor())
@@ -1009,11 +1013,9 @@ public:
                 ops.append_binary(dnnl::algorithm::binary_add, input_c_memory_desc_.value());
             }
 
-            // beta
-            if (has_scaling_factors())
+            if (has_beta_scaling_factors())
             {
-                ops.append_binary(dnnl::algorithm::binary_mul, 
-                    to_dnnl_mem_desc(TensorShape{ 1, 0, 0, 0 }, DataLayout::eW, DataType::eFp32));
+                ops.append_eltwise(dnnl::algorithm::eltwise_linear, params_.beta, 0.0f);
             }
 
             if (params_.activation.type != ActivationType::eUnknown)
@@ -1029,7 +1031,6 @@ public:
         dnnl::matmul::primitive_desc matmul_desc(dnnl_engine_,
             input_a_memory_desc_,
             input_b_memory_desc_,
-            dnnl::memory::desc{},  // we dont use bias for C Tensor, we use binary add pos-
             output_memory_desc_,
             attr
         );
@@ -1039,10 +1040,6 @@ public:
         const auto persistent_resource_size = [&]()
         {
             std::size_t ret = 0ull;
-            if (has_scaling_factors())
-            {
-                ret += 2 * sizeof(float);
-            }
 
             if (params_.b_managed)
             {
@@ -1094,19 +1091,6 @@ public:
             reorder_input_c_ = dnnl::reorder(reorder_desc);
         }
 
-        if (has_scaling_factors())
-        {
-            const char* code_string =
-                "__attribute__((reqd_work_group_size(1, 1, 1))) "
-                "__kernel void copy_alphabeta(__global float* output, float alpha, float beta) "
-                "{"
-                "output[0] = alpha;"
-                "output[1] = beta;"
-                "}";
-
-            copy_alpha_shader_ = device_.create_pipeline_state_object("copy_alphabeta", code_string, std::strlen(code_string), "", UMD_SHADER_LANGUAGE::eOCL_STATELESS);
-            assert(copy_alpha_shader_);
-        }
     }
 
     std::uint32_t get_total_descriptor_count()override
@@ -1125,7 +1109,7 @@ public:
         base_cpu_handle_ = CD3DX12_CPU_DESCRIPTOR_HANDLE{ cpu_handle };
         base_gpu_handle_ = CD3DX12_GPU_DESCRIPTOR_HANDLE{ gpu_handle };
 
-        if (!reorder_input_b_ && !reorder_input_c_ && !copy_alpha_shader_)
+        if (!reorder_input_b_ && !reorder_input_c_ /* && !copy_alpha_shader_*/)
         {
             // early exit, as no reordering needed or copy shader for alpha value not needed
             return;
@@ -1150,20 +1134,6 @@ public:
         std::size_t rsc_idx = 0;
         auto umd_persistent_mem = persistent_buffer_ ? iumd::custom_metacommand::UmdD3d12Memory(gpu_handles[rsc_idx++]) : iumd::custom_metacommand::UmdD3d12Memory{};
         std::size_t persistent_mem_offset = 0;
-
-        if (has_scaling_factors())
-        {
-            // hack for oneDNNL to have OneDNNL aligned with DirectML!
-            const float beta = has_c_tensor() ? params_.beta : 1.0f;
-            const float alpha = params_.alpha / beta;
-
-            copy_alpha_shader_->set_kernel_arg(0, &umd_persistent_mem);
-            copy_alpha_shader_->set_kernel_arg(1, iumd::IUMDPipelineStateObject::ScalarArgType{ sizeof(float), &alpha });
-            copy_alpha_shader_->set_kernel_arg(2, iumd::IUMDPipelineStateObject::ScalarArgType{ sizeof(float), &beta });
-            cmd.dispatch(copy_alpha_shader_.get(), { 1, 1, 1 }, { 1, 1, 1 });
-
-            persistent_mem_offset += 2 * sizeof(float);
-        }
 
         // weights reorder
         if (reorder_input_b_)
@@ -1247,7 +1217,7 @@ public:
             return iumd::custom_metacommand::UmdD3d12Memory{};
         }();
 
-        auto umd_alpha_beta_memory_ = umd_persitent_memory;
+        //auto umd_alpha_beta_memory_ = umd_persitent_memory;
         auto umd_scratchpad_memory_ = temporary_buffer_ ? iumd::custom_metacommand::UmdD3d12Memory(gpu_handles[res_idx++]) : iumd::custom_metacommand::UmdD3d12Memory();
 
         // stream is created in execute(...), because in MetaCommand cmd list object can be different from execute-to-execute
@@ -1260,22 +1230,10 @@ public:
         dnnl::memory input_memory = create_dnnl_memory(input_a_memory_desc_, umd_input_a_memory_);
 
         std::size_t persistent_mem_offset = 0;
-        dnnl::memory alpha_factor_memory{};
-        dnnl::memory beta_factor_memory{};
-        if (has_scaling_factors())
-        {
-            alpha_factor_memory = create_dnnl_memory(dnnl_utils::to_dnnl_mem_desc(TensorShape(1, 0, 0, 0), DataLayout::eW, params_.dt), umd_alpha_beta_memory_, 0ull);
-            beta_factor_memory = create_dnnl_memory(dnnl_utils::to_dnnl_mem_desc(TensorShape(1, 0, 0, 0), DataLayout::eW, params_.dt), umd_alpha_beta_memory_, sizeof(float));
-            persistent_mem_offset += 2 * sizeof(float);
-        }
+     
         dnnl::memory input_b_memory = [&]()
         {
             std::size_t offset = 0ull;
-            if (reorder_input_b_ && has_scaling_factors())
-            {
-                offset = persistent_mem_offset;
-                persistent_mem_offset += input_b_memory_desc_.get_size();
-            }
             return create_dnnl_memory(input_b_memory_desc_, umd_input_b_memory_, offset);
         }();
 
@@ -1288,19 +1246,11 @@ public:
             return dnnl::memory{};
         }();
 
-        // dnnl::memory scratchpad_memory = has_scratchpad_tensor() ?
-        //     create_dnnl_memory(scratchpad_memory_desc_.value(), umd_scratchpad_memory_) :
-        //     dnnl::memory{};
-
         std::optional<dnnl::memory> scratchpad_memory;
         if(has_scratchpad_tensor())
         {
-            if (scratchpad_memory_desc_)
-            {
-                scratchpad_memory.emplace(create_dnnl_memory(scratchpad_memory_desc_.value(), umd_scratchpad_memory_));
-            }
+            scratchpad_memory.emplace(create_dnnl_memory(scratchpad_memory_desc_.value(), umd_scratchpad_memory_));
         }
-         
 
         dnnl::memory output_memory = create_dnnl_memory(output_memory_desc_, umd_output_memory_);
 
@@ -1308,15 +1258,19 @@ public:
         args.insert({ DNNL_ARG_SRC, input_memory });
         args.insert({ DNNL_ARG_WEIGHTS, input_b_memory });
         std::size_t post_ops_idx = 0ull;
+        if(params_.alpha!=1 || has_beta_scaling_factors())
+        {
+            post_ops_idx++;
+        }
+
         if (input_c_memory)
         {
             args.insert({ DNNL_ARG_ATTR_MULTIPLE_POST_OP(post_ops_idx) | DNNL_ARG_SRC_1, input_c_memory });
             post_ops_idx++;
         }
-        if (has_scaling_factors())
+
+        if(has_beta_scaling_factors())
         {
-            args.insert({ DNNL_ARG_ATTR_SCALES | DNNL_ARG_WEIGHTS, alpha_factor_memory });
-            args.insert({ DNNL_ARG_ATTR_MULTIPLE_POST_OP(post_ops_idx) | DNNL_ARG_SRC_1, beta_factor_memory });
             post_ops_idx++;
         }
 
@@ -1330,6 +1284,49 @@ public:
         gemm_.execute(stream, args);
     }
 
+
+    ConformanceResult validate_conformance(ID3D12CommandQueue* command_queue,
+            ID3D12CommandAllocator* command_allocator, ID3D12GraphicsCommandList* command_list, bool print_mismatche, std::size_t reference_dispatch_iterations) override
+    {
+        auto dump_buffer_to_file = [&](const auto& buffer, const auto& file_name)
+        {
+            if (!buffer)
+            {
+                return;
+            }
+            const auto bytes_width = buffer->GetDesc().Width;
+            // readback data and validate
+            auto readback_buffer = create_buffer(d3d12_device_, bytes_width, D3D12_HEAP_TYPE_READBACK, D3D12_RESOURCE_STATE_COPY_DEST);
+            auto readback_output_barrirer = CD3DX12_RESOURCE_BARRIER::Transition(buffer.Get(),
+                D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
+            command_list->ResourceBarrier(1, &readback_output_barrirer);
+            command_list->CopyResource(readback_buffer.Get(), persistent_buffer_.Get());
+            close_execute_reset_wait(d3d12_device_, command_queue, command_allocator, command_list);
+
+            std::vector<std::byte> data_out(bytes_width);
+            std::byte* readback_mapped_ptr = nullptr;
+            readback_buffer->Map(0, nullptr, reinterpret_cast<void**>(&readback_mapped_ptr));
+            std::memcpy(data_out.data(), readback_mapped_ptr, data_out.size());
+            readback_buffer->Unmap(0, nullptr);
+
+             // Assuming data_out now contains the float data
+            float* float_ptr = reinterpret_cast<float*>(data_out.data());
+            size_t num_floats = data_out.size() / sizeof(float);
+            std::ofstream file(file_name, std::ios::out); // Open in text mode; use std::ios::binary for binary mode
+            for (size_t i = 0; i < num_floats; ++i) {
+                file << float_ptr[i] << std::endl; // Write in text format; for binary, use file.write(reinterpret_cast<const char*>(&float_ptr[i]), sizeof(float));
+            }
+            file.close();
+        };
+
+        if(params_.dump_resource)
+        {
+            dump_buffer_to_file(persistent_buffer_, "umd_gemm_data.txt");
+        }
+        
+        const auto ret = GemmBaseDispatcher::validate_conformance(command_queue, command_allocator, command_list, print_mismatche, reference_dispatch_iterations);
+        return ret;
+    }
 private:
     dnnl::memory create_dnnl_memory(const auto& desc, auto& umd_mem, std::size_t offset = 0)
     {
@@ -1337,11 +1334,12 @@ private:
     };
 
 private:
-    bool has_scaling_factors() const
+    bool has_beta_scaling_factors() const
     {
-        // OneDNNL has a bit different GEMM API defintion
-        // we will pass alpha as alpha/beta, so here we need to check for both params
-        return params_.alpha != 1.0f || params_.beta != 1.0f;
+        // OneDNNL has a bit different GEMM API defintion: alpha*A*B + beta*C
+        // DirectML: beta*(alpha/beta*(A*B)+C))
+        // we will pass alpha as alpha/beta if beta value is effective
+         return params_.beta != 0.0f || params_.beta != 1.0f;
     }
 
     bool has_c_tensor() const
