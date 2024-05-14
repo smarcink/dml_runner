@@ -79,7 +79,7 @@ std::vector<std::byte> dnnl_gemm_op::gemm(const bindings_t& bindings, opts_t opt
     //add three post-ops below to handle the formula: beta*(alpha/beta*(A*B)+C))
     auto has_beta_scaling_factors = [&]()
     {
-        return opts.beta != 0.0f || opts.beta != 1.0f;
+        return opts.beta != 0.0f && opts.beta != 1.0f;
     };
     if (opts.alpha != 1.0f || has_beta_scaling_factors() ) {
         po.append_eltwise(dnnl::algorithm::eltwise_linear, has_beta_scaling_factors() ? opts.alpha / opts.beta : opts.alpha , 0.0f);

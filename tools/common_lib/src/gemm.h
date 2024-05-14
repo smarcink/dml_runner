@@ -1345,7 +1345,7 @@ private:
         // OneDNNL has a bit different GEMM API defintion: alpha*A*B + beta*C
         // DirectML: beta*(alpha/beta*(A*B)+C))
         // we will pass alpha as alpha/beta if beta value is effective
-         return params_.beta != 0.0f || params_.beta != 1.0f;
+         return params_.beta != 0.0f && params_.beta != 1.0f;
     }
 
     bool has_c_tensor() const
