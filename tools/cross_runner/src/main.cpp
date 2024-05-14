@@ -204,7 +204,7 @@ int main()
         }
         else if (opts.node_type == NodeType::eConvDml)
         {
-            node = std::make_unique<ConvolutionDirectMLDispatcher>(std::move(opts.conv_opts), false,
+            node = std::make_unique<ConvolutionDirectMLDispatcher>(std::move(opts.conv_opts), true,
                 d3d12_device.Get(), dml_device.Get(), dml_command_recorder.Get(), command_list.Get());
         }
         else if (opts.node_type == NodeType::eConvCm)
