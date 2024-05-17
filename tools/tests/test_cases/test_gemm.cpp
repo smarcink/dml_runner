@@ -135,7 +135,6 @@ TEST_F(DnnlPluginNext_GEMM, SD_dims_2_fp32)
     params_.shape_a = TensorShape(2, 1, 1024, 640);
     params_.shape_b = TensorShape(2, 1, 640, 1920);
     params_.dt = DataType::eFp32;
-    params_.allow_fp16_computations = true;
     params_.b_managed = true;
     run();
 }

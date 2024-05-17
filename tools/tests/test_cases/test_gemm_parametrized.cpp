@@ -226,7 +226,7 @@ INSTANTIATE_TEST_SUITE_P(
 
 
 
-class DnnlPluginNext_GEMM_Activations : public NodeDispatcherBase, public testing::TestWithParam<std::tuple<
+class DnnlPluginNext_GEMM_Activations : public GemmBaseTestDispatcher, public testing::TestWithParam<std::tuple<
     ActivationSettings,
     DataType
     >>
@@ -270,7 +270,7 @@ protected:
     void set_N(std::uint32_t v) { N_ = v; }
 
 protected:
-    std::unique_ptr<NodeDispatcher> create_dispatcher_impl() override
+    GemmBaseDispatcher::create_params_t get_params() override
     {
         const auto params = GetParam();
         const auto act = std::get<TUPLE_ID_ACTIVATION>(params);
@@ -292,13 +292,7 @@ protected:
         opts.c_managed = false;
         opts.b_transposed = false;
         opts.activation = act;
-        auto node = std::make_unique<GemmUmdD3d12Dispatcher>(std::move(opts),
-            g_dx12_engine.intel_extension_d3d12,
-            g_dx12_engine.d3d12_device.Get(),
-            g_dx12_engine.dml_device.Get(),
-            g_dx12_engine.dml_command_recorder.Get(),
-            g_dx12_engine.command_list.Get());
-        return node;
+        return opts;
     }
 
 private:
