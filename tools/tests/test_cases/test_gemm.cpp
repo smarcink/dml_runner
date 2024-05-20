@@ -84,7 +84,7 @@ TEST_F(DnnlPluginNext_GEMM, SmallMandNBigKWithActivation)
     params_.shape_b = TensorShape(1, 1, 20000, 20);
     params_.dt = DataType::eFp16;
     params_.allow_fp16_computations = true;
-    params_.activation = ActivationSettings{ ActivationType::eGelu };
+    params_.activation = ActivationSettings{ ActivationType::eRelu };
     run();
 }
 
