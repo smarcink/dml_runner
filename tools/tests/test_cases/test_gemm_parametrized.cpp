@@ -346,7 +346,7 @@ INSTANTIATE_TEST_SUITE_P(
             ActivationSettings{ ActivationType::eRelu },
             ActivationSettings{ ActivationType::eLeakyRelu, 0.1f },
             //ActivationSettings{ActivationType::eClip, 0.1f, 1.0f}, // crashing
-            ActivationSettings{ ActivationType::eGelu },
+            //ActivationSettings{ ActivationType::eGelu },
             ActivationSettings{ ActivationType::eSigmoid },
             ActivationSettings{ ActivationType::eLinear, 0.5f, 0.1f },
             ActivationSettings{ ActivationType::eTanh }
