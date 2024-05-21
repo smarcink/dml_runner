@@ -40,6 +40,21 @@ protected:
     GemmBaseDispatcher::create_params_t params_{};
 };
 
+TEST_F(DnnlPluginNext_GEMM, Resnet50_Fp16)
+{
+    params_.shape_a = TensorShape(1, 1, 1, 2048);
+    params_.shape_b = TensorShape(1, 1, 2048, 1000);
+    params_.shape_c = TensorShape(1, 1, 1, 1000);
+    params_.b_transposed = true;
+    params_.b_managed = true;
+    params_.c_managed = true;
+    params_.layout = DataLayout::eNCHW;
+    params_.dt = DataType::eFp16;
+    params_.allow_fp16_computations = true;
+    run();
+}
+
+
 TEST_F(DnnlPluginNext_GEMM, PackedTensor_fp16)
 {
     params_.shape_a = TensorShape(1, 1, 32, 128);
