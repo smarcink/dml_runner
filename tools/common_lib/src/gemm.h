@@ -158,10 +158,10 @@ public:
             if (shape_c.get_dims_count() > 0)
             {
                 dml::TensorDesc::Dimensions dimensions_2;
-                dimensions_2.push_back(shape_a.n);
-                dimensions_2.push_back(shape_a.c);
-                dimensions_2.push_back(a_transposed ? shape_a.w : shape_a.h);
-                dimensions_2.push_back(b_transposed ? shape_b.h : shape_b.w);
+                dimensions_2.push_back(shape_c.n);
+                dimensions_2.push_back(shape_c.c);
+                dimensions_2.push_back(shape_c.h);
+                dimensions_2.push_back(shape_c.w);
                 dml::TensorDesc desc_input_2 = { data_type, dimensions_2 };
                 input_2_ = dml::InputTensor(graph_, 2, desc_input_2);
             }

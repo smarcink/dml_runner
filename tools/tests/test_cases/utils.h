@@ -1,10 +1,13 @@
 #pragma once
 
+#include "config.h"
+
 #include <gtest/gtest.h>
 
 #include <dx12_utils.h>
 
 #include <dml_base_node.h>
+
 
 struct Dx12Engine
 {
@@ -58,7 +61,11 @@ public:
 
         // Bind and execute node
         g_dx12_engine.command_list->SetDescriptorHeaps(1, d3d12_descriptor_heaps);
-        node->execute(g_dx12_engine.command_list.Get());
+        for (int i = 0; i < g_test_config.iterations; i++)
+        {
+            node->execute(g_dx12_engine.command_list.Get());
+        }
+
         g_dx12_engine.wait_for_execution();
 
         // finally validate conformance
