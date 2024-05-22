@@ -23,7 +23,7 @@ struct Dx12Engine
 
     Dx12Engine()
     {
-        initalize_d3d12(d3d12_device, command_queue, command_allocator, command_list);
+        initalize_d3d12(d3d12_device, command_queue, command_allocator, command_list, g_test_config.use_rcs);
         assert(d3d12_device && command_queue && command_allocator && command_list);
         // init extension
         intel_extension_d3d12 = IntelExtension(d3d12_device.Get());

@@ -56,6 +56,7 @@ struct CliOptions
     std::uint32_t dispatch_iterations = 1;
     bool no_conformance_check = false;
     bool print_opts = false;
+    bool use_rcs = false;
 
     // generic type of layers params
     GemmBaseDispatcher::create_params_t gemm_opts{};
@@ -106,6 +107,7 @@ int main()
     dml_runner_app.add_option("--iters", opts.dispatch_iterations, "How many iterations to run.")->check(CLI::Range(1u, MAX_ITERATIONS));
     dml_runner_app.add_flag("--no_conform", opts.no_conformance_check);
     dml_runner_app.add_flag("--print_opts", opts.print_opts);
+    dml_runner_app.add_flag("--use_rcs", opts.use_rcs, "Force using RCS (DIRECT cmd list).")->default_val(false);
 
     // generic type of layers options
     auto gemm_option_groups = dml_runner_app.add_subcommand("gemm_opts", "Options for genn layer.");
@@ -176,7 +178,7 @@ int main()
         ComPtr<ID3D12CommandQueue> command_queue;
         ComPtr<ID3D12CommandAllocator> command_allocator;
         ComPtr<ID3D12GraphicsCommandList> command_list;
-        initalize_d3d12(d3d12_device, command_queue, command_allocator, command_list);
+        initalize_d3d12(d3d12_device, command_queue, command_allocator, command_list, opts.use_rcs);
         auto dml_device = create_dml_device(d3d12_device.Get());
         assert(opts.dispatch_iterations < MAX_ITERATIONS);
         auto performance_collector = initialize_d3d12_performance_collector(d3d12_device.Get(), MAX_ITERATIONS);

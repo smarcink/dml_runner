@@ -35,7 +35,7 @@ inline void throw_if_failed(HRESULT hr, std::string_view msg)
     }
 }
 
-inline void initalize_d3d12(ComPtr<ID3D12Device>& d3D12_device, ComPtr<ID3D12CommandQueue>& command_queue, ComPtr<ID3D12CommandAllocator>& command_allocator, ComPtr<ID3D12GraphicsCommandList>& command_list)
+inline void initalize_d3d12(ComPtr<ID3D12Device>& d3D12_device, ComPtr<ID3D12CommandQueue>& command_queue, ComPtr<ID3D12CommandAllocator>& command_allocator, ComPtr<ID3D12GraphicsCommandList>& command_list, bool use_rcs)
 {
 #if defined(_DEBUG)
     ComPtr<ID3D12Debug> d3D12Debug;
@@ -78,20 +78,22 @@ inline void initalize_d3d12(ComPtr<ID3D12Device>& d3D12_device, ComPtr<ID3D12Com
         throw_if_failed(hr, "create device");
     } while (hr != S_OK);
 
+    const auto queue_type = use_rcs ? D3D12_COMMAND_LIST_TYPE_DIRECT : D3D12_COMMAND_LIST_TYPE_COMPUTE;
+
     D3D12_COMMAND_QUEUE_DESC command_queue_desc{};
-    command_queue_desc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
+    command_queue_desc.Type = queue_type;
     command_queue_desc.Flags = D3D12_COMMAND_QUEUE_FLAG_NONE;
 
     throw_if_failed(d3D12_device->CreateCommandQueue(
         &command_queue_desc, IID_PPV_ARGS(command_queue.ReleaseAndGetAddressOf())), "create command queue");
 
     throw_if_failed(d3D12_device->CreateCommandAllocator(
-        D3D12_COMMAND_LIST_TYPE_DIRECT,
+        queue_type,
         IID_PPV_ARGS(command_allocator.ReleaseAndGetAddressOf())), "create command allocator");
 
     throw_if_failed(d3D12_device->CreateCommandList(
         0,
-        D3D12_COMMAND_LIST_TYPE_DIRECT,
+        queue_type,
         command_allocator.Get(),
         nullptr, IID_PPV_ARGS(command_list.ReleaseAndGetAddressOf())), "create command list");
 
