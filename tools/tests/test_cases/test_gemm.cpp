@@ -42,6 +42,10 @@ protected:
 
 TEST_F(DnnlPluginNext_GEMM, Resnet50_Fp16)
 {
+    if (!g_test_config.run_dml)
+    {
+        GTEST_SKIP() << "Enabled only for DML path. ToDo: add support for non-DML path.";
+    }
     params_.shape_a = TensorShape(1, 1, 1, 2048);
     params_.shape_b = TensorShape(1, 1, 2048, 1000);
     params_.shape_c = TensorShape(1, 1, 1, 1000);
