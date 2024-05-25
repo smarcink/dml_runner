@@ -58,6 +58,19 @@ TEST_F(DnnlPluginNext_GEMM, Resnet50_Fp16)
     run();
 }
 
+TEST_F(DnnlPluginNext_GEMM, LargeSize_Fp32)
+{
+    if (!g_test_config.run_dml)
+    {
+        GTEST_SKIP() << "Enabled only for DML path. ToDo: add support for non-DML path.";
+    }
+    params_.shape_a = TensorShape(1,1,144,4096);
+    params_.shape_b = TensorShape(1,1,4096,1024);
+    params_.b_managed = true;
+    params_.layout = DataLayout::eNCHW;
+    params_.dt = DataType::eFp32;
+    run();
+}
 
 TEST_F(DnnlPluginNext_GEMM, PackedTensor_fp16)
 {
