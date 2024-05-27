@@ -115,7 +115,7 @@ namespace gpu_op
 class Gemm : public DirectMlBaseNode
 {
 public:
-    Gemm(GemmType gemm_type, const DML_TENSOR_DATA_TYPE data_type, const dml::TensorPolicy& tensor_policy,
+    Gemm(GemmType gemm_type, const DML_TENSOR_DATA_TYPE data_type, const dml::TensorPolicy& tensor_policy_ab, const dml::TensorPolicy& tensor_policy_c,
         const TensorShape& shape_a, const TensorShape& shape_b, const TensorShape& shape_c, const TensorShape& shape_out,
         bool a_transposed, bool b_managed, bool b_transposed, bool c_managed, float alpha, float beta,
         bool allow_fp16_computations, const ActivationSettings& activation_settings,
@@ -162,7 +162,20 @@ public:
                 dimensions_2.push_back(shape_c.c);
                 dimensions_2.push_back(shape_c.h);
                 dimensions_2.push_back(shape_c.w);
-                dml::TensorDesc desc_input_2 = { data_type, c_managed ? DML_TENSOR_FLAG_OWNED_BY_DML : DML_TENSOR_FLAG_NONE, dimensions_2 };
+                DML_BUFFER_TENSOR_DESC desc_input_2;
+                dml::TensorProperties tensor_c_properites;
+                {
+                    desc_input_2.DataType = data_type;
+                    desc_input_2.Flags =  c_managed ? DML_TENSOR_FLAG_OWNED_BY_DML : DML_TENSOR_FLAG_NONE;
+                    desc_input_2.DimensionCount = static_cast<std::uint32_t>(dimensions_2.size());
+                    desc_input_2.Sizes = dimensions_2.data();
+
+                    tensor_c_properites = tensor_policy_c.Get(desc_input_2.DataType, desc_input_2.Flags, dimensions_2);
+                    desc_input_2.Strides = tensor_c_properites.strides.has_value() ? tensor_c_properites.strides->data() : nullptr;
+                    desc_input_2.TotalTensorSizeInBytes = tensor_c_properites.totalTensorSizeInBytes;
+                    desc_input_2.GuaranteedBaseOffsetAlignment = tensor_c_properites.guaranteedBaseOffsetAlignment;
+                }
+               
                 input_2_ = dml::InputTensor(graph_, 2, desc_input_2);
             }
 
@@ -491,6 +504,7 @@ public:
         GemmType type;
         DataType dt;
         DataLayout layout;
+        DataLayout layout_c = DataLayout::eNCHW;
         ActivationSettings activation{};
 
         TensorShape shape_a;
@@ -514,6 +528,7 @@ public:
         {
             add_data_type_cli_option(opts, "--data_type", params.dt)->required();
             add_data_layout_cli_option(opts, "--layout", params.layout)->required();
+            add_data_layout_cli_option(opts, "--layout_c", params.layout_c);
             opts->add_option("--activation", params.activation);
 
             opts->add_option("--shape_a", params.shape_a)->required();
@@ -769,7 +784,7 @@ public:
         }
         else   
         {
-            gpu_op::Gemm gemm_ref(params_.type, to_dml_data_type(params_.dt), to_dml_tensor_policy(params_.layout),
+            gpu_op::Gemm gemm_ref(params_.type, to_dml_data_type(params_.dt), to_dml_tensor_policy(params_.layout), to_dml_tensor_policy(params_.layout_c),
                 params_.shape_a, params_.shape_b, params_.shape_c, get_shape_output(),
                 params_.a_transposed, false /*params_.b_managed*/, params_.b_transposed, false /*params_.c_managed*/, params_.alpha, params_.beta,
                 params_.allow_fp16_computations, params_.activation,
@@ -921,7 +936,7 @@ class GemmDmlDispatcher : public GemmBaseDispatcher
 public:
     GemmDmlDispatcher(create_params_t&& params, bool allow_descriptors_volatile, ID3D12Device* d3d12_device, IDMLDevice* dml_device, IDMLCommandRecorder* dml_cmd_recorder, ID3D12GraphicsCommandList* cmd_list)
         : GemmBaseDispatcher(std::move(params), d3d12_device, dml_device, dml_cmd_recorder, cmd_list)
-        , gemm_(params_.type, to_dml_data_type(params_.dt), to_dml_tensor_policy(params_.layout), params_.shape_a, params_.shape_b, params_.shape_c, get_shape_output(), 
+        , gemm_(params_.type, to_dml_data_type(params_.dt), to_dml_tensor_policy(params_.layout), to_dml_tensor_policy(params_.layout_c), params_.shape_a, params_.shape_b, params_.shape_c, get_shape_output(), 
             params_.a_transposed, params_.b_managed, params_.b_transposed, params_.c_managed,
             params_.alpha, params_.beta, params_.allow_fp16_computations, params_.activation,
             dml_device, d3d12_device, allow_descriptors_volatile, false)

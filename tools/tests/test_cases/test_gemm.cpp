@@ -72,6 +72,24 @@ TEST_F(DnnlPluginNext_GEMM, LargeSize_Fp32)
     run();
 }
 
+TEST_F(DnnlPluginNext_GEMM, WithCtensorBroadcast)
+{
+    if (!g_test_config.run_dml)
+    {
+        GTEST_SKIP() << "Enabled only for DML path. ToDo: add support for non-DML path.";
+    }
+    params_.shape_a = TensorShape(1, 1, 2, 320);
+    params_.shape_b = TensorShape(1, 1, 320, 1280);
+    params_.shape_c = TensorShape(1, 1, 2, 1280);
+    params_.b_managed = true;
+    params_.b_transposed = true;
+    params_.c_managed = true;
+    params_.layout_c = DataLayout::eW;
+    params_.layout = DataLayout::eNCHW;
+    params_.dt = DataType::eFp16;
+    run();
+}
+
 TEST_F(DnnlPluginNext_GEMM, PackedTensor_fp16)
 {
     params_.shape_a = TensorShape(1, 1, 32, 128);
