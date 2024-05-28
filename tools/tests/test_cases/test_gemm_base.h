@@ -14,7 +14,7 @@ protected:
         if (g_test_config.run_dml)
         {
             node = std::make_unique<GemmDmlDispatcher>(std::move(get_params()),
-                false,
+                true,
                 g_dx12_engine.d3d12_device.Get(),
                 g_dx12_engine.dml_device.Get(),
                 g_dx12_engine.dml_command_recorder.Get(),
