@@ -190,6 +190,7 @@ inline std::string data_layout_name(DataLayout l)
     case DataLayout::eNHWC: return "NHWC";
     case DataLayout::eCHW:  return "CHW";
     case DataLayout::eW:    return "W";
+    case DataLayout::eO: return "O";
     case DataLayout::eOIYX: return "OIYX";
     case DataLayout::eIO_i8_o8_i2: return "IO_i8_o8_i2";
     case DataLayout::eOYXI_o8:  return "OYXI_o8";
