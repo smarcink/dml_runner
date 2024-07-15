@@ -342,7 +342,7 @@ public:
         bool managed_weights = false;
         bool algo_winograd = false;
         bool transposed = false;
-
+        bool use_constant_buffer = false;
         bool dump_weights = false;
         bool use_dnnl_for_reference_calculations = false;
 
@@ -362,11 +362,11 @@ public:
             opts->add_flag("--no_bias", params.no_bias);
             opts->add_flag("--allow_fp16_computations", params.allow_fp16_computations);
             opts->add_flag("--managed_weights", params.managed_weights);
-            opts->add_option("--activation", params.activation);
+            opts->add_option("--activation", params.activation.type);
             opts->add_flag("--algo_winograd", params.algo_winograd);
             opts->add_flag("--transposed", params.transposed);
             opts->add_flag("--dnnl_reference", params.use_dnnl_for_reference_calculations)->default_val(false);
-
+            opts->add_flag("--use_constant_buffer", params.use_constant_buffer);
             opts->add_flag("--dump_weights", params.dump_weights);
         }
     };
@@ -391,9 +391,12 @@ public:
         assert(params_.groups >= 1);
 
         const auto output_shape = get_output_shape();
-        prepare_constant_data();
+        if (use_constant())
+        {
+            prepare_constant_data();
+        }
 
-        if (!params_.no_bias)
+        if (use_bias())
         {
             bias_data_ = std::vector<std::byte>(output_shape.c * get_data_type_bytes_width(params_.dt));
         }
@@ -449,8 +452,11 @@ public:
             bias_buffer_ = create_buffer(d3d12_device, tensor_bias_bytes_width,
                 D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
         }
-        constant_buffer_ = create_buffer(d3d12_device, tensor_constant_bytes_width,
-            D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+        if (use_constant())
+        {
+            constant_buffer_ = create_buffer(d3d12_device, tensor_constant_bytes_width,
+                D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+        }
         output_buffer_ = create_buffer(d3d12_device, tensor_out_bytes_width,
             D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
 
@@ -469,7 +475,10 @@ public:
             std::memcpy(upload_mapped_ptr + memcopy_offset, bias_data_.data(), tensor_bias_bytes_width);
             memcopy_offset += tensor_bias_bytes_width;
         }
-        std::memcpy(upload_mapped_ptr + memcopy_offset, constant_data_.data(), tensor_constant_bytes_width);
+        if (use_constant())
+        {
+            std::memcpy(upload_mapped_ptr + memcopy_offset, constant_data_.data(), tensor_constant_bytes_width);
+        }
         // unmap memory
         upload_buffer_->Unmap(0, nullptr);
 
@@ -483,7 +492,10 @@ public:
             cmd_list->CopyBufferRegion(bias_buffer_.Get(), 0, upload_buffer_.Get(), memcopy_offset, tensor_bias_bytes_width);
             memcopy_offset += tensor_bias_bytes_width;
         }
-        cmd_list->CopyBufferRegion(constant_buffer_.Get(), 0, upload_buffer_.Get(), memcopy_offset, tensor_constant_bytes_width);
+        if (use_constant())
+        {
+            cmd_list->CopyBufferRegion(constant_buffer_.Get(), 0, upload_buffer_.Get(), memcopy_offset, tensor_constant_bytes_width);
+        }
 
         std::vector<CD3DX12_RESOURCE_BARRIER> barriers;
         barriers.push_back(CD3DX12_RESOURCE_BARRIER::Transition(input_buffer_.Get(),
@@ -495,8 +507,11 @@ public:
             barriers.push_back(CD3DX12_RESOURCE_BARRIER::Transition(bias_buffer_.Get(),
                 D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_UNORDERED_ACCESS));
         }
-        barriers.push_back(CD3DX12_RESOURCE_BARRIER::Transition(constant_buffer_.Get(),
-            D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_UNORDERED_ACCESS));
+        if (use_constant())
+        {
+            barriers.push_back(CD3DX12_RESOURCE_BARRIER::Transition(constant_buffer_.Get(),
+                D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_UNORDERED_ACCESS));
+        }
         cmd_list->ResourceBarrier(static_cast<std::uint32_t>(barriers.size()), barriers.data());
     }
 
@@ -602,7 +617,10 @@ protected:
     {
         return !params_.no_bias;
     }
-
+    inline bool use_constant() const
+    {
+        return params_.use_constant_buffer;
+    }
     std::vector<std::byte> get_dnnl_result(std::size_t reference_dispatch_iterations) const
     {
         const auto output_shape = get_output_shape();
@@ -1043,7 +1061,7 @@ private:
         input_memory_desc_ = to_dnnl_mem_desc(params_.input_shape, params_.input_layout, params_.dt);
         output_memory_desc_ = to_dnnl_mem_desc(get_output_shape(), params_.output_layout, params_.dt);
 
-        if (!params_.no_bias)
+        if (use_bias())
         {
             bias_memory_desc_.emplace(to_dnnl_mem_desc(TensorShape{ get_output_shape().c, 0, 0, 0}, DataLayout::eO, params_.dt));
         }
@@ -1253,12 +1271,12 @@ public:
             wr_params.k_size = params_.filter_shape.w;
             wr_params.input_layout = DataLayout::eOIYX;
 
-            /*if (params_.dt == DataType::eFp16 && params_.filter_shape.w == 1 && params_.filter_shape.h == 1)
+            if (params_.dt == DataType::eFp16)
             {
                 wr_params.output_layout = DataLayout::eIO_i8_o8_i2;
             }
             else if (params_.dt == DataType::eFp16  && params_.filter_shape.w != 1 && params_.filter_shape.h != 1)
-            {*/
+            {
                 if (cm_params_.block_oc == 8)
                 {
                     wr_params.output_layout = DataLayout::eOYXI_o8;
@@ -1267,7 +1285,7 @@ public:
                 {
                     wr_params.output_layout = DataLayout::eOYXI_o16;
                 }
-            //}
+            }
 
             weights_reorder_.emplace(WeightsReorder(std::move(wr_params), filter_buffer_, constant_buffer_, intc_ext, d3d12_device, cmd_list));
         }
@@ -1276,11 +1294,14 @@ public:
         {
             // input, filter
             std::vector<DescType> desc_list = { DescType::eSrv, DescType::eSrv };
-            if (!params_.no_bias)
+            if (use_bias())
             {
                 desc_list.push_back(DescType::eSrv);
             }
-            desc_list.push_back(DescType::eSrv);
+            if (constant_buffer_)
+            {
+                desc_list.push_back(DescType::eSrv);
+            }
             // output 
             desc_list.push_back(DescType::eUav);
             root_signature_ = create_root_signature(d3d12_device_, desc_list);
@@ -1307,31 +1328,36 @@ public:
 
             build_options += pre_jit + name + between_name_and_value + value_str + post_jit;
         };
-        add_define("DT", static_cast<uint32_t>(params_.dt));
-        //add_define("INPUT_WIDTH", params_.input_shape.w);
-        //add_define("INPUT_HEIGHT", params_.input_shape.h);
-        //add_define("INPUT_CHANNELS", params_.input_shape.c);
-
-        //add_define("OUTPUT_WIDTH", output_shape_.w);
-        //add_define("OUTPUT_HEIGHT", output_shape_.h);
-        //("OUTPUT_CHANNELS", output_shape_.c);
-
-        //add_define("BATCH", params_.input_shape.n);
-        //add_define("INPUT_PAD", params_.in_pad);
-        //add_define("OUTPUT_PAD", params_.out_pad);
+        if (params_.allow_fp16_computations)
+        {
+            add_define("DT_ACCU", "half");
+        }
+        else
+        {
+            add_define("DT_ACCU", "float");
+        }
+        add_define("INPUT_WIDTH", params_.input_shape.w);
+        add_define("INPUT_HEIGHT", params_.input_shape.h);
+        add_define("INPUT_CHANNELS", params_.input_shape.c);
+        add_define("OUTPUT_WIDTH", output_shape_.w);
+        add_define("OUTPUT_HEIGHT", output_shape_.h);
+        add_define("OUTPUT_CHANNELS", output_shape_.c);
+        add_define("BATCH", params_.input_shape.n);
+        add_define("INPUT_PAD", params_.in_pad);
+        add_define("OUTPUT_PAD", params_.out_pad);
         add_define("USE_BIAS", !params_.no_bias);
         add_define("KERNEL_SIZE", params_.filter_shape.h);
         add_define("STRIDE_W", params_.stride.w);
-        //add_define("STRIDE_H", params_.stride.h);
-
-        //add_define("SLICE_IC", cm_params_.slice_ic);
-        //add_define("BLOCK_W", cm_params_.block_w);
-        //add_define("BLOCK_H", cm_params_.block_h);
-        //add_define("BLOCK_OC", cm_params_.block_oc);
-        //add_define("BLOCK_BATCH", cm_params_.block_batch);
-
-        //add_define("WEIGHTS_IN_OPTIMAL_FORMAT", cm_params.reorder_weights);
-
+        add_define("STRIDE_H", params_.stride.h);
+        add_define("SLICE_IC", cm_params_.slice_ic);
+        add_define("BLOCK_W", cm_params_.block_w);
+        add_define("BLOCK_H", cm_params_.block_h);
+        add_define("BLOCK_OC", cm_params_.block_oc);
+        add_define("BLOCK_BATCH", cm_params_.block_batch);
+        add_define("WEIGHTS_IN_OPTIMAL_FORMAT", cm_params.reorder_weights);
+        add_define("INPUT_LAYOUT", (params_.input_layout == DataLayout::eNCHW) ? 0 : 1);
+        add_define("USE_RELU", (params_.activation.type == ActivationType::eRelu) ? 1 : 0);
+        add_define("WEI_OFFSET", 0);    // Kernel uses this compile time flag as base offset to weights surface in the actual driver mode, So forcing it to Zero in cross-runner
         // kernel compilation
         const auto dump_asm_str = cm_params_.dump_asm ? " -mdump_asm" : "";
         const auto large_grf_str = cm_params_.large_grf ? " -Qxcm_doubleGRF" : "";
@@ -1348,16 +1374,8 @@ public:
 
         auto kernel_source_content = [](const auto kernel_size)
         {
-            std::string path = "";
-            if (false/*kernel_size == 1*/)
-            {
-                path = "conv_1x1_nchw_fp16.cpp";
-            }
-            else
-            {
-                path = "conv_nchw_fp16.cpp";
-            }
-
+            std::string path = "conv_nchw_dpas_fp16.cpp";
+            
             std::fstream file(path);
             if (!file.is_open())
             {
@@ -1380,7 +1398,7 @@ public:
     {
         // input, weights, output
         std::uint32_t descriptor_count = 4;
-        if (!params_.no_bias)
+        if (use_bias())
         {
             descriptor_count++;
         }
@@ -1416,7 +1434,10 @@ public:
         {
             resources_list.push_back({ DescType::eSrv, bias_buffer_.Get() });
         }
-        resources_list.push_back({ DescType::eSrv, constant_buffer_.Get() });
+        if (constant_buffer_)
+        {
+            resources_list.push_back({ DescType::eSrv, constant_buffer_.Get() });
+        }
 
         const auto tensor_out_bytes_width = output_buffer_->GetDesc().Width;
         resources_list.push_back({ DescType::eUav, output_buffer_.Get() });
@@ -1452,7 +1473,8 @@ public:
         const uint32_t out_ch_size = static_cast<uint32_t>(std::ceil(params_.filter_shape.n / (double)(cm_params_.block_oc)));
         const auto gws_x = cm_params_.slice_ic * (round_up_next_multiple(output_shape_.w, cm_params_.block_w) / cm_params_.block_w);
         const auto gws_y = round_up_next_multiple(output_shape_.h, cm_params_.block_h) / cm_params_.block_h;
-        const auto gws_z = (params_.input_shape.n / cm_params_.block_batch) * out_ch_size;
+        const auto execsize = 2; // BMG = 2, DG2 = 1
+        const auto gws_z = ((params_.input_shape.n / cm_params_.block_batch) * out_ch_size) / execsize;
 
         assert(gws_x % cm_params_.lws[0] == 0);
         assert(gws_y % cm_params_.lws[1] == 0);
@@ -1503,12 +1525,13 @@ private:
                 std::uint32_t gws_z = 0;
                 if (output_layout == DataLayout::eIO_i8_o8_i2)
                 {
-                    const std::uint32_t ic_chunks_per_hw_thread = 8;
-                    const std::uint32_t exec_size = 8;
+                    const std::uint32_t exec_size = 16; // BMG = 16, DG2 = 8
                     const std::uint32_t dpas_depth = 8;
+                    const std::uint32_t ic_chunks_per_hw_thread = 2;
                     const std::uint32_t out_dt_size = get_data_type_bytes_width(output_dt);
+                    const std::uint32_t ic_multipler = (ic_chunks_per_hw_thread * dpas_depth * out_dt_size);
                     gws_x = oc / exec_size;
-                    gws_y = ic / (ic_chunks_per_hw_thread * dpas_depth * out_dt_size);
+                    gws_y = (ic % ic_multipler == 0) ? ic / ic_multipler : (ic / ic_multipler) + ic % ic_multipler;
                     gws_z = 1;
                 }
                 else if (output_layout == DataLayout::eOYXI_o8)
@@ -1572,23 +1595,17 @@ private:
 
                 build_options += pre_jit + name + between_name_and_value + value_str + post_jit;
             };
-            if (params_.input_dt == DataType::eFp16 && params_.output_dt == DataType::eFp16)
-            {
-                add_define("DT", "half");
-            }
-            else
-            {
-                add_define("DT", "float");
-            }
-            //add_define("WEI_OFFSET", 0);
-            //add_define("IC", params_.ic);
-            //add_define("OC", params_.oc);
+            add_define("INPUT_TYPE", "half");
+            add_define("OUTPUT_TYPE", "half");
+            add_define("WEI_OFFSET", 0);
+            add_define("IC", params_.ic);
+            add_define("OC", params_.oc);
             add_define("K_SIZE", params_.k_size);
 
-            /*for (std::int32_t i = static_cast<std::int32_t>(DataLayout::eWeightsLayoutStart) + 1; i < static_cast<std::int32_t>(DataLayout::eCount); i++)
+            for (std::int32_t i = static_cast<std::int32_t>(DataLayout::eWeightsLayoutStart) + 1; i < static_cast<std::int32_t>(DataLayout::eCount); i++)
             {
                 add_define("LAYOUT_" + data_layout_name(static_cast<DataLayout>(i)), i);
-            }*/
+            }
             add_define("INPUT_LAYOUT", static_cast<std::int32_t>(params_.input_layout));
             add_define("OUTPUT_LAYOUT", static_cast<std::int32_t>(params_.output_layout));
 
@@ -1607,11 +1624,11 @@ private:
             // kernel compilation
             const auto dump_asm_str = " -mdump_asm";
             const auto print_reg_str = " -mCM_printregusage";
-
+            const auto large_grf_str = " -Qxcm_doubleGRF";
             const auto lws_x = " -DLWS_SIZE_X=" + std::to_string(params_.lws[0]);
             const auto lws_y = " -DLWS_SIZE_Y=" + std::to_string(params_.lws[1]);
             const auto lws_z = " -DLWS_SIZE_Z=" + std::to_string(params_.lws[2]);
-            const auto build_options_final = " -I \" \" " + build_options + dump_asm_str + print_reg_str + lws_x + lws_y + lws_z;
+            const auto build_options_final = " -I \" \" " + build_options + dump_asm_str + large_grf_str + print_reg_str + lws_x + lws_y + lws_z;
 
             CD3DX12_SHADER_BYTECODE byte_code;
             byte_code.pShaderBytecode = kernel_source_content.data();
@@ -1655,7 +1672,6 @@ private:
         {
             assert(input_buffer_);
             assert(output_buffer_);
-            assert(constant_buffer_);
 
             const auto desc_heap_incrs_size = d3d12_device_->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
             // i.e. add weights reorder
@@ -1666,7 +1682,10 @@ private:
             std::vector<std::pair<DescType, ID3D12Resource*>> resources_list;
             resources_list.reserve(get_total_descriptor_count());
             resources_list.push_back({ DescType::eSrv, input_buffer_.Get() });
-            resources_list.push_back({ DescType::eSrv, constant_buffer_.Get() });
+            if (constant_buffer_)
+            {
+                resources_list.push_back({ DescType::eSrv, constant_buffer_.Get() });
+            }
             resources_list.push_back({ DescType::eUav, output_buffer_.Get() });
 
             gpu_handles_ = create_resource_views_and_handles(d3d12_device_, resources_list, base_cpu_handle, base_gpu_handle);
