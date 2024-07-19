@@ -46,6 +46,11 @@ struct TensorShape
 
         return ret;
     }
+
+    inline std::uint32_t get_element_count() const
+    {
+        return (n * c * h * w);
+    }
 };
 
 inline bool lexical_cast(const std::string& input, TensorShape& ts)

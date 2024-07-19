@@ -27,6 +27,9 @@ enum class GemmType
     // q + kv
     GemmType_QK_Q_KV,
     GemmType_SV_S_KV,
+
+    // Quantized Gemm
+    GemmType_Quant
 };
 
 namespace dnnl_gemm_op
@@ -351,6 +354,103 @@ public:
             auto gemm_inp_b = dml::Reinterpret(reshaped_split, dml::TensorDimensions{ batch, head_count, seq, head_size }, input_1_strides);
             outputs_[0] = dml::Gemm(input_0_, gemm_inp_b, dml::NullOpt, DML_MATRIX_TRANSFORM_NONE, DML_MATRIX_TRANSFORM_NONE, alpha, beta, fused_act);
         }
+        else if (type_ == GemmType::GemmType_Quant)
+        {
+            bool A_is_quantized = false;
+            bool B_is_quantized = true;
+            bool C_is_quantized = false;
+            auto bitCount = 4;
+            bool has_zero_point = true;
+            uint32_t block_size = 32;
+
+            //const DML_TENSOR_DATA_TYPE quantizedDataType = bitCount == 4 ? DML_TENSOR_DATA_TYPE_UINT4 : DML_TENSOR_DATA_TYPE_UINT8;
+            const DML_TENSOR_DATA_TYPE quantizedDataType = DML_TENSOR_DATA_TYPE_UINT8;
+
+            dml::TensorDesc::Dimensions dimensions_0;
+            dimensions_0.push_back(shape_a.n);
+            dimensions_0.push_back(shape_a.c);
+            dimensions_0.push_back(a_transposed ? shape_a.w : shape_a.h); // to make cmd arguments have normal matrix with transpose internal to each dispatcher
+            dimensions_0.push_back(a_transposed ? shape_a.h : shape_a.w); // to make cmd arguments have normal matrix with transpose internal to each dispatcher
+            dml::TensorDesc desc_input_0 = { data_type, dimensions_0 };
+            input_0_ = dml::InputTensor(graph_, 0, desc_input_0);
+
+            
+            if (B_is_quantized)
+            {
+                dml::TensorDesc::Dimensions dimensions_1;
+                dimensions_1.push_back(shape_b.n);
+                dimensions_1.push_back(shape_b.c);
+                dimensions_1.push_back(b_transposed ? shape_b.w : shape_b.h); // to make cmd arguments have normal matrix with transpose internal to each dispatcher
+                dimensions_1.push_back(b_transposed ? shape_b.h : shape_b.w); // to make cmd arguments have normal matrix with transpose internal to each dispatcher
+                dml::TensorDesc desc_input_1 = { data_type, b_managed ? DML_TENSOR_FLAG_OWNED_BY_DML : DML_TENSOR_FLAG_NONE, dimensions_1 };
+                input_1_quantized_ = dml::InputTensor(graph_, 1, desc_input_1);
+
+                dml::TensorDesc::Dimensions dimensions_scale;
+                dimensions_scale.push_back(shape_b.n);
+                dimensions_scale.push_back(shape_b.c);
+                dimensions_scale.push_back(shape_b.w);
+                dimensions_scale.push_back(shape_b.get_element_count() / block_size);
+                dml::TensorDesc desc_scale = { data_type, DML_TENSOR_FLAG_NONE, dimensions_scale };
+                input_1_scale_ = dml::InputTensor(graph_, 2, desc_scale);
+
+                dml::TensorDesc::Dimensions dimensions_zero_point;
+                dimensions_zero_point.push_back(shape_b.n);
+                dimensions_zero_point.push_back(shape_b.c);
+                dimensions_scale.push_back(shape_b.w);
+                dimensions_scale.push_back(shape_b.get_element_count() / block_size);
+                dml::TensorDesc desc_zeropoint = { quantizedDataType, DML_TENSOR_FLAG_NONE, dimensions_zero_point };
+                input_1_zeropoint_ = dml::InputTensor(graph_, 3, desc_zeropoint);
+
+                input_1_ = dml::DequantizeLinear(input_1_quantized_, input_1_scale_, input_1_zeropoint_);
+            }
+            else
+            {
+                dml::TensorDesc::Dimensions dimensions_1;
+                dimensions_1.push_back(shape_b.n);
+                dimensions_1.push_back(shape_b.c);
+                dimensions_1.push_back(b_transposed ? shape_b.w : shape_b.h); // to make cmd arguments have normal matrix with transpose internal to each dispatcher
+                dimensions_1.push_back(b_transposed ? shape_b.h : shape_b.w); // to make cmd arguments have normal matrix with transpose internal to each dispatcher
+                dml::TensorDesc desc_input_1 = { data_type, b_managed ? DML_TENSOR_FLAG_OWNED_BY_DML : DML_TENSOR_FLAG_NONE, dimensions_1 };
+                input_1_ = dml::InputTensor(graph_, 1, desc_input_1);
+            }
+
+            
+            if (shape_c.get_dims_count() > 0)
+            {
+                dml::TensorDesc::Dimensions dimensions_2;
+                dimensions_2.push_back(shape_c.n);
+                dimensions_2.push_back(shape_c.c);
+                dimensions_2.push_back(shape_c.h);
+                dimensions_2.push_back(shape_c.w);
+                DML_BUFFER_TENSOR_DESC desc_input_2;
+                dml::TensorProperties tensor_c_properites;
+                {
+                    desc_input_2.DataType = data_type;
+                    desc_input_2.Flags = c_managed ? DML_TENSOR_FLAG_OWNED_BY_DML : DML_TENSOR_FLAG_NONE;
+                    desc_input_2.DimensionCount = static_cast<std::uint32_t>(dimensions_2.size());
+                    desc_input_2.Sizes = dimensions_2.data();
+
+                    tensor_c_properites = tensor_policy_c.Get(desc_input_2.DataType, desc_input_2.Flags, dimensions_2);
+                    desc_input_2.Strides = tensor_c_properites.strides.has_value() ? tensor_c_properites.strides->data() : nullptr;
+                    desc_input_2.TotalTensorSizeInBytes = tensor_c_properites.totalTensorSizeInBytes;
+                    desc_input_2.GuaranteedBaseOffsetAlignment = tensor_c_properites.guaranteedBaseOffsetAlignment;
+                }
+
+                uint32_t index = 2;
+
+                if (B_is_quantized)
+                {
+                    index++;
+                }
+
+                input_2_ = dml::InputTensor(graph_, index, desc_input_2);
+            }
+
+            outputs_[0] = dml::Gemm(input_0_, input_1_, input_2_,
+                a_transposed ? DML_MATRIX_TRANSFORM_TRANSPOSE : DML_MATRIX_TRANSFORM_NONE,
+                b_transposed ? DML_MATRIX_TRANSFORM_TRANSPOSE : DML_MATRIX_TRANSFORM_NONE,
+                alpha, beta, fused_act);
+        }
         else
         {
             assert(false && "Unsupported gemm type!");
@@ -490,6 +590,10 @@ private:
     dml::Expression input_1_;
     dml::Optional<dml::Expression> input_2_;
     std::vector<dml::Expression> outputs_;
+
+    dml::Expression input_1_quantized_;
+    dml::Expression input_1_scale_;
+    dml::Expression input_1_zeropoint_;
 
     GemmType type_{};
 };
