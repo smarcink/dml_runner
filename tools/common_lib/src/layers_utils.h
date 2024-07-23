@@ -351,6 +351,53 @@ inline void fill_with_constant_linear_container_half(std::span<std::byte> contai
     }
 }
 
+inline uint8_t clamp_value(uint8_t value, uint8_t min, uint8_t max)
+{
+    if (value < min) return min;
+    if (value > max) return max;
+}
+
+inline void fill_quantized_data_half_to_uint4(std::span<std::byte> output_data, std::span<std::byte> input_data, uint32_t block_size, std::span<std::byte> output_scale, std::span<std::byte> output_zeropoint)
+{
+    using Dt = Half;
+    auto limit = (2 ^ 4) - 1;
+
+    auto* input_ptr = reinterpret_cast<Dt*>(input_data.data());
+    for (auto block_id = 0; block_id < input_data.size() / block_size; block_id++)
+    {
+        Half InputMax = 0;
+        Half InputMin = 0;
+        uint8_t min = 0;
+        uint8_t max = limit;//255;
+        for (auto i = block_id * block_size; i < (block_id + 1) * block_size; i++)
+        {
+            if (input_ptr[i] > InputMax)
+                InputMax = input_ptr[i];
+            if (input_ptr[i] < InputMin)
+                InputMin = input_ptr[i];
+        }
+        
+        
+        Half scale = (InputMax - InputMin) / (max - min);
+        uint8_t zero_point = min - InputMin / scale;
+
+        auto* output_ptr = reinterpret_cast<uint8_t*>(output_data.data());
+        for (auto i = block_id * block_size; i < (block_id + 1) * block_size; i++)
+        {
+            uint8_t value = clamp_value((uint8_t)ceil(input_ptr[i] / scale) + zero_point, min, max);
+
+            output_ptr[i] = value;
+            output_ptr[i] |= (value << 4);
+        }
+
+        auto* out_scale_ptr = reinterpret_cast<Dt*>(output_scale.data());
+        out_scale_ptr[block_id] = scale;
+        auto* out_zero_point_ptr = reinterpret_cast<uint8_t*>(output_zeropoint.data());
+        out_zero_point_ptr[block_id ] = zero_point;
+        out_zero_point_ptr[block_id] |= (zero_point << 4);
+    }
+}
+
 inline auto add_data_type_cli_option(CLI::App* opts, std::string_view opt_name, DataType& dt)
 {
     return opts->add_option(opt_name.data(), dt)->check(CLI::IsMember({DataType::eFp32, DataType::eFp16}))
