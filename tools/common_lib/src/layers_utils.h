@@ -354,22 +354,27 @@ inline void fill_with_constant_linear_container_half(std::span<std::byte> contai
 inline uint8_t clamp_value(uint8_t value, uint8_t min, uint8_t max)
 {
     if (value < min) return min;
-    if (value > max) return max;
+    else if (value > max) return max;
+    else return value;
 }
 
-inline void fill_quantized_data_half_to_uint4(std::span<std::byte> output_data, std::span<std::byte> input_data, uint32_t block_size, std::span<std::byte> output_scale, std::span<std::byte> output_zeropoint)
+// This function is not taking care of unaligned sizes
+inline void fill_quantized_data_half_to_uint4(std::span<std::byte> output_data, std::span<std::byte> input_data, uint32_t chunk_size, std::span<std::byte> output_scale, std::span<std::byte> output_zeropoint)
 {
     using Dt = Half;
-    auto limit = (2 ^ 4) - 1;
+    auto limit = (2 << 3) - 1;
 
     auto* input_ptr = reinterpret_cast<Dt*>(input_data.data());
-    for (auto block_id = 0; block_id < input_data.size() / block_size; block_id++)
+    auto input_data_elements_size = input_data.size() / sizeof(Dt);
+    for (auto chunk_id = 0; chunk_id < input_data_elements_size / chunk_size; chunk_id++)
     {
         Half InputMax = 0;
-        Half InputMin = 0;
+        Half InputMin = 0xFFFF;
         uint8_t min = 0;
-        uint8_t max = limit;//255;
-        for (auto i = block_id * block_size; i < (block_id + 1) * block_size; i++)
+        uint8_t max = limit;
+
+        // Find the max and min elements in the chunk
+        for (auto i = chunk_id * chunk_size; i < (chunk_id + 1) * chunk_size; i++)
         {
             if (input_ptr[i] > InputMax)
                 InputMax = input_ptr[i];
@@ -377,24 +382,33 @@ inline void fill_quantized_data_half_to_uint4(std::span<std::byte> output_data, 
                 InputMin = input_ptr[i];
         }
         
-        
         Half scale = (InputMax - InputMin) / (max - min);
-        uint8_t zero_point = min - InputMin / scale;
+        uint8_t zero_point = 0;
+        if(scale)
+            zero_point = min - InputMin / scale; 
 
         auto* output_ptr = reinterpret_cast<uint8_t*>(output_data.data());
-        for (auto i = block_id * block_size; i < (block_id + 1) * block_size; i++)
-        {
-            uint8_t value = clamp_value((uint8_t)ceil(input_ptr[i] / scale) + zero_point, min, max);
 
-            output_ptr[i] = value;
-            output_ptr[i] |= (value << 4);
+        for (auto i = chunk_id * chunk_size, j = (chunk_id * chunk_size)/2; i < (chunk_id + 1) * chunk_size; i+=2, j++)
+        {
+            uint8_t value1 = clamp_value((uint8_t)ceil(input_ptr[i] / scale) + zero_point, min, max);
+            uint8_t value2 = clamp_value((uint8_t)ceil(input_ptr[i + 1] / scale) + zero_point, min, max);
+
+            output_ptr[j] = value1;
+            output_ptr[j] |= (value2 << 4);
         }
 
         auto* out_scale_ptr = reinterpret_cast<Dt*>(output_scale.data());
-        out_scale_ptr[block_id] = scale;
+        out_scale_ptr[chunk_id] = scale;
         auto* out_zero_point_ptr = reinterpret_cast<uint8_t*>(output_zeropoint.data());
-        out_zero_point_ptr[block_id ] = zero_point;
-        out_zero_point_ptr[block_id] |= (zero_point << 4);
+        if (chunk_id % 2 == 1)
+        {
+            out_zero_point_ptr[chunk_id/2] |= (zero_point << 4);
+        }
+        else
+        {
+            out_zero_point_ptr[chunk_id/2] = zero_point;
+        }
     }
 }
 

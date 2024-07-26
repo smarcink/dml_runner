@@ -382,7 +382,7 @@ public:
                 dimensions_1.push_back(shape_b.c);
                 dimensions_1.push_back(b_transposed ? shape_b.w : shape_b.h); // to make cmd arguments have normal matrix with transpose internal to each dispatcher
                 dimensions_1.push_back(b_transposed ? shape_b.h : shape_b.w); // to make cmd arguments have normal matrix with transpose internal to each dispatcher
-                dml::TensorDesc desc_input_1 = { data_type, b_managed ? DML_TENSOR_FLAG_OWNED_BY_DML : DML_TENSOR_FLAG_NONE, dimensions_1 };
+                dml::TensorDesc desc_input_1 = { quantizedDataType, b_managed ? DML_TENSOR_FLAG_OWNED_BY_DML : DML_TENSOR_FLAG_NONE, dimensions_1 };
                 input_1_ = dml::InputTensor(graph_, 1, desc_input_1);
 
         
@@ -395,16 +395,16 @@ public:
                 dml::TensorDesc::Dimensions dimensions_scale;
                 dimensions_scale.push_back(shape_b.n);
                 dimensions_scale.push_back(shape_b.c);
-                dimensions_scale.push_back(shape_b.w);
-                dimensions_scale.push_back(shape_b.h / block_size);
+                dimensions_scale.push_back(b_transposed ? shape_b.h : shape_b.w);
+                dimensions_scale.push_back(b_transposed ? shape_b.w / block_size : shape_b.h / block_size);
                 dml::TensorDesc desc_scale = { data_type, DML_TENSOR_FLAG_NONE, dimensions_scale };
                 input_1_scale_ = dml::InputTensor(graph_, index, desc_scale);
 
                 dml::TensorDesc::Dimensions dimensions_zero_point;
                 dimensions_zero_point.push_back(shape_b.n);
                 dimensions_zero_point.push_back(shape_b.c);
-                dimensions_scale.push_back(shape_b.w);
-                dimensions_scale.push_back(shape_b.h / block_size);
+                dimensions_zero_point.push_back(b_transposed ? shape_b.h : shape_b.w);
+                dimensions_zero_point.push_back(b_transposed ? shape_b.w / block_size : shape_b.h / block_size);
                 dml::TensorDesc desc_zeropoint = { quantizedDataType, DML_TENSOR_FLAG_NONE, dimensions_zero_point };
                 input_1_zeropoint_ = dml::InputTensor(graph_, index+1, desc_zeropoint);
 
@@ -586,6 +586,69 @@ public:
         record_execute_impl(dml_cmd_recorder, cmd_list, input_bindings, output_bindings);
     }
 
+    virtual void record_initialize(IDMLCommandRecorder* dml_cmd_recorder, ID3D12GraphicsCommandList* cmd_list, ID3D12Resource* resource_b, ID3D12Resource* resource_c,
+                                   ID3D12Resource* resource_scale, ID3D12Resource* resource_zeropoint)
+    {
+        const auto initialize_binding_properties = dml_op_initializer_->GetBindingProperties();
+        if (initialize_binding_properties.TemporaryResourceSize > 0 && temporary_buffer_)
+        {
+            DML_BUFFER_BINDING buffer_binding{ temporary_buffer_.Get(), 0, temporary_buffer_->GetDesc().Width };
+            DML_BINDING_DESC binding_desc{ DML_BINDING_TYPE_BUFFER, &buffer_binding };
+            dml_init_binding_table->BindTemporaryResource(&binding_desc);
+        }
+
+        if (persistent_buffer_)
+        {
+            // The persistent resource should be bound as the output to the IDMLOperatorInitializer.
+            DML_BUFFER_BINDING buffer_binding{ persistent_buffer_.Get(), 0, persistent_buffer_->GetDesc().Width };
+            DML_BINDING_DESC binding_desc{ DML_BINDING_TYPE_BUFFER, &buffer_binding };
+            dml_init_binding_table->BindOutputs(1, &binding_desc);
+        }
+
+        std::vector<DML_BUFFER_BINDING> input_binds{};
+        input_binds.push_back({ nullptr, 0, 0 });  // tensor a
+
+        //tensor b
+        if (input_1_.GetOutputDesc().flags == DML_TENSOR_FLAG_OWNED_BY_DML)
+        {
+            input_binds.push_back({ resource_b, 0, resource_b->GetDesc().Width });
+        }
+        else
+        {
+            input_binds.push_back({ nullptr, 0, 0 });
+        }
+
+        // tensor c 
+        if (input_2_ && input_2_->GetOutputDesc().flags == DML_TENSOR_FLAG_OWNED_BY_DML)
+        {
+            assert(resource_c != nullptr);
+            input_binds.push_back({ resource_c, 0, resource_c->GetDesc().Width });
+        }
+        else if (input_2_)
+        {
+            input_binds.push_back({ nullptr, 0, 0 });
+        }
+
+        input_binds.push_back({ nullptr, 0, 0 });  // tensor scale
+        input_binds.push_back({ nullptr, 0, 0 });  // tensor zero point
+
+        DML_BUFFER_ARRAY_BINDING input_bind{};
+        input_bind.BindingCount = static_cast<UINT>(input_binds.size());
+        input_bind.Bindings = input_binds.data();
+        if (!input_binds.empty())
+        {
+            DML_BINDING_DESC binding{};
+            binding.Type = DML_BINDING_TYPE_BUFFER_ARRAY;
+            binding.Desc = &input_bind;
+            dml_init_binding_table->BindInputs(1, &binding);
+        }
+
+        dml_cmd_recorder->RecordDispatch(
+            cmd_list,
+            dml_op_initializer_.Get(),
+            dml_init_binding_table.Get());
+    }
+
 
     virtual void record_initialize(IDMLCommandRecorder* dml_cmd_recorder, ID3D12GraphicsCommandList* cmd_list, ID3D12Resource* resource_b, ID3D12Resource* resource_c)
     {
@@ -716,14 +779,14 @@ public:
             opts->add_flag("--dnnl_reference", params.use_dnnl_for_reference_calculations)->default_val(false);
 
             opts->add_option("--gemm_type", params.type, "Name of the type of GEMM to run.")
-                ->check(CLI::IsMember({ GemmType::GemmType_AB, GemmType::GemmType_QK_QKV, GemmType::GemmType_SV_S_QKV, GemmType::GemmType_QK_Q_KV, GemmType::GemmType_SV_S_KV }))->
+                ->check(CLI::IsMember({ GemmType::GemmType_AB, GemmType::GemmType_QK_QKV, GemmType::GemmType_SV_S_QKV, GemmType::GemmType_QK_Q_KV, GemmType::GemmType_SV_S_KV, GemmType::GemmType_Quant }))->
                 transform(CLI::Transformer(std::map<std::string, GemmType>{
                     { "ab", GemmType::GemmType_AB },
                     { "qk_qkv", GemmType::GemmType_QK_QKV },
                     { "sv_qkv", GemmType::GemmType_SV_S_QKV },
                     { "qk_q_kv", GemmType::GemmType_QK_Q_KV },
                     { "sv_s_kv", GemmType::GemmType_SV_S_KV },
-                    { "quan_gemm", GemmType::GemmType_Quant },
+                    { "quant_gemm", GemmType::GemmType_Quant },
             }, CLI::ignore_case))->required();
 
             opts->add_flag("--dump_resource", params.dump_resource);
@@ -736,12 +799,18 @@ public:
         const float uint4_size = 0.5f;
         uint32_t block_size = 32;
 
-        params_.shape_scale = TensorShape(params_.shape_b.n, params_.shape_b.c, params_.shape_b.w, params_.shape_b.h / block_size);
-        params_.shape_zeropoint = TensorShape(params_.shape_b.n, params_.shape_b.c, params_.shape_b.w, params_.shape_b.h / block_size);
+        uint32_t quant_param_h = params_.b_transposed ? params_.shape_b.h : params_.shape_b.w;
+        uint32_t quant_param_w = params_.b_transposed ? params_.shape_b.w / block_size : params_.shape_b.h / block_size;
+
+        params_.shape_scale = TensorShape(params_.shape_b.n, params_.shape_b.c, quant_param_h, quant_param_w);
+        params_.shape_zeropoint = TensorShape(params_.shape_b.n, params_.shape_b.c, quant_param_h, quant_param_w);
 
         input_data_a_.resize(get_tensor_elements_count(params_.shape_a, params_.layout) * get_data_type_bytes_width(params_.dt));
         input_data_b_.resize(get_tensor_elements_count(params_.shape_b, params_.layout) * uint4_size);
-        input_data_c_.resize(get_tensor_elements_count(params_.shape_c, params_.layout) * get_data_type_bytes_width(params_.dt));
+        if (params_.shape_c.get_dims_count() > 0)
+        {
+            input_data_c_.resize(get_tensor_elements_count(params_.shape_c, params_.layout) * get_data_type_bytes_width(params_.dt));
+        }
         input_data_scale_.resize(get_tensor_elements_count(params_.shape_scale, params_.layout) * get_data_type_bytes_width(params_.dt));
         input_data_zeropoint_.resize(get_tensor_elements_count(params_.shape_zeropoint, params_.layout) * uint4_size);
 
@@ -769,13 +838,19 @@ public:
         if (params_.dt == DataType::eFp32)
         {
             randomize_linear_container_float(random_generator, uniform_distribution, input_data_a_);
-            randomize_linear_container_float(random_generator, uniform_distribution, input_data_c_);
+            if (params_.shape_c.get_dims_count() > 0)
+            {
+                randomize_linear_container_float(random_generator, uniform_distribution, input_data_c_);
+            }
             randomize_linear_container_float(random_generator, uniform_distribution, input_data_dequantized_b_);
         }
         else if (params_.dt == DataType::eFp16)
         {
             randomize_linear_container_half(random_generator, uniform_distribution, input_data_a_);
-            randomize_linear_container_half(random_generator, uniform_distribution, input_data_c_);
+            if (params_.shape_c.get_dims_count() > 0)
+            {
+                randomize_linear_container_half(random_generator, uniform_distribution, input_data_c_);
+            }
             randomize_linear_container_half(random_generator, uniform_distribution, input_data_dequantized_b_);
         }
         else
@@ -783,13 +858,15 @@ public:
             assert(false && "Unsupported data type in Quant GEMM dispatcher!");
         }
 
+        auto chunk_size = block_size;
         if (params_.dt == DataType::eFp32)
         {
-            //fill_quantized_data_float_to_uint4(input_data_b_, input_data_dequantized_b_, block_size, input_data_scale_, input_data_zeropoint_);
+            assert(false && "Unsupported data type in Quant GEMM dispatcher for data initialize!");
+            //fill_quantized_data_float_to_uint4(input_data_b_, input_data_dequantized_b_, chunk_size, input_data_scale_, input_data_zeropoint_);
         }
         else
         {
-            fill_quantized_data_half_to_uint4(input_data_b_, input_data_dequantized_b_, block_size, input_data_scale_, input_data_zeropoint_);
+            fill_quantized_data_half_to_uint4(input_data_b_, input_data_dequantized_b_, chunk_size, input_data_scale_, input_data_zeropoint_);
         }
 
 
@@ -846,6 +923,16 @@ public:
             std::memcpy(upload_mapped_ptr + memcopy_offset, input_data_c_.data(), tensor_input_c_bytes_width);
             memcopy_offset += tensor_input_c_bytes_width;
         }
+        if (tensor_input_scale_bytes_width > 0)
+        {
+            std::memcpy(upload_mapped_ptr + memcopy_offset, input_data_scale_.data(), tensor_input_scale_bytes_width);
+            memcopy_offset += tensor_input_scale_bytes_width;
+        }
+        if (tensor_input_zeropoint_bytes_width > 0)
+        {
+            std::memcpy(upload_mapped_ptr + memcopy_offset, input_data_zeropoint_.data(), tensor_input_zeropoint_bytes_width);
+            memcopy_offset += tensor_input_zeropoint_bytes_width;
+        }
 
         // unmap memory
         upload_buffer_->Unmap(0, nullptr);
@@ -882,7 +969,7 @@ public:
             barriers.push_back(CD3DX12_RESOURCE_BARRIER::Transition(input_buffer_b_.Get(),
                 D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_UNORDERED_ACCESS));
         }
-        if (input_buffer_c_)
+        if (input_buffer_c_ && tensor_input_c_bytes_width > 0)
         {
             barriers.push_back(CD3DX12_RESOURCE_BARRIER::Transition(input_buffer_c_.Get(),
                 D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_UNORDERED_ACCESS));
@@ -1201,7 +1288,7 @@ protected:
 
     std::uint32_t get_channels() const
     {
-        if (params_.type == GemmType::GemmType_AB || params_.type == GemmType::GemmType_SV_S_QKV || params_.type == GemmType::GemmType_SV_S_KV)
+        if (params_.type == GemmType::GemmType_AB || params_.type == GemmType::GemmType_SV_S_QKV || params_.type == GemmType::GemmType_SV_S_KV || params_.type == GemmType::GemmType_Quant)
         {
             return params_.shape_a.c;
         }
@@ -1218,7 +1305,7 @@ protected:
 
     std::uint32_t get_M() const
     {
-        if (params_.type == GemmType::GemmType_AB || params_.type == GemmType::GemmType_SV_S_QKV || params_.type == GemmType::GemmType_SV_S_KV)
+        if (params_.type == GemmType::GemmType_AB || params_.type == GemmType::GemmType_SV_S_QKV || params_.type == GemmType::GemmType_SV_S_KV || params_.type == GemmType::GemmType_Quant)
         {
             return params_.shape_a.h;
         }
@@ -1232,7 +1319,7 @@ protected:
 
     std::uint32_t get_K() const
     {
-        if (params_.type == GemmType::GemmType_AB || params_.type == GemmType::GemmType_SV_S_QKV || params_.type == GemmType::GemmType_SV_S_KV)
+        if (params_.type == GemmType::GemmType_AB || params_.type == GemmType::GemmType_SV_S_QKV || params_.type == GemmType::GemmType_SV_S_KV || params_.type == GemmType::GemmType_Quant)
         {
             return params_.shape_a.w;
         }
@@ -1250,7 +1337,7 @@ protected:
 
     std::uint32_t get_N() const
     {
-        if (params_.type == GemmType::GemmType_AB || params_.type == GemmType::GemmType_SV_S_QKV || params_.type == GemmType::GemmType_SV_S_KV)
+        if (params_.type == GemmType::GemmType_AB || params_.type == GemmType::GemmType_SV_S_QKV || params_.type == GemmType::GemmType_SV_S_KV || params_.type == GemmType::GemmType_Quant)
         {
             return params_.shape_b.w;
         }
@@ -1315,7 +1402,14 @@ public:
     void initialize(ID3D12GraphicsCommandList* cmd_list, D3D12_CPU_DESCRIPTOR_HANDLE cpu_handle, D3D12_GPU_DESCRIPTOR_HANDLE gpu_handle)
     {
         gemm_.create_binding_tables(cpu_handle, gpu_handle);
-        gemm_.record_initialize(dml_cmd_recorder_, cmd_list, input_buffer_b_.Get(), input_buffer_c_.Get());
+        if (params_.type == GemmType::GemmType_Quant)
+        {
+            gemm_.record_initialize(dml_cmd_recorder_, cmd_list, input_buffer_b_.Get(), input_buffer_c_.Get(), input_buffer_scale_.Get(), input_buffer_zeropoint_.Get());
+        }
+        else
+        {
+            gemm_.record_initialize(dml_cmd_recorder_, cmd_list, input_buffer_b_.Get(), input_buffer_c_.Get());
+        }
     }
 
     void execute(ID3D12GraphicsCommandList* cmd_list)
