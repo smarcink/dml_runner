@@ -380,8 +380,8 @@ public:
                 dml::TensorDesc::Dimensions dimensions_1;
                 dimensions_1.push_back(shape_b.n);
                 dimensions_1.push_back(shape_b.c);
-                dimensions_1.push_back(b_transposed ? shape_b.w : shape_b.h); // to make cmd arguments have normal matrix with transpose internal to each dispatcher
-                dimensions_1.push_back(b_transposed ? shape_b.h : shape_b.w); // to make cmd arguments have normal matrix with transpose internal to each dispatcher
+                dimensions_1.push_back(shape_b.h);
+                dimensions_1.push_back(shape_b.w);
                 dml::TensorDesc desc_input_1 = { quantizedDataType, b_managed ? DML_TENSOR_FLAG_OWNED_BY_DML : DML_TENSOR_FLAG_NONE, dimensions_1 };
                 input_1_ = dml::InputTensor(graph_, 1, desc_input_1);
 
@@ -831,9 +831,11 @@ public:
         const auto N = get_N();
         std::cout << std::format("Running [B, C, M, K, N]: [{}, {}, {}, {}, {}]\n", B, C, M, K, N);
 
+#if 1
         // randomize data
         std::mt19937 random_generator(42); // static, create it once!
         std::uniform_real_distribution<float> uniform_distribution(-1.0f, 1.0f);
+        //std::uniform_real_distribution<float> uniform_distribution(0.001f, 0.01f);
 
         if (params_.dt == DataType::eFp32)
         {
@@ -868,7 +870,7 @@ public:
         {
             fill_quantized_data_half_to_uint4(input_data_b_, input_data_dequantized_b_, chunk_size, input_data_scale_, input_data_zeropoint_);
         }
-
+#endif
 
         const auto tensor_input_a_bytes_width = input_data_a_.size();
         const auto tensor_input_b_bytes_width = input_data_b_.size();
@@ -1339,7 +1341,7 @@ protected:
     {
         if (params_.type == GemmType::GemmType_AB || params_.type == GemmType::GemmType_SV_S_QKV || params_.type == GemmType::GemmType_SV_S_KV || params_.type == GemmType::GemmType_Quant)
         {
-            return params_.shape_b.w;
+            return params_.b_transposed ? params_.shape_b.h : params_.shape_b.w;
         }
         else if (params_.type == GemmType::GemmType_QK_QKV)
         {
