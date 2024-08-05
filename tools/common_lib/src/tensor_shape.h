@@ -9,11 +9,18 @@ struct TensorShape
 
     TensorShape() = default;
 
+    TensorShape(std::uint32_t n, std::uint32_t h, std::uint32_t w)
+        : n(n), h(h), w(w)
+    {
+    }
     TensorShape(std::uint32_t n, std::uint32_t c, std::uint32_t h, std::uint32_t w)
         : n(n), c(c), h(h), w(w)
     {
     }
-
+    TensorShape(std::uint32_t n, std::uint32_t c, std::uint32_t d, std::uint32_t h, std::uint32_t w)
+        : n(n), c(c), d(d), h(h), w(w)
+    {
+    }
     TensorShape(std::span<std::uint32_t> in_v)
     {
         assert(!(in_v.size() < 3 || in_v.size() > 5) && "Not supported shape!");
