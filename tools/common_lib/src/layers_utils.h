@@ -163,8 +163,9 @@ enum class DataLayout
     eNHWC_AlignH48,  // example layout for unpacked tensor, ToDo: refactor cross runner to work with strides instead of hardcoded data layouts
     eCHW,      // 3d dims for GEMMS
     eW,
-
-
+    eNCDHW,
+    eNHW,
+    eNCH,
     // ..
     // ..
 
@@ -197,6 +198,7 @@ inline std::string data_layout_name(DataLayout l)
     case DataLayout::eIO_i8_o8_i2: return "IO_i8_o8_i2";
     case DataLayout::eOYXI_o8:  return "OYXI_o8";
     case DataLayout::eOYXI_o16: return "OYXI_o16";
+    case DataLayout::eNCDHW: return "NCDHW";
     default:
         assert(false && "Unknown data layout name.");
         return "";
@@ -218,6 +220,8 @@ inline std::uint8_t data_layout_dimensions_count(DataLayout l)
         return 3;
     case DataLayout::eW:
         return 1;
+    case DataLayout::eNCDHW:
+        return 5;
     default:
         return 0;
     }
@@ -255,6 +259,7 @@ inline std::size_t data_layout_h_alignment(const DataLayout l)
 inline TensorShape data_layout_to_strides(TensorShape shape, DataLayout l)
 {
     const auto c = shape.c;
+    const auto d = shape.d;
     const auto h = static_cast<std::uint32_t>(align(shape.h, data_layout_h_alignment(l)));
     const auto w = static_cast<std::uint32_t>(align(shape.w, data_layout_w_alignment(l)));
 
@@ -280,6 +285,28 @@ inline TensorShape data_layout_to_strides(TensorShape shape, DataLayout l)
             1,
             c * w,
             c);
+        break;
+    }
+    case DataLayout::eNCDHW:
+    {
+        ret = TensorShape(
+            c * h * d * w,
+            h * d* w,
+            d * w,
+            w,
+            1);
+        break;
+    case DataLayout::eNHW:
+        ret = TensorShape(
+            h * w,
+            w,
+            1);
+        break;
+    case DataLayout::eNCH:
+        ret = TensorShape(
+            c * h,
+            h,
+            1);
         break;
     }
     default:
@@ -428,8 +455,8 @@ inline auto add_data_type_cli_option(CLI::App* opts, std::string_view opt_name, 
 
 inline auto add_data_layout_cli_option(CLI::App* opts, std::string_view opt_name, DataLayout& layout)
 {
-    return opts->add_option(opt_name.data(), layout)->check(CLI::IsMember({DataLayout::eNCHW, DataLayout::eNHWC, DataLayout::eW, DataLayout::eCHW, DataLayout::eNCHW_AlignW320, DataLayout::eNHWC_AlignH48 }))
+    return opts->add_option(opt_name.data(), layout)->check(CLI::IsMember({DataLayout::eNCHW, DataLayout::eNHWC, DataLayout::eW, DataLayout::eCHW, DataLayout::eNCHW_AlignW320, DataLayout::eNHWC_AlignH48, DataLayout::eNCDHW }))
         ->transform(CLI::Transformer(std::map<std::string, DataLayout>{
-            {"nchw", DataLayout::eNCHW}, { "nhwc", DataLayout::eNHWC }, { "w", DataLayout::eW }, { "chw", DataLayout::eCHW }, { "nchw_alignw320", DataLayout::eNCHW_AlignW320 }, { "nhwc_alignh48", DataLayout::eNHWC_AlignH48 },
+            {"nchw", DataLayout::eNCHW}, { "nhwc", DataLayout::eNHWC }, { "w", DataLayout::eW }, { "chw", DataLayout::eCHW }, { "nchw_alignw320", DataLayout::eNCHW_AlignW320 }, { "nhwc_alignh48", DataLayout::eNHWC_AlignH48 }, { "ncdhw", DataLayout::eNCDHW },
     }, CLI::ignore_case, CLI::ignore_underscore));
 }
