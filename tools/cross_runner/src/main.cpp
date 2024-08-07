@@ -64,6 +64,8 @@ struct CliOptions
     SoftmaxBaseDispatcher::create_params_t softmax_opts{};
     MvnBaseDispatcher::create_params_t mvn_opts{};
     MhaBaseDispatcher::create_params_t mha_opts{};
+    QuantGemmBaseDispatcher::create_params_t quant_gemm_opts{};
+
 
     // specific for implementation
     ConvolutionCmDispatcher::conv_cm_params_t conv_cm_params{};
@@ -88,7 +90,7 @@ int main()
         NodeType::eSoftmaxDml, NodeType::eSoftmaxCm,
         NodeType::eMvnDml, NodeType::eMvnCm,
         NodeType::eMhaDml,
-        NodeType::eMemoryBandwidth
+        NodeType::eMemoryBandwidth, NodeType::eQuantGemmDml
         }))->
         transform(CLI::Transformer(std::map<std::string, NodeType>{
             { "conv_dml", NodeType::eConvDml },
@@ -103,6 +105,7 @@ int main()
             { "mvn_cm", NodeType::eMvnCm },
             { "mha_dml", NodeType::eMhaDml},
             { "mem_bw", NodeType::eMemoryBandwidth },
+            { "quant_gemm_dml", NodeType::eQuantGemmDml },
     }, CLI::ignore_case, CLI::ignore_underscore));
     dml_runner_app.add_option("--iters", opts.dispatch_iterations, "How many iterations to run.")->check(CLI::Range(1u, MAX_ITERATIONS));
     dml_runner_app.add_flag("--no_conform", opts.no_conformance_check);
@@ -120,6 +123,8 @@ int main()
     MvnBaseDispatcher::create_params_t::add_cli_options(mvn_option_groups, opts.mvn_opts);
     auto mha_option_groups = dml_runner_app.add_subcommand("mha_opts", "Options for mha layer.");
     MhaBaseDispatcher::create_params_t::add_cli_options(mha_option_groups, opts.mha_opts);
+    auto quant_gemm_option_groups = dml_runner_app.add_subcommand("quant_gemm_opts", "Options for Quantized Gemm layer.");
+    QuantGemmBaseDispatcher::create_params_t::add_cli_options(quant_gemm_option_groups, opts.quant_gemm_opts);
 
     // specific for implementation
     auto conv_cm_option_groups = dml_runner_app.add_subcommand("conv_cm_opts", "Options for convolution layer with CM implementation.");
@@ -158,6 +163,11 @@ int main()
     if ((opts.node_type == NodeType::eGemmDml || opts.node_type == NodeType::eGemmCm) && !gemm_option_groups->parsed())
     {
         std::cout << "Gemm options not set.\n";
+        return -1;
+    }
+    else if (opts.node_type == NodeType::eQuantGemmDml && !quant_gemm_option_groups->parsed())
+    {
+        std::cout << "Quant Gemm options not set.\n";
         return -1;
     }
     if ((opts.node_type == NodeType::eSoftmaxDml || opts.node_type == NodeType::eSoftmaxCm) && !softmax_option_groups->parsed())
@@ -247,6 +257,11 @@ int main()
         else if (opts.node_type == NodeType::eMemoryBandwidth)
         {
             node = std::make_unique<gpu_op::MemoryBandwidthDispatcher>(std::move(opts.memory_bw_params), d3d12_device.Get(), command_list.Get(), intel_extension_d3d12);
+        }
+        else if (opts.node_type == NodeType::eQuantGemmDml)
+        {
+            node = std::make_unique<QuantGemmDmlDispatcher>(std::move(opts.quant_gemm_opts), true,
+                d3d12_device.Get(), dml_device.Get(), dml_command_recorder.Get(), command_list.Get());
         }
         else
         {

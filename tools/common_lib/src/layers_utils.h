@@ -36,15 +36,18 @@ enum class DataType
 {
     eFp32 = 0,
     eFp16 = 1,
+    eUint4 = 2,
     eCount
 };
 
-inline std::uint8_t get_data_type_bytes_width(DataType dt)
+//inline std::uint8_t get_data_type_bytes_width(DataType dt)
+inline float get_data_type_bytes_width(DataType dt)
 {
     switch (dt)
     {
     case DataType::eFp32: return sizeof(float);
     case DataType::eFp16: return sizeof(std::uint16_t);
+    case DataType::eUint4: return 0.5;
     default:
         assert(false && "Unknown data type.");
     }
@@ -58,6 +61,7 @@ inline std::string get_data_type_str(DataType dt)
     {
     case DataType::eFp32: return "FP32";
     case DataType::eFp16: return "FP16";
+    case DataType::eUint4: return "UINT4";
     default:
         assert(false && "Unknown data type.");
     }
@@ -414,9 +418,9 @@ inline void fill_quantized_data_half_to_uint4(std::span<std::byte> output_data, 
 
 inline auto add_data_type_cli_option(CLI::App* opts, std::string_view opt_name, DataType& dt)
 {
-    return opts->add_option(opt_name.data(), dt)->check(CLI::IsMember({DataType::eFp32, DataType::eFp16}))
+    return opts->add_option(opt_name.data(), dt)->check(CLI::IsMember({DataType::eFp32, DataType::eFp16, DataType::eUint4}))
         ->transform(CLI::Transformer(std::map<std::string, DataType>{
-            {"fp32", DataType::eFp32}, { "fp16", DataType::eFp16 }
+            {"fp32", DataType::eFp32}, { "fp16", DataType::eFp16 }, {"uint4", DataType::eUint4 }
     }, CLI::ignore_case, CLI::ignore_underscore));
 }
 

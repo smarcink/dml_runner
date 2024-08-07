@@ -26,10 +26,7 @@ enum class GemmType
 
     // q + kv
     GemmType_QK_Q_KV,
-    GemmType_SV_S_KV,
-
-    // Quantized Gemm
-    GemmType_Quant
+    GemmType_SV_S_KV
 };
 
 namespace dnnl_gemm_op
@@ -354,108 +351,6 @@ public:
             auto gemm_inp_b = dml::Reinterpret(reshaped_split, dml::TensorDimensions{ batch, head_count, seq, head_size }, input_1_strides);
             outputs_[0] = dml::Gemm(input_0_, gemm_inp_b, dml::NullOpt, DML_MATRIX_TRANSFORM_NONE, DML_MATRIX_TRANSFORM_NONE, alpha, beta, fused_act);
         }
-        else if (type_ == GemmType::GemmType_Quant)
-        {
-            bool A_is_quantized = false;
-            bool B_is_quantized = true;
-            bool C_is_quantized = false;
-            auto bitCount = 4;
-            bool has_zero_point = true;
-            uint32_t block_size = 32;
-
-            //const DML_TENSOR_DATA_TYPE quantizedDataType = bitCount == 4 ? DML_TENSOR_DATA_TYPE_UINT4 : DML_TENSOR_DATA_TYPE_UINT8;
-            const DML_TENSOR_DATA_TYPE quantizedDataType = DML_TENSOR_DATA_TYPE_UINT4;
-
-            dml::TensorDesc::Dimensions dimensions_0;
-            dimensions_0.push_back(shape_a.n);
-            dimensions_0.push_back(shape_a.c);
-            dimensions_0.push_back(a_transposed ? shape_a.w : shape_a.h); // to make cmd arguments have normal matrix with transpose internal to each dispatcher
-            dimensions_0.push_back(a_transposed ? shape_a.h : shape_a.w); // to make cmd arguments have normal matrix with transpose internal to each dispatcher
-            dml::TensorDesc desc_input_0 = { data_type, dimensions_0 };
-            input_0_ = dml::InputTensor(graph_, 0, desc_input_0);
-
-            
-            if (B_is_quantized)
-            {
-                dml::TensorDesc::Dimensions dimensions_1;
-                dimensions_1.push_back(shape_b.n);
-                dimensions_1.push_back(shape_b.c);
-                dimensions_1.push_back(shape_b.h);
-                dimensions_1.push_back(shape_b.w);
-                dml::TensorDesc desc_input_1 = { quantizedDataType, b_managed ? DML_TENSOR_FLAG_OWNED_BY_DML : DML_TENSOR_FLAG_NONE, dimensions_1 };
-                input_1_ = dml::InputTensor(graph_, 1, desc_input_1);
-
-        
-                uint32_t index = 2;
-                if (shape_c.get_dims_count() > 0)
-                {
-                    index++;
-                }
-
-                dml::TensorDesc::Dimensions dimensions_scale;
-                dimensions_scale.push_back(shape_b.n);
-                dimensions_scale.push_back(shape_b.c);
-                dimensions_scale.push_back(b_transposed ? shape_b.h : shape_b.w);
-                dimensions_scale.push_back(b_transposed ? shape_b.w / block_size : shape_b.h / block_size);
-                dml::TensorDesc desc_scale = { data_type, DML_TENSOR_FLAG_NONE, dimensions_scale };
-                input_1_scale_ = dml::InputTensor(graph_, index, desc_scale);
-
-                dml::TensorDesc::Dimensions dimensions_zero_point;
-                dimensions_zero_point.push_back(shape_b.n);
-                dimensions_zero_point.push_back(shape_b.c);
-                dimensions_zero_point.push_back(b_transposed ? shape_b.h : shape_b.w);
-                dimensions_zero_point.push_back(b_transposed ? shape_b.w / block_size : shape_b.h / block_size);
-                dml::TensorDesc desc_zeropoint = { quantizedDataType, DML_TENSOR_FLAG_NONE, dimensions_zero_point };
-                input_1_zeropoint_ = dml::InputTensor(graph_, index+1, desc_zeropoint);
-
-                std::vector<dml::Expression> tensor_b_quantization_params(2);
-                tensor_b_quantization_params[0] = input_1_scale_;
-                tensor_b_quantization_params[1] = input_1_zeropoint_;
-
-
-                input_1_dequantized_ = dml::Dequantize(input_1_, tensor_b_quantization_params, DML_QUANTIZATION_TYPE_SCALE_ZERO_POINT);
-            }
-            else
-            {
-                dml::TensorDesc::Dimensions dimensions_1;
-                dimensions_1.push_back(shape_b.n);
-                dimensions_1.push_back(shape_b.c);
-                dimensions_1.push_back(b_transposed ? shape_b.w : shape_b.h); // to make cmd arguments have normal matrix with transpose internal to each dispatcher
-                dimensions_1.push_back(b_transposed ? shape_b.h : shape_b.w); // to make cmd arguments have normal matrix with transpose internal to each dispatcher
-                dml::TensorDesc desc_input_1 = { data_type, b_managed ? DML_TENSOR_FLAG_OWNED_BY_DML : DML_TENSOR_FLAG_NONE, dimensions_1 };
-                input_1_ = dml::InputTensor(graph_, 1, desc_input_1);
-            }
-
-            
-            if (shape_c.get_dims_count() > 0)
-            {
-                dml::TensorDesc::Dimensions dimensions_2;
-                dimensions_2.push_back(shape_c.n);
-                dimensions_2.push_back(shape_c.c);
-                dimensions_2.push_back(shape_c.h);
-                dimensions_2.push_back(shape_c.w);
-                DML_BUFFER_TENSOR_DESC desc_input_2;
-                dml::TensorProperties tensor_c_properites;
-                {
-                    desc_input_2.DataType = data_type;
-                    desc_input_2.Flags = c_managed ? DML_TENSOR_FLAG_OWNED_BY_DML : DML_TENSOR_FLAG_NONE;
-                    desc_input_2.DimensionCount = static_cast<std::uint32_t>(dimensions_2.size());
-                    desc_input_2.Sizes = dimensions_2.data();
-
-                    tensor_c_properites = tensor_policy_c.Get(desc_input_2.DataType, desc_input_2.Flags, dimensions_2);
-                    desc_input_2.Strides = tensor_c_properites.strides.has_value() ? tensor_c_properites.strides->data() : nullptr;
-                    desc_input_2.TotalTensorSizeInBytes = tensor_c_properites.totalTensorSizeInBytes;
-                    desc_input_2.GuaranteedBaseOffsetAlignment = tensor_c_properites.guaranteedBaseOffsetAlignment;
-                }
-
-                input_2_ = dml::InputTensor(graph_, 2, desc_input_2);
-            }
-
-            outputs_[0] = dml::Gemm(input_0_, input_1_dequantized_, input_2_,
-                a_transposed ? DML_MATRIX_TRANSFORM_TRANSPOSE : DML_MATRIX_TRANSFORM_NONE,
-                b_transposed ? DML_MATRIX_TRANSFORM_TRANSPOSE : DML_MATRIX_TRANSFORM_NONE,
-                alpha, beta, fused_act);
-        }
         else
         {
             assert(false && "Unsupported gemm type!");
@@ -479,63 +374,6 @@ public:
         assert(!outputs_.empty());
         dml_op_executor_ = graph_.Compile(execution_flags, outputs_);
         create_operator_impl();
-    }
-
-    void record_execute(IDMLCommandRecorder* dml_cmd_recorder, ID3D12GraphicsCommandList* cmd_list, 
-        ID3D12Resource* resource_out, ID3D12Resource* resource_a, ID3D12Resource* resource_b, ID3D12Resource* resource_c, 
-        ID3D12Resource* resource_scale, ID3D12Resource* resource_zeropoint)
-    {
-        assert(resource_a);
-        assert(resource_out);
-        assert(resource_scale);
-        assert(resource_zeropoint);
-        DML_BUFFER_BINDING input_a_buffer_binding{ resource_a, 0, resource_a->GetDesc().Width };
-        DML_BUFFER_BINDING input_b_buffer_binding{ nullptr, 0, 0 };
-        DML_BUFFER_BINDING input_c_buffer_binding{ nullptr, 0, 0 };
-        DML_BUFFER_BINDING input_scale_buffer_binding{ resource_scale, 0, resource_scale->GetDesc().Width };
-        DML_BUFFER_BINDING input_zeropoint_buffer_binding{ resource_zeropoint, 0, resource_zeropoint->GetDesc().Width };
-
-        std::vector<DML_BINDING_DESC> input_bindings;
-        input_bindings.reserve(5);
-        input_bindings.push_back({ DML_BINDING_TYPE_BUFFER, &input_a_buffer_binding });
-        if (resource_b)
-        {
-            if (input_1_.GetOutputDesc().flags == DML_TENSOR_FLAG_OWNED_BY_DML)
-            {
-                input_b_buffer_binding = { nullptr, 0, 0 };
-                input_bindings.push_back({ DML_BINDING_TYPE_NONE, &input_b_buffer_binding });
-            }
-            else
-            {
-                input_b_buffer_binding = { resource_b, 0, resource_b->GetDesc().Width };
-                input_bindings.push_back({ DML_BINDING_TYPE_BUFFER, &input_b_buffer_binding });
-            }
-        }
-        if (resource_c)
-        {
-            if (input_2_ && input_2_->GetOutputDesc().flags == DML_TENSOR_FLAG_OWNED_BY_DML)
-            {
-                input_c_buffer_binding = { nullptr, 0, 0 };
-                input_bindings.push_back({ DML_BINDING_TYPE_NONE, &input_c_buffer_binding });
-            }
-            else
-            {
-                input_c_buffer_binding = { resource_c, 0, resource_c->GetDesc().Width };
-                input_bindings.push_back({ DML_BINDING_TYPE_BUFFER, &input_c_buffer_binding });
-            }
-        }
-        
-        input_bindings.push_back({ DML_BINDING_TYPE_BUFFER, &input_scale_buffer_binding });
-        input_bindings.push_back({ DML_BINDING_TYPE_BUFFER, &input_zeropoint_buffer_binding });
-           
-
-        std::vector<DML_BINDING_DESC> output_bindings;
-        output_bindings.reserve(1);
-        DML_BUFFER_BINDING output_buffer_binding{ resource_out, 0, resource_out->GetDesc().Width };
-        DML_BINDING_DESC output_binding_desc{ DML_BINDING_TYPE_BUFFER, &output_buffer_binding };
-        output_bindings.push_back({ DML_BINDING_TYPE_BUFFER, &output_buffer_binding });
-
-        record_execute_impl(dml_cmd_recorder, cmd_list, input_bindings, output_bindings);
     }
 
     void record_execute(IDMLCommandRecorder* dml_cmd_recorder, ID3D12GraphicsCommandList* cmd_list,
@@ -585,70 +423,6 @@ public:
 
         record_execute_impl(dml_cmd_recorder, cmd_list, input_bindings, output_bindings);
     }
-
-    virtual void record_initialize(IDMLCommandRecorder* dml_cmd_recorder, ID3D12GraphicsCommandList* cmd_list, ID3D12Resource* resource_b, ID3D12Resource* resource_c,
-                                   ID3D12Resource* resource_scale, ID3D12Resource* resource_zeropoint)
-    {
-        const auto initialize_binding_properties = dml_op_initializer_->GetBindingProperties();
-        if (initialize_binding_properties.TemporaryResourceSize > 0 && temporary_buffer_)
-        {
-            DML_BUFFER_BINDING buffer_binding{ temporary_buffer_.Get(), 0, temporary_buffer_->GetDesc().Width };
-            DML_BINDING_DESC binding_desc{ DML_BINDING_TYPE_BUFFER, &buffer_binding };
-            dml_init_binding_table->BindTemporaryResource(&binding_desc);
-        }
-
-        if (persistent_buffer_)
-        {
-            // The persistent resource should be bound as the output to the IDMLOperatorInitializer.
-            DML_BUFFER_BINDING buffer_binding{ persistent_buffer_.Get(), 0, persistent_buffer_->GetDesc().Width };
-            DML_BINDING_DESC binding_desc{ DML_BINDING_TYPE_BUFFER, &buffer_binding };
-            dml_init_binding_table->BindOutputs(1, &binding_desc);
-        }
-
-        std::vector<DML_BUFFER_BINDING> input_binds{};
-        input_binds.push_back({ nullptr, 0, 0 });  // tensor a
-
-        //tensor b
-        if (input_1_.GetOutputDesc().flags == DML_TENSOR_FLAG_OWNED_BY_DML)
-        {
-            input_binds.push_back({ resource_b, 0, resource_b->GetDesc().Width });
-        }
-        else
-        {
-            input_binds.push_back({ nullptr, 0, 0 });
-        }
-
-        // tensor c 
-        if (input_2_ && input_2_->GetOutputDesc().flags == DML_TENSOR_FLAG_OWNED_BY_DML)
-        {
-            assert(resource_c != nullptr);
-            input_binds.push_back({ resource_c, 0, resource_c->GetDesc().Width });
-        }
-        else if (input_2_)
-        {
-            input_binds.push_back({ nullptr, 0, 0 });
-        }
-
-        input_binds.push_back({ nullptr, 0, 0 });  // tensor scale
-        input_binds.push_back({ nullptr, 0, 0 });  // tensor zero point
-
-        DML_BUFFER_ARRAY_BINDING input_bind{};
-        input_bind.BindingCount = static_cast<UINT>(input_binds.size());
-        input_bind.Bindings = input_binds.data();
-        if (!input_binds.empty())
-        {
-            DML_BINDING_DESC binding{};
-            binding.Type = DML_BINDING_TYPE_BUFFER_ARRAY;
-            binding.Desc = &input_bind;
-            dml_init_binding_table->BindInputs(1, &binding);
-        }
-
-        dml_cmd_recorder->RecordDispatch(
-            cmd_list,
-            dml_op_initializer_.Get(),
-            dml_init_binding_table.Get());
-    }
-
 
     virtual void record_initialize(IDMLCommandRecorder* dml_cmd_recorder, ID3D12GraphicsCommandList* cmd_list, ID3D12Resource* resource_b, ID3D12Resource* resource_c)
     {
@@ -716,22 +490,270 @@ private:
     dml::Optional<dml::Expression> input_2_;
     std::vector<dml::Expression> outputs_;
 
-    dml::Expression input_1_dequantized_;
-    /*dml::Optional*/ dml::Expression input_1_scale_;
-    /*dml::Optional*/ dml::Expression input_1_zeropoint_;
-
     GemmType type_{};
 };
+
+class QuantGemm : public DirectMlBaseNode
+{
+public:
+    QuantGemm(const DML_TENSOR_DATA_TYPE data_type, const dml::TensorPolicy& tensor_policy_ab, const dml::TensorPolicy& tensor_policy_c,
+        const TensorShape& shape_a, const TensorShape& shape_b, const TensorShape& shape_c, const TensorShape& shape_out,
+        const TensorShape& shape_scale, const TensorShape& shape_zeropoint, bool a_quantized, bool b_quantized, bool c_quantized, const uint32_t block_size, const DML_TENSOR_DATA_TYPE quantized_data_type, bool has_zero_point,
+        bool a_transposed, bool b_managed, bool b_transposed, bool c_managed, float alpha, float beta,
+        bool allow_fp16_computations, const ActivationSettings& activation_settings,
+        IDMLDevice* dml_device, ID3D12Device* d3d12_device, bool allow_descriptors_volatile, bool disable_mc = false)
+        : DirectMlBaseNode(dml_device, d3d12_device)
+        , graph_(dml_device)
+    {
+        assert(!a_quantized && "A Quantized feature is unsupported");
+        assert(!c_quantized && "C Quantized feature is unsupported");
+        assert(b_quantized && "B has to be quantized to execute Quant GEMM");
+        assert(has_zero_point && "Only Zero point supported");
+
+        const auto fused_act = [](const auto& activation_settings)
+        {
+            auto ret = dml::FusedActivation::None();
+            if (activation_settings.type != ActivationType::eUnknown)
+            {
+                const auto activation = to_dml_activation_setting(activation_settings);
+                ret = dml::FusedActivation(activation.desc.Type, activation_settings.alpha, activation_settings.beta);
+            }
+                return ret;
+        }(activation_settings);
+
+        outputs_.resize(1);
+
+        dml::TensorDesc::Dimensions dimensions_0;
+        dimensions_0.push_back(shape_a.n);
+        dimensions_0.push_back(shape_a.c);
+        dimensions_0.push_back(a_transposed ? shape_a.w : shape_a.h); // to make cmd arguments have normal matrix with transpose internal to each dispatcher
+        dimensions_0.push_back(a_transposed ? shape_a.h : shape_a.w); // to make cmd arguments have normal matrix with transpose internal to each dispatcher
+        dml::TensorDesc desc_input_0 = { data_type, dimensions_0 };
+        input_0_ = dml::InputTensor(graph_, 0, desc_input_0);
+
+        dml::TensorDesc::Dimensions dimensions_1;
+        dimensions_1.push_back(shape_b.n);
+        dimensions_1.push_back(shape_b.c);
+        dimensions_1.push_back(shape_b.h);
+        dimensions_1.push_back(shape_b.w);
+        dml::TensorDesc desc_input_1 = { quantized_data_type, b_managed ? DML_TENSOR_FLAG_OWNED_BY_DML : DML_TENSOR_FLAG_NONE, dimensions_1 };
+        input_1_ = dml::InputTensor(graph_, 1, desc_input_1);
+
+        uint32_t index = shape_c.get_dims_count() > 0 ? 3 : 2;
+
+        dml::TensorDesc::Dimensions dimensions_scale;
+        dimensions_scale.push_back(shape_scale.n);
+        dimensions_scale.push_back(shape_scale.c);
+        dimensions_scale.push_back(shape_scale.h);
+        dimensions_scale.push_back(shape_scale.w);
+        dml::TensorDesc desc_scale = { data_type, DML_TENSOR_FLAG_NONE, dimensions_scale };
+        input_1_scale_ = dml::InputTensor(graph_, index, desc_scale);
+
+        dml::TensorDesc::Dimensions dimensions_zero_point;
+        dimensions_zero_point.push_back(shape_zeropoint.n);
+        dimensions_zero_point.push_back(shape_zeropoint.c);
+        dimensions_zero_point.push_back(shape_zeropoint.h);
+        dimensions_zero_point.push_back(shape_zeropoint.w);
+        dml::TensorDesc desc_zeropoint = { quantized_data_type, DML_TENSOR_FLAG_NONE, dimensions_zero_point };
+        input_1_zeropoint_ = dml::InputTensor(graph_, index + 1, desc_zeropoint);
+
+        std::vector<dml::Expression> tensor_b_quantization_params(2);
+        tensor_b_quantization_params[0] = input_1_scale_;
+        tensor_b_quantization_params[1] = input_1_zeropoint_;
+
+
+        input_1_dequantized_ = dml::Dequantize(input_1_, tensor_b_quantization_params, has_zero_point ? DML_QUANTIZATION_TYPE_SCALE_ZERO_POINT : DML_QUANTIZATION_TYPE_SCALE);
+
+        if (shape_c.get_dims_count() > 0)
+        {
+            dml::TensorDesc::Dimensions dimensions_2;
+            dimensions_2.push_back(shape_c.n);
+            dimensions_2.push_back(shape_c.c);
+            dimensions_2.push_back(shape_c.h);
+            dimensions_2.push_back(shape_c.w);
+            DML_BUFFER_TENSOR_DESC desc_input_2;
+            dml::TensorProperties tensor_c_properites;
+            {
+                desc_input_2.DataType = data_type;
+                desc_input_2.Flags = c_managed ? DML_TENSOR_FLAG_OWNED_BY_DML : DML_TENSOR_FLAG_NONE;
+                desc_input_2.DimensionCount = static_cast<std::uint32_t>(dimensions_2.size());
+                desc_input_2.Sizes = dimensions_2.data();
+
+                tensor_c_properites = tensor_policy_c.Get(desc_input_2.DataType, desc_input_2.Flags, dimensions_2);
+                desc_input_2.Strides = tensor_c_properites.strides.has_value() ? tensor_c_properites.strides->data() : nullptr;
+                desc_input_2.TotalTensorSizeInBytes = tensor_c_properites.totalTensorSizeInBytes;
+                desc_input_2.GuaranteedBaseOffsetAlignment = tensor_c_properites.guaranteedBaseOffsetAlignment;
+            }
+
+            input_2_ = dml::InputTensor(graph_, 2, desc_input_2);
+        }
+
+        outputs_[0] = dml::Gemm(input_0_, input_1_dequantized_, input_2_,
+            a_transposed ? DML_MATRIX_TRANSFORM_TRANSPOSE : DML_MATRIX_TRANSFORM_NONE,
+            b_transposed ? DML_MATRIX_TRANSFORM_TRANSPOSE : DML_MATRIX_TRANSFORM_NONE,
+            alpha, beta, fused_act);
+
+        DML_EXECUTION_FLAGS execution_flags = DML_EXECUTION_FLAG_NONE;
+
+        if (allow_descriptors_volatile)
+        {
+            execution_flags |= DML_EXECUTION_FLAG_DESCRIPTORS_VOLATILE;
+        }
+        ;
+        if (allow_fp16_computations)
+        {
+            execution_flags |= DML_EXECUTION_FLAG_ALLOW_HALF_PRECISION_COMPUTATION;
+        }
+        if (disable_mc)
+        {
+            execution_flags |= DML_EXECUTION_FLAG_DISABLE_META_COMMANDS;
+        }
+        assert(!outputs_.empty());
+        dml_op_executor_ = graph_.Compile(execution_flags, outputs_);
+            create_operator_impl();
+    }
+
+    void record_execute(IDMLCommandRecorder* dml_cmd_recorder, ID3D12GraphicsCommandList* cmd_list,
+        ID3D12Resource* resource_out, ID3D12Resource* resource_a, ID3D12Resource* resource_b, ID3D12Resource* resource_c,
+        ID3D12Resource* resource_scale, ID3D12Resource* resource_zeropoint)
+    {
+        assert(resource_a);
+        assert(resource_out);
+        assert(resource_scale);
+        assert(resource_zeropoint);
+        DML_BUFFER_BINDING input_a_buffer_binding{ resource_a, 0, resource_a->GetDesc().Width };
+        DML_BUFFER_BINDING input_b_buffer_binding{ nullptr, 0, 0 };
+        DML_BUFFER_BINDING input_c_buffer_binding{ nullptr, 0, 0 };
+        DML_BUFFER_BINDING input_scale_buffer_binding{ resource_scale, 0, resource_scale->GetDesc().Width };
+        DML_BUFFER_BINDING input_zeropoint_buffer_binding{ resource_zeropoint, 0, resource_zeropoint->GetDesc().Width };
+
+        std::vector<DML_BINDING_DESC> input_bindings;
+        input_bindings.reserve(5);
+        input_bindings.push_back({ DML_BINDING_TYPE_BUFFER, &input_a_buffer_binding });
+        if (resource_b)
+        {
+            if (input_1_.GetOutputDesc().flags == DML_TENSOR_FLAG_OWNED_BY_DML)
+            {
+                input_b_buffer_binding = { nullptr, 0, 0 };
+                input_bindings.push_back({ DML_BINDING_TYPE_NONE, &input_b_buffer_binding });
+            }
+            else
+            {
+                input_b_buffer_binding = { resource_b, 0, resource_b->GetDesc().Width };
+                input_bindings.push_back({ DML_BINDING_TYPE_BUFFER, &input_b_buffer_binding });
+            }
+        }
+        if (resource_c)
+        {
+            if (input_2_ && input_2_->GetOutputDesc().flags == DML_TENSOR_FLAG_OWNED_BY_DML)
+            {
+                input_c_buffer_binding = { nullptr, 0, 0 };
+                input_bindings.push_back({ DML_BINDING_TYPE_NONE, &input_c_buffer_binding });
+            }
+            else
+            {
+                input_c_buffer_binding = { resource_c, 0, resource_c->GetDesc().Width };
+                input_bindings.push_back({ DML_BINDING_TYPE_BUFFER, &input_c_buffer_binding });
+            }
+        }
+
+        input_bindings.push_back({ DML_BINDING_TYPE_BUFFER, &input_scale_buffer_binding });
+        input_bindings.push_back({ DML_BINDING_TYPE_BUFFER, &input_zeropoint_buffer_binding });
+
+
+        std::vector<DML_BINDING_DESC> output_bindings;
+        output_bindings.reserve(1);
+        DML_BUFFER_BINDING output_buffer_binding{ resource_out, 0, resource_out->GetDesc().Width };
+        DML_BINDING_DESC output_binding_desc{ DML_BINDING_TYPE_BUFFER, &output_buffer_binding };
+        output_bindings.push_back({ DML_BINDING_TYPE_BUFFER, &output_buffer_binding });
+
+        record_execute_impl(dml_cmd_recorder, cmd_list, input_bindings, output_bindings);
+    }
+
+    virtual void record_initialize(IDMLCommandRecorder* dml_cmd_recorder, ID3D12GraphicsCommandList* cmd_list, ID3D12Resource* resource_b, ID3D12Resource* resource_c,
+        ID3D12Resource* resource_scale, ID3D12Resource* resource_zeropoint)
+    {
+        const auto initialize_binding_properties = dml_op_initializer_->GetBindingProperties();
+        if (initialize_binding_properties.TemporaryResourceSize > 0 && temporary_buffer_)
+        {
+            DML_BUFFER_BINDING buffer_binding{ temporary_buffer_.Get(), 0, temporary_buffer_->GetDesc().Width };
+            DML_BINDING_DESC binding_desc{ DML_BINDING_TYPE_BUFFER, &buffer_binding };
+            dml_init_binding_table->BindTemporaryResource(&binding_desc);
+        }
+
+        if (persistent_buffer_)
+        {
+            // The persistent resource should be bound as the output to the IDMLOperatorInitializer.
+            DML_BUFFER_BINDING buffer_binding{ persistent_buffer_.Get(), 0, persistent_buffer_->GetDesc().Width };
+            DML_BINDING_DESC binding_desc{ DML_BINDING_TYPE_BUFFER, &buffer_binding };
+            dml_init_binding_table->BindOutputs(1, &binding_desc);
+        }
+
+        std::vector<DML_BUFFER_BINDING> input_binds{};
+        input_binds.push_back({ nullptr, 0, 0 });  // tensor a
+
+        //tensor b
+        if (input_1_.GetOutputDesc().flags == DML_TENSOR_FLAG_OWNED_BY_DML)
+        {
+            input_binds.push_back({ resource_b, 0, resource_b->GetDesc().Width });
+        }
+        else
+        {
+            input_binds.push_back({ nullptr, 0, 0 });
+        }
+
+        // tensor c 
+        if (input_2_ && input_2_->GetOutputDesc().flags == DML_TENSOR_FLAG_OWNED_BY_DML)
+        {
+            assert(resource_c != nullptr);
+            input_binds.push_back({ resource_c, 0, resource_c->GetDesc().Width });
+        }
+        else if (input_2_)
+        {
+            input_binds.push_back({ nullptr, 0, 0 });
+        }
+
+        input_binds.push_back({ nullptr, 0, 0 });  // tensor scale
+        input_binds.push_back({ nullptr, 0, 0 });  // tensor zero point
+
+        DML_BUFFER_ARRAY_BINDING input_bind{};
+        input_bind.BindingCount = static_cast<UINT>(input_binds.size());
+        input_bind.Bindings = input_binds.data();
+        if (!input_binds.empty())
+        {
+            DML_BINDING_DESC binding{};
+            binding.Type = DML_BINDING_TYPE_BUFFER_ARRAY;
+            binding.Desc = &input_bind;
+            dml_init_binding_table->BindInputs(1, &binding);
+        }
+
+        dml_cmd_recorder->RecordDispatch(
+            cmd_list,
+            dml_op_initializer_.Get(),
+            dml_init_binding_table.Get());
+    }
+
+private:
+    dml::Graph graph_;
+    dml::Expression input_0_;
+    dml::Expression input_1_;
+    dml::Optional<dml::Expression> input_2_;
+    std::vector<dml::Expression> outputs_;
+
+    dml::Expression input_1_dequantized_;
+    dml::Expression input_1_scale_;
+    dml::Expression input_1_zeropoint_;
+};
+
 }
 
-
-class GemmBaseDispatcher : public NodeDispatcher
+class QuantGemmBaseDispatcher : public NodeDispatcher
 {
 public:
     struct create_params_t
     {
-        GemmType type;
         DataType dt;
+        DataType quant_dt;
         DataLayout layout;
         DataLayout layout_c = DataLayout::eNCHW;
         ActivationSettings activation{};
@@ -751,21 +773,29 @@ public:
         bool a_transposed = false;
         bool b_transposed = false;
 
+        bool a_quantized = false;
+        bool b_quantized = true;
+        bool c_quantized = false;
+        bool has_zero_point = true;
+
         bool allow_fp16_computations = false;
         bool use_dnnl_for_reference_calculations = false;
 
         bool dump_resource = false;
 
+        uint32_t block_size = 32;
+
         inline static void add_cli_options(CLI::App* opts, create_params_t& params)
         {
             add_data_type_cli_option(opts, "--data_type", params.dt)->required();
+            add_data_type_cli_option(opts, "--quantize_data_type", params.quant_dt)->default_val(DataType::eUint4);
             add_data_layout_cli_option(opts, "--layout", params.layout)->required();
             add_data_layout_cli_option(opts, "--layout_c", params.layout_c);
             opts->add_option("--activation", params.activation);
 
             opts->add_option("--shape_a", params.shape_a)->required();
-            opts->add_option("--shape_b", params.shape_b); 
-            opts->add_option("--shape_c", params.shape_c); 
+            opts->add_option("--shape_b", params.shape_b);
+            opts->add_option("--shape_c", params.shape_c);
 
             opts->add_flag("--a_transposed", params.a_transposed)->default_val(false);
             opts->add_flag("--b_transposed", params.b_transposed)->default_val(false);
@@ -775,47 +805,46 @@ public:
 
             opts->add_option("--alpha", params.alpha)->default_val(1.0f);
             opts->add_option("--beta", params.beta)->default_val(1.0f);
+            opts->add_option("--block_size", params.block_size)->default_val(32);
+
+            opts->add_flag("--a_quantized", params.a_quantized)->default_val(false);
+            opts->add_flag("--b_quantized", params.b_quantized)->default_val(true);
+            opts->add_flag("--c_quantized", params.c_quantized)->default_val(false);
+
+            opts->add_flag("--has_zeropoint", params.has_zero_point)->default_val(true);
 
             opts->add_flag("--dnnl_reference", params.use_dnnl_for_reference_calculations)->default_val(false);
-
-            opts->add_option("--gemm_type", params.type, "Name of the type of GEMM to run.")
-                ->check(CLI::IsMember({ GemmType::GemmType_AB, GemmType::GemmType_QK_QKV, GemmType::GemmType_SV_S_QKV, GemmType::GemmType_QK_Q_KV, GemmType::GemmType_SV_S_KV, GemmType::GemmType_Quant }))->
-                transform(CLI::Transformer(std::map<std::string, GemmType>{
-                    { "ab", GemmType::GemmType_AB },
-                    { "qk_qkv", GemmType::GemmType_QK_QKV },
-                    { "sv_qkv", GemmType::GemmType_SV_S_QKV },
-                    { "qk_q_kv", GemmType::GemmType_QK_Q_KV },
-                    { "sv_s_kv", GemmType::GemmType_SV_S_KV },
-                    { "quant_gemm", GemmType::GemmType_Quant },
-            }, CLI::ignore_case))->required();
 
             opts->add_flag("--dump_resource", params.dump_resource);
 
         }
     };
 public:
-    void QuantGemmDispatcher(ID3D12GraphicsCommandList* cmd_list)
+    QuantGemmBaseDispatcher(create_params_t&& params, ID3D12Device* d3d12_device, IDMLDevice* dml_device, IDMLCommandRecorder* dml_cmd_recorder, ID3D12GraphicsCommandList* cmd_list)
+        : params_(std::move(params))
+        , dml_cmd_recorder_(dml_cmd_recorder)
+        , dml_device_(dml_device)
+        , d3d12_device_(d3d12_device)
     {
-        const float uint4_size = 0.5f;
-        uint32_t block_size = 32;
+        //const float uint4_size = 0.5f;
 
         uint32_t quant_param_h = params_.b_transposed ? params_.shape_b.h : params_.shape_b.w;
-        uint32_t quant_param_w = params_.b_transposed ? params_.shape_b.w / block_size : params_.shape_b.h / block_size;
+        uint32_t quant_param_w = params_.b_transposed ? params_.shape_b.w / params_.block_size : params_.shape_b.h / params_.block_size;
 
         params_.shape_scale = TensorShape(params_.shape_b.n, params_.shape_b.c, quant_param_h, quant_param_w);
         params_.shape_zeropoint = TensorShape(params_.shape_b.n, params_.shape_b.c, quant_param_h, quant_param_w);
 
-        input_data_a_.resize(get_tensor_elements_count(params_.shape_a, params_.layout) * get_data_type_bytes_width(params_.dt));
-        input_data_b_.resize(get_tensor_elements_count(params_.shape_b, params_.layout) * uint4_size);
+        input_data_a_.resize(get_tensor_elements_count(params_.shape_a, params_.layout) * (std::uint8_t)get_data_type_bytes_width(params_.dt));
+        input_data_b_.resize(get_tensor_elements_count(params_.shape_b, params_.layout) * (float)get_data_type_bytes_width(params_.quant_dt));
         if (params_.shape_c.get_dims_count() > 0)
         {
-            input_data_c_.resize(get_tensor_elements_count(params_.shape_c, params_.layout) * get_data_type_bytes_width(params_.dt));
+            input_data_c_.resize(get_tensor_elements_count(params_.shape_c, params_.layout) * (std::uint8_t)get_data_type_bytes_width(params_.dt));
         }
-        input_data_scale_.resize(get_tensor_elements_count(params_.shape_scale, params_.layout) * get_data_type_bytes_width(params_.dt));
-        input_data_zeropoint_.resize(get_tensor_elements_count(params_.shape_zeropoint, params_.layout) * uint4_size);
+        input_data_scale_.resize(get_tensor_elements_count(params_.shape_scale, params_.layout) * (std::uint8_t)get_data_type_bytes_width(params_.dt));
+        input_data_zeropoint_.resize(get_tensor_elements_count(params_.shape_zeropoint, params_.layout) * (float)get_data_type_bytes_width(params_.quant_dt));
 
         std::vector<std::byte> input_data_dequantized_b_;
-        input_data_dequantized_b_.resize(get_tensor_elements_count(params_.shape_b, params_.layout) * get_data_type_bytes_width(params_.dt));
+        input_data_dequantized_b_.resize(get_tensor_elements_count(params_.shape_b, params_.layout) * (std::uint8_t)get_data_type_bytes_width(params_.dt));
 
         assert(params_.shape_a.get_dims_count() == 4);
         assert(params_.shape_b.get_dims_count() == 4);
@@ -860,7 +889,7 @@ public:
             assert(false && "Unsupported data type in Quant GEMM dispatcher!");
         }
 
-        auto chunk_size = block_size;
+        auto chunk_size = params_.block_size;
         if (params_.dt == DataType::eFp32)
         {
             assert(false && "Unsupported data type in Quant GEMM dispatcher for data initialize!");
@@ -879,7 +908,7 @@ public:
         const auto tensor_input_zeropoint_bytes_width = input_data_zeropoint_.size();
 
         const auto out_shape = get_shape_output();
-        const auto tensor_out_bytes_width = get_tensor_elements_count(out_shape, params_.layout) * get_data_type_bytes_width(params_.dt);
+        const auto tensor_out_bytes_width = get_tensor_elements_count(out_shape, params_.layout) * (std::uint8_t)get_data_type_bytes_width(params_.dt);
 
         upload_buffer_ = create_buffer(d3d12_device_, tensor_input_a_bytes_width + tensor_input_b_bytes_width + tensor_input_c_bytes_width + tensor_input_scale_bytes_width + tensor_input_zeropoint_bytes_width,
             D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ);
@@ -988,7 +1017,294 @@ public:
         }
         cmd_list->ResourceBarrier(static_cast<std::uint32_t>(barriers.size()), barriers.data());
     }
-    
+
+    virtual ConformanceResult validate_conformance(ID3D12CommandQueue* command_queue, ID3D12CommandAllocator* command_allocator, ID3D12GraphicsCommandList* command_list, bool print_mismatches, std::size_t reference_dispatch_iterations)
+    {
+        const auto out_shape = get_shape_output();
+        const auto tensor_out_bytes_width = get_tensor_elements_count(out_shape, params_.layout) * (std::uint8_t)get_data_type_bytes_width(params_.dt);
+
+        // readback data and validate
+        auto readback_buffer = create_buffer(d3d12_device_, tensor_out_bytes_width, D3D12_HEAP_TYPE_READBACK, D3D12_RESOURCE_STATE_COPY_DEST);
+        auto readback_output_barrirer = CD3DX12_RESOURCE_BARRIER::Transition(output_buffer_.Get(),
+            D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
+        command_list->ResourceBarrier(1, &readback_output_barrirer);
+        command_list->CopyResource(readback_buffer.Get(), output_buffer_.Get());
+        close_execute_reset_wait(d3d12_device_, command_queue, command_allocator, command_list);
+
+        std::vector<std::byte> data_out(tensor_out_bytes_width);
+        std::byte* readback_mapped_ptr = nullptr;
+        readback_buffer->Map(0, nullptr, reinterpret_cast<void**>(&readback_mapped_ptr));
+        std::memcpy(data_out.data(), readback_mapped_ptr, data_out.size());
+        readback_buffer->Unmap(0, nullptr);
+
+        //
+        //  calc reference with dml non-mc 
+        //
+        readback_output_barrirer = CD3DX12_RESOURCE_BARRIER::Transition(output_buffer_.Get(),
+            D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        command_list->ResourceBarrier(1, &readback_output_barrirer);
+
+        std::vector<std::byte> ref_untyped_result;
+        if (params_.use_dnnl_for_reference_calculations)
+        {
+            dnnl_gemm_op::bindings_t bindings{};
+            bindings.input_a.data = input_data_a_.data();
+            bindings.input_a.dt = params_.dt;
+            bindings.input_a.layout = params_.layout;
+            bindings.input_a.shape = params_.shape_a;
+
+            bindings.input_b.data = input_data_b_.data();
+            bindings.input_b.dt = params_.dt;
+            bindings.input_b.layout = params_.layout;
+            bindings.input_b.shape = params_.shape_b;
+
+            if (input_buffer_c_)
+            {
+                bindings.input_c.data = input_data_c_.data();
+                bindings.input_c.dt = params_.dt;
+                bindings.input_c.layout = params_.layout;
+                bindings.input_c.shape = params_.shape_c;
+            }
+
+            dnnl_gemm_op::opts_t opts{};
+            opts.out_dt = params_.dt;
+            opts.out_layout = params_.layout;
+            opts.output_shape = get_shape_output();
+            opts.force_fp32_accumulator = params_.dt == DataType::eFp16 && !params_.allow_fp16_computations;
+            opts.alpha = params_.alpha;
+            opts.beta = params_.beta;
+            opts.activation = params_.activation;
+            opts.a_transposed = params_.a_transposed;
+            opts.b_transposed = params_.b_transposed;
+            opts.execution_iterations = reference_dispatch_iterations;
+            ref_untyped_result = dnnl_gemm_op::gemm(bindings, opts);
+        }
+        else
+        {
+            gpu_op::QuantGemm gemm_ref(to_dml_data_type(params_.dt), to_dml_tensor_policy(params_.layout), to_dml_tensor_policy(params_.layout_c),
+                params_.shape_a, params_.shape_b, params_.shape_c, get_shape_output(),
+                get_shape_quant_param(), get_shape_quant_param(), params_.a_quantized, params_.b_quantized, params_.c_quantized, params_.block_size, to_dml_data_type(params_.quant_dt), params_.has_zero_point,
+                params_.a_transposed, false /*params_.b_managed*/, params_.b_transposed, false /*params_.c_managed*/, params_.alpha, params_.beta,
+                params_.allow_fp16_computations, params_.activation,
+                dml_device_, d3d12_device_, false, true);
+            // bind descriptor heap
+            auto descriptor_heap = create_descriptor_heap(d3d12_device_, gemm_ref.get_total_descriptor_count());
+            ID3D12DescriptorHeap* d3d12_descriptor_heaps[] = { descriptor_heap.Get() };
+            command_list->SetDescriptorHeaps(1, d3d12_descriptor_heaps);
+
+            gemm_ref.create_binding_tables(descriptor_heap->GetCPUDescriptorHandleForHeapStart(), descriptor_heap->GetGPUDescriptorHandleForHeapStart());
+            gemm_ref.record_initialize(dml_cmd_recorder_, command_list, input_buffer_b_.Get(), input_buffer_c_.Get(), input_buffer_scale_.Get(), input_buffer_zeropoint_.Get());
+            close_execute_reset_wait(d3d12_device_, command_queue, command_allocator, command_list);
+
+            command_list->SetDescriptorHeaps(1, d3d12_descriptor_heaps);
+            gemm_ref.record_execute(dml_cmd_recorder_, command_list, output_buffer_.Get(), input_buffer_a_.Get(), input_buffer_b_.Get(), input_buffer_c_.Get(), input_buffer_scale_.Get(), input_buffer_zeropoint_.Get());
+            close_execute_reset_wait(d3d12_device_, command_queue, command_allocator, command_list);
+
+            auto readback_buffer_ref = create_buffer(d3d12_device_, tensor_out_bytes_width, D3D12_HEAP_TYPE_READBACK, D3D12_RESOURCE_STATE_COPY_DEST);
+            readback_output_barrirer = CD3DX12_RESOURCE_BARRIER::Transition(output_buffer_.Get(),
+                D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
+            command_list->ResourceBarrier(1, &readback_output_barrirer);
+            command_list->CopyResource(readback_buffer_ref.Get(), output_buffer_.Get());
+            close_execute_reset_wait(d3d12_device_, command_queue, command_allocator, command_list);
+
+            ref_untyped_result.resize(tensor_out_bytes_width);
+            void* readback_mapped_ptr_ref = nullptr;
+            readback_buffer_ref->Map(0, nullptr, reinterpret_cast<void**>(&readback_mapped_ptr_ref));
+            std::memcpy(ref_untyped_result.data(), readback_mapped_ptr_ref, ref_untyped_result.size());
+            readback_buffer_ref->Unmap(0, nullptr);
+        }
+
+        if (params_.dt == DataType::eFp32)
+        {
+            return run_conformance_check<float>(data_out, ref_untyped_result, 0.05f, print_mismatches);
+        }
+        else if (params_.dt == DataType::eFp16)
+        {
+            return run_conformance_check<Half>(data_out, ref_untyped_result, 0.05f, print_mismatches);
+        }
+        assert(false && "Unsupported output data type!");
+        ConformanceResult ret{};
+        return ret;
+
+    }
+
+protected:
+    TensorShape get_shape_output() const
+    {
+        TensorShape ret{};
+        ret.n = get_batch();
+        ret.c = get_channels();
+        ret.h = get_M();
+        ret.w = get_N();
+        return ret;
+    }
+
+    TensorShape get_shape_quant_param() const
+    {
+        TensorShape ret{};
+        ret.n = get_batch();
+        ret.c = get_channels();
+        ret.h = params_.b_transposed ? params_.shape_b.h : params_.shape_b.w;
+        ret.w = params_.b_transposed ? params_.shape_b.w / params_.block_size : params_.shape_b.h / params_.block_size;
+        return ret;
+    }
+        
+    std::uint32_t get_batch() const
+    {
+        return params_.shape_a.n;
+    }
+
+    std::uint32_t get_channels() const
+    {
+        return params_.shape_a.c;
+    }
+
+    std::uint32_t get_M() const
+    {
+        return params_.a_transposed ? params_.shape_a.w : params_.shape_a.h;
+    }
+
+    std::uint32_t get_K() const
+    {
+        return params_.a_transposed ? params_.shape_a.h : params_.shape_a.w;
+    }
+
+    std::uint32_t get_N() const
+    {
+        return params_.b_transposed ? params_.shape_b.h : params_.shape_b.w;
+    }
+
+protected:
+    create_params_t params_;
+    ID3D12Device* d3d12_device_;
+    IDMLDevice* dml_device_;
+    IDMLCommandRecorder* dml_cmd_recorder_;
+
+    std::vector<std::byte> input_data_a_;
+    std::vector<std::byte> input_data_b_;
+    std::vector<std::byte> input_data_c_;
+
+    std::vector<std::byte> input_data_scale_;
+    std::vector<std::byte> input_data_zeropoint_;
+
+    ComPtr<ID3D12Resource> input_buffer_a_;
+    ComPtr<ID3D12Resource> input_buffer_b_;
+    ComPtr<ID3D12Resource> input_buffer_c_;
+
+    ComPtr<ID3D12Resource> input_buffer_scale_;
+    ComPtr<ID3D12Resource> input_buffer_zeropoint_;
+
+    ComPtr<ID3D12Resource> output_buffer_;
+    ComPtr<ID3D12Resource> upload_buffer_;
+};
+
+class QuantGemmDmlDispatcher : public QuantGemmBaseDispatcher
+{
+public:
+    QuantGemmDmlDispatcher(create_params_t&& params, bool allow_descriptors_volatile, ID3D12Device* d3d12_device, IDMLDevice* dml_device, IDMLCommandRecorder* dml_cmd_recorder, ID3D12GraphicsCommandList* cmd_list)
+        : QuantGemmBaseDispatcher(std::move(params), d3d12_device, dml_device, dml_cmd_recorder, cmd_list)
+        , quantgemm_(to_dml_data_type(params_.dt), to_dml_tensor_policy(params_.layout), to_dml_tensor_policy(params_.layout_c), params_.shape_a, params_.shape_b, params_.shape_c, get_shape_output(),
+            get_shape_quant_param(), get_shape_quant_param(), params_.a_quantized, params_.b_quantized, params_.c_quantized, params_.block_size, to_dml_data_type(params_.quant_dt), params_.has_zero_point,
+            params_.a_transposed, params_.b_managed, params_.b_transposed, params_.c_managed,
+            params_.alpha, params_.beta, params_.allow_fp16_computations, params_.activation,
+            dml_device, d3d12_device, allow_descriptors_volatile, false)
+    {
+        if (params_.c_managed)
+        {
+            assert(params_.shape_c.get_dims_count() > 0 && "Cant use c_managed if shape of c is not defined!");
+        }
+    }
+
+    std::uint32_t get_total_descriptor_count() override
+    {
+        return quantgemm_.get_total_descriptor_count();
+    }
+
+    void initialize(ID3D12GraphicsCommandList* cmd_list, D3D12_CPU_DESCRIPTOR_HANDLE cpu_handle, D3D12_GPU_DESCRIPTOR_HANDLE gpu_handle)
+    {
+        quantgemm_.create_binding_tables(cpu_handle, gpu_handle);
+        
+        quantgemm_.record_initialize(dml_cmd_recorder_, cmd_list, input_buffer_b_.Get(), input_buffer_c_.Get(), input_buffer_scale_.Get(), input_buffer_zeropoint_.Get());
+    }
+
+    void execute(ID3D12GraphicsCommandList* cmd_list)
+    {
+        quantgemm_.record_execute(dml_cmd_recorder_, cmd_list,
+                output_buffer_.Get(), input_buffer_a_.Get(), input_buffer_b_.Get(), input_buffer_c_.Get(), input_buffer_scale_.Get(), input_buffer_zeropoint_.Get());
+    }
+
+private:
+    gpu_op::QuantGemm quantgemm_;
+};
+
+class GemmBaseDispatcher : public NodeDispatcher
+{
+public:
+    struct create_params_t
+    {
+        GemmType type;
+        DataType dt;
+        DataLayout layout;
+        DataLayout layout_c = DataLayout::eNCHW;
+        ActivationSettings activation{};
+
+        TensorShape shape_a;
+        TensorShape shape_b;
+        TensorShape shape_c;
+
+        TensorShape shape_scale;
+        TensorShape shape_zeropoint;
+
+        float alpha = 1.0f;
+        float beta = 1.0f;
+
+        bool b_managed = false;
+        bool c_managed = false;
+        bool a_transposed = false;
+        bool b_transposed = false;
+
+        bool allow_fp16_computations = false;
+        bool use_dnnl_for_reference_calculations = false;
+
+        bool dump_resource = false;
+
+        inline static void add_cli_options(CLI::App* opts, create_params_t& params)
+        {
+            add_data_type_cli_option(opts, "--data_type", params.dt)->required();
+            add_data_layout_cli_option(opts, "--layout", params.layout)->required();
+            add_data_layout_cli_option(opts, "--layout_c", params.layout_c);
+            opts->add_option("--activation", params.activation);
+
+            opts->add_option("--shape_a", params.shape_a)->required();
+            opts->add_option("--shape_b", params.shape_b); 
+            opts->add_option("--shape_c", params.shape_c); 
+
+            opts->add_flag("--a_transposed", params.a_transposed)->default_val(false);
+            opts->add_flag("--b_transposed", params.b_transposed)->default_val(false);
+            opts->add_flag("--b_managed", params.b_managed)->default_val(false);
+            opts->add_flag("--c_managed", params.c_managed)->default_val(false);
+            opts->add_flag("--allow_fp16_computations", params.allow_fp16_computations);
+
+            opts->add_option("--alpha", params.alpha)->default_val(1.0f);
+            opts->add_option("--beta", params.beta)->default_val(1.0f);
+
+            opts->add_flag("--dnnl_reference", params.use_dnnl_for_reference_calculations)->default_val(false);
+
+            opts->add_option("--gemm_type", params.type, "Name of the type of GEMM to run.")
+                ->check(CLI::IsMember({ GemmType::GemmType_AB, GemmType::GemmType_QK_QKV, GemmType::GemmType_SV_S_QKV, GemmType::GemmType_QK_Q_KV, GemmType::GemmType_SV_S_KV }))->
+                transform(CLI::Transformer(std::map<std::string, GemmType>{
+                    { "ab", GemmType::GemmType_AB },
+                    { "qk_qkv", GemmType::GemmType_QK_QKV },
+                    { "sv_qkv", GemmType::GemmType_SV_S_QKV },
+                    { "qk_q_kv", GemmType::GemmType_QK_Q_KV },
+                    { "sv_s_kv", GemmType::GemmType_SV_S_KV },
+            }, CLI::ignore_case))->required();
+
+            opts->add_flag("--dump_resource", params.dump_resource);
+
+        }
+    };
+public:
 
     GemmBaseDispatcher(create_params_t&& params, ID3D12Device* d3d12_device, IDMLDevice* dml_device, IDMLCommandRecorder* dml_cmd_recorder, ID3D12GraphicsCommandList* cmd_list)
         : params_(std::move(params))
@@ -997,176 +1313,167 @@ public:
         , d3d12_device_(d3d12_device)
 
     {
-        if (params_.type == GemmType::GemmType_Quant)
+        input_data_a_.resize(get_tensor_elements_count(params_.shape_a, params_.layout) * (std::uint8_t)get_data_type_bytes_width(params_.dt));
+        input_data_b_.resize(get_tensor_elements_count(params_.shape_b, params_.layout) * (std::uint8_t)get_data_type_bytes_width(params_.dt));
+        input_data_c_.resize(get_tensor_elements_count(params_.shape_c, params_.layout) * (std::uint8_t)get_data_type_bytes_width(params_.dt));
+
+        if (params_.type == GemmType::GemmType_AB)
         {
-            QuantGemmDispatcher(cmd_list);
+            assert(params_.shape_a.get_dims_count() == 4);
+            assert(params_.shape_b.get_dims_count() == 4);
+
+            assert(!input_data_a_.empty());
+            assert(!input_data_b_.empty());
+        }
+        else if (params_.type == GemmType::GemmType_QK_QKV)
+        {
+            assert(params_.shape_a.get_dims_count() == 5);
+            assert(params_.shape_b.get_dims_count() == 0);
+
+            assert(!input_data_a_.empty());
+            assert(input_data_b_.empty());
+        }
+        else if (params_.type == GemmType::GemmType_SV_S_QKV)
+        {
+            assert(params_.shape_a.get_dims_count() == 4);  // softmax input
+            assert(params_.shape_b.get_dims_count() == 5);  // qkv input 
+
+            assert(!input_data_a_.empty());
+            assert(!input_data_b_.empty());
+        }
+        else if (params_.type == GemmType::GemmType_QK_Q_KV)
+        {
+            assert(params_.shape_a.get_dims_count() == 3);  // q input
+            assert(params_.shape_b.get_dims_count() == 5);  // q_kv input 
+
+            assert(!input_data_a_.empty());
+            assert(!input_data_b_.empty());
+
+            assert(params_.shape_a.h == params_.shape_b.d * params_.shape_b.w); // K SIZE
+        }
+        else if (params_.type == GemmType::GemmType_SV_S_KV)
+        {
+            assert(params_.shape_a.get_dims_count() == 4);  // s input
+            assert(params_.shape_b.get_dims_count() == 5);  // q_kv input 
+
+            assert(!input_data_a_.empty());
+            assert(!input_data_b_.empty());
+
+            assert(params_.shape_a.w == params_.shape_b.c); // K SIZE
         }
         else
         {
-            input_data_a_.resize(get_tensor_elements_count(params_.shape_a, params_.layout) * get_data_type_bytes_width(params_.dt));
-            input_data_b_.resize(get_tensor_elements_count(params_.shape_b, params_.layout) * get_data_type_bytes_width(params_.dt));
-            input_data_c_.resize(get_tensor_elements_count(params_.shape_c, params_.layout) * get_data_type_bytes_width(params_.dt));
-
-            if (params_.type == GemmType::GemmType_AB)
-            {
-                assert(params_.shape_a.get_dims_count() == 4);
-                assert(params_.shape_b.get_dims_count() == 4);
-
-                assert(!input_data_a_.empty());
-                assert(!input_data_b_.empty());
-            }
-            else if (params_.type == GemmType::GemmType_QK_QKV)
-            {
-                assert(params_.shape_a.get_dims_count() == 5);
-                assert(params_.shape_b.get_dims_count() == 0);
-
-                assert(!input_data_a_.empty());
-                assert(input_data_b_.empty());
-            }
-            else if (params_.type == GemmType::GemmType_SV_S_QKV)
-            {
-                assert(params_.shape_a.get_dims_count() == 4);  // softmax input
-                assert(params_.shape_b.get_dims_count() == 5);  // qkv input 
-
-                assert(!input_data_a_.empty());
-                assert(!input_data_b_.empty());
-            }
-            else if (params_.type == GemmType::GemmType_QK_Q_KV)
-            {
-                assert(params_.shape_a.get_dims_count() == 3);  // q input
-                assert(params_.shape_b.get_dims_count() == 5);  // q_kv input 
-
-                assert(!input_data_a_.empty());
-                assert(!input_data_b_.empty());
-
-                assert(params_.shape_a.h == params_.shape_b.d * params_.shape_b.w); // K SIZE
-            }
-            else if (params_.type == GemmType::GemmType_SV_S_KV)
-            {
-                assert(params_.shape_a.get_dims_count() == 4);  // s input
-                assert(params_.shape_b.get_dims_count() == 5);  // q_kv input 
-
-                assert(!input_data_a_.empty());
-                assert(!input_data_b_.empty());
-
-                assert(params_.shape_a.w == params_.shape_b.c); // K SIZE
-            }
-            else
-            {
-                assert(false && "Not supported gemm type!");
-            }
-
-            const auto B = get_batch();
-            const auto C = get_channels();
-            const auto M = get_M();
-            const auto K = get_K();
-            const auto N = get_N();
-            std::cout << std::format("Running [B, C, M, K, N]: [{}, {}, {}, {}, {}]\n", B, C, M, K, N);
-
-            // randomize data
-            std::mt19937 random_generator(42); // static, create it once!
-            std::uniform_real_distribution<float> uniform_distribution(-1.0f, 1.0f);
-
-            if (params_.dt == DataType::eFp32)
-            {
-                randomize_linear_container_float(random_generator, uniform_distribution, input_data_a_);
-                randomize_linear_container_float(random_generator, uniform_distribution, input_data_b_);
-                randomize_linear_container_float(random_generator, uniform_distribution, input_data_c_);
-            }
-            else if (params_.dt == DataType::eFp16)
-            {
-                randomize_linear_container_half(random_generator, uniform_distribution, input_data_a_);
-                randomize_linear_container_half(random_generator, uniform_distribution, input_data_b_);
-                randomize_linear_container_half(random_generator, uniform_distribution, input_data_c_);
-            }
-            else
-            {
-                assert(false && "Unsupported data type in convolution dispatcher!");
-            }
-
-            const auto tensor_input_a_bytes_width = input_data_a_.size();
-            const auto tensor_input_b_bytes_width = input_data_b_.size();
-            const auto tensor_input_c_bytes_width = input_data_c_.size();
-
-
-            const auto out_shape = get_shape_output();
-            const auto tensor_out_bytes_width = get_tensor_elements_count(out_shape, params_.layout) * get_data_type_bytes_width(params_.dt);
-
-            upload_buffer_ = create_buffer(d3d12_device_, tensor_input_a_bytes_width + tensor_input_b_bytes_width + tensor_input_c_bytes_width,
-                D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ);
-            input_buffer_a_ = create_buffer(d3d12_device, tensor_input_a_bytes_width,
-                D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
-            if (tensor_input_b_bytes_width > 0)
-            {
-                input_buffer_b_ = create_buffer(d3d12_device, tensor_input_b_bytes_width,
-                    D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
-            }
-            if (tensor_input_c_bytes_width > 0)
-            {
-                input_buffer_c_ = create_buffer(d3d12_device, tensor_input_c_bytes_width,
-                    D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
-            }
-
-            output_buffer_ = create_buffer(d3d12_device, tensor_out_bytes_width,
-                D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
-
-            // copy data into buffer
-            std::byte* upload_mapped_ptr = nullptr;
-            upload_buffer_->Map(0, nullptr, reinterpret_cast<void**>(&upload_mapped_ptr));
-            std::size_t memcopy_offset = 0;
-            std::memcpy(upload_mapped_ptr, input_data_a_.data(), tensor_input_a_bytes_width);
-            memcopy_offset += tensor_input_a_bytes_width;
-            if (tensor_input_b_bytes_width > 0)
-            {
-                std::memcpy(upload_mapped_ptr + memcopy_offset, input_data_b_.data(), tensor_input_b_bytes_width);
-                memcopy_offset += tensor_input_b_bytes_width;
-            }
-            if (tensor_input_c_bytes_width > 0)
-            {
-                std::memcpy(upload_mapped_ptr + memcopy_offset, input_data_c_.data(), tensor_input_c_bytes_width);
-                memcopy_offset += tensor_input_c_bytes_width;
-            }
-            // unmap memory
-            upload_buffer_->Unmap(0, nullptr);
-
-            memcopy_offset = 0;
-            cmd_list->CopyBufferRegion(input_buffer_a_.Get(), 0, upload_buffer_.Get(), 0, tensor_input_a_bytes_width);
-            memcopy_offset += tensor_input_a_bytes_width;
-            if (tensor_input_b_bytes_width > 0)
-            {
-                cmd_list->CopyBufferRegion(input_buffer_b_.Get(), 0, upload_buffer_.Get(), memcopy_offset, tensor_input_b_bytes_width);
-                memcopy_offset += tensor_input_b_bytes_width;
-            }
-            if (tensor_input_c_bytes_width > 0)
-            {
-                cmd_list->CopyBufferRegion(input_buffer_c_.Get(), 0, upload_buffer_.Get(), memcopy_offset, tensor_input_c_bytes_width);
-                memcopy_offset += tensor_input_c_bytes_width;
-            }
-
-            std::vector<CD3DX12_RESOURCE_BARRIER> barriers;
-            barriers.push_back(CD3DX12_RESOURCE_BARRIER::Transition(input_buffer_a_.Get(),
-                D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_UNORDERED_ACCESS));
-            if (input_buffer_b_)
-            {
-                barriers.push_back(CD3DX12_RESOURCE_BARRIER::Transition(input_buffer_b_.Get(),
-                    D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_UNORDERED_ACCESS));
-            }
-            if (input_buffer_c_)
-            {
-                barriers.push_back(CD3DX12_RESOURCE_BARRIER::Transition(input_buffer_c_.Get(),
-                    D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_UNORDERED_ACCESS));
-            }
-
-            cmd_list->ResourceBarrier(static_cast<std::uint32_t>(barriers.size()), barriers.data());
+            assert(false && "Not supported gemm type!");
         }
-    }
 
-    
+        const auto B = get_batch();
+        const auto C = get_channels();
+        const auto M = get_M();
+        const auto K = get_K();
+        const auto N = get_N();
+        std::cout << std::format("Running [B, C, M, K, N]: [{}, {}, {}, {}, {}]\n", B, C, M, K, N);
+
+        // randomize data
+        std::mt19937 random_generator(42); // static, create it once!
+        std::uniform_real_distribution<float> uniform_distribution(-1.0f, 1.0f);
+
+        if (params_.dt == DataType::eFp32)
+        {
+            randomize_linear_container_float(random_generator, uniform_distribution, input_data_a_);
+            randomize_linear_container_float(random_generator, uniform_distribution, input_data_b_);
+            randomize_linear_container_float(random_generator, uniform_distribution, input_data_c_);
+        }
+        else if (params_.dt == DataType::eFp16)
+        {
+            randomize_linear_container_half(random_generator, uniform_distribution, input_data_a_);
+            randomize_linear_container_half(random_generator, uniform_distribution, input_data_b_);
+            randomize_linear_container_half(random_generator, uniform_distribution, input_data_c_);
+        }
+        else
+        {
+            assert(false && "Unsupported data type in convolution dispatcher!");
+        }
+
+        const auto tensor_input_a_bytes_width = input_data_a_.size();
+        const auto tensor_input_b_bytes_width = input_data_b_.size();
+        const auto tensor_input_c_bytes_width = input_data_c_.size();
+
+
+        const auto out_shape = get_shape_output();
+        const auto tensor_out_bytes_width = get_tensor_elements_count(out_shape, params_.layout) * (std::uint8_t)get_data_type_bytes_width(params_.dt);
+
+        upload_buffer_ = create_buffer(d3d12_device_, tensor_input_a_bytes_width + tensor_input_b_bytes_width + tensor_input_c_bytes_width,
+            D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ);
+        input_buffer_a_ = create_buffer(d3d12_device, tensor_input_a_bytes_width,
+            D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+        if (tensor_input_b_bytes_width > 0)
+        {
+            input_buffer_b_ = create_buffer(d3d12_device, tensor_input_b_bytes_width,
+                D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+        }
+        if (tensor_input_c_bytes_width > 0)
+        {
+            input_buffer_c_ = create_buffer(d3d12_device, tensor_input_c_bytes_width,
+                D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+        }
+
+        output_buffer_ = create_buffer(d3d12_device, tensor_out_bytes_width,
+            D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+
+        // copy data into buffer
+        std::byte* upload_mapped_ptr = nullptr;
+        upload_buffer_->Map(0, nullptr, reinterpret_cast<void**>(&upload_mapped_ptr));
+        std::size_t memcopy_offset = 0;
+        std::memcpy(upload_mapped_ptr, input_data_a_.data(), tensor_input_a_bytes_width);
+        memcopy_offset += tensor_input_a_bytes_width;
+        if (tensor_input_b_bytes_width > 0)
+        {
+            std::memcpy(upload_mapped_ptr + memcopy_offset, input_data_b_.data(), tensor_input_b_bytes_width);
+            memcopy_offset += tensor_input_b_bytes_width;
+        }
+        if (tensor_input_c_bytes_width > 0)
+        {
+            std::memcpy(upload_mapped_ptr + memcopy_offset, input_data_c_.data(), tensor_input_c_bytes_width);
+            memcopy_offset += tensor_input_c_bytes_width;
+        }
+        // unmap memory
+        upload_buffer_->Unmap(0, nullptr);
+
+        memcopy_offset = 0;
+        cmd_list->CopyBufferRegion(input_buffer_a_.Get(), 0, upload_buffer_.Get(), 0, tensor_input_a_bytes_width);
+        memcopy_offset += tensor_input_a_bytes_width;
+        if (tensor_input_b_bytes_width > 0)
+        {
+            cmd_list->CopyBufferRegion(input_buffer_b_.Get(), 0, upload_buffer_.Get(), memcopy_offset, tensor_input_b_bytes_width);
+            memcopy_offset += tensor_input_b_bytes_width;
+        }
+        if (tensor_input_c_bytes_width > 0)
+        {
+            cmd_list->CopyBufferRegion(input_buffer_c_.Get(), 0, upload_buffer_.Get(), memcopy_offset, tensor_input_c_bytes_width);
+            memcopy_offset += tensor_input_c_bytes_width;
+        }
+
+        std::vector<CD3DX12_RESOURCE_BARRIER> barriers;
+        barriers.push_back(CD3DX12_RESOURCE_BARRIER::Transition(input_buffer_a_.Get(),
+            D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_UNORDERED_ACCESS));
+        if (input_buffer_b_)
+        {
+            barriers.push_back(CD3DX12_RESOURCE_BARRIER::Transition(input_buffer_b_.Get(),
+                D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_UNORDERED_ACCESS));
+        }
+        if (input_buffer_c_)
+        {
+            barriers.push_back(CD3DX12_RESOURCE_BARRIER::Transition(input_buffer_c_.Get(),
+                D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_UNORDERED_ACCESS));
+        }
+
+        cmd_list->ResourceBarrier(static_cast<std::uint32_t>(barriers.size()), barriers.data());
+    }
 
     virtual ConformanceResult validate_conformance(ID3D12CommandQueue* command_queue, ID3D12CommandAllocator* command_allocator, ID3D12GraphicsCommandList* command_list, bool print_mismatches, std::size_t reference_dispatch_iterations)
     {
         const auto out_shape = get_shape_output();
-        const auto tensor_out_bytes_width = get_tensor_elements_count(out_shape, params_.layout) * get_data_type_bytes_width(params_.dt);
+        const auto tensor_out_bytes_width = get_tensor_elements_count(out_shape, params_.layout) * (std::uint8_t)get_data_type_bytes_width(params_.dt);
 
         // readback data and validate
         auto readback_buffer = create_buffer(d3d12_device_, tensor_out_bytes_width, D3D12_HEAP_TYPE_READBACK, D3D12_RESOURCE_STATE_COPY_DEST);
@@ -1290,7 +1597,7 @@ protected:
 
     std::uint32_t get_channels() const
     {
-        if (params_.type == GemmType::GemmType_AB || params_.type == GemmType::GemmType_SV_S_QKV || params_.type == GemmType::GemmType_SV_S_KV || params_.type == GemmType::GemmType_Quant)
+        if (params_.type == GemmType::GemmType_AB || params_.type == GemmType::GemmType_SV_S_QKV || params_.type == GemmType::GemmType_SV_S_KV)
         {
             return params_.shape_a.c;
         }
@@ -1307,7 +1614,7 @@ protected:
 
     std::uint32_t get_M() const
     {
-        if (params_.type == GemmType::GemmType_AB || params_.type == GemmType::GemmType_SV_S_QKV || params_.type == GemmType::GemmType_SV_S_KV || params_.type == GemmType::GemmType_Quant)
+        if (params_.type == GemmType::GemmType_AB || params_.type == GemmType::GemmType_SV_S_QKV || params_.type == GemmType::GemmType_SV_S_KV)
         {
             return params_.shape_a.h;
         }
@@ -1321,7 +1628,7 @@ protected:
 
     std::uint32_t get_K() const
     {
-        if (params_.type == GemmType::GemmType_AB || params_.type == GemmType::GemmType_SV_S_QKV || params_.type == GemmType::GemmType_SV_S_KV || params_.type == GemmType::GemmType_Quant)
+        if (params_.type == GemmType::GemmType_AB || params_.type == GemmType::GemmType_SV_S_QKV || params_.type == GemmType::GemmType_SV_S_KV)
         {
             return params_.shape_a.w;
         }
@@ -1339,7 +1646,7 @@ protected:
 
     std::uint32_t get_N() const
     {
-        if (params_.type == GemmType::GemmType_AB || params_.type == GemmType::GemmType_SV_S_QKV || params_.type == GemmType::GemmType_SV_S_KV || params_.type == GemmType::GemmType_Quant)
+        if (params_.type == GemmType::GemmType_AB || params_.type == GemmType::GemmType_SV_S_QKV || params_.type == GemmType::GemmType_SV_S_KV)
         {
             return params_.b_transposed ? params_.shape_b.h : params_.shape_b.w;
         }
@@ -1365,15 +1672,9 @@ protected:
     std::vector<std::byte> input_data_b_;
     std::vector<std::byte> input_data_c_;
 
-    std::vector<std::byte> input_data_scale_;
-    std::vector<std::byte> input_data_zeropoint_;
-
     ComPtr<ID3D12Resource> input_buffer_a_;
     ComPtr<ID3D12Resource> input_buffer_b_;
     ComPtr<ID3D12Resource> input_buffer_c_;
-
-    ComPtr<ID3D12Resource> input_buffer_scale_;
-    ComPtr<ID3D12Resource> input_buffer_zeropoint_;
 
     ComPtr<ID3D12Resource> output_buffer_;
     ComPtr<ID3D12Resource> upload_buffer_;
@@ -1404,28 +1705,13 @@ public:
     void initialize(ID3D12GraphicsCommandList* cmd_list, D3D12_CPU_DESCRIPTOR_HANDLE cpu_handle, D3D12_GPU_DESCRIPTOR_HANDLE gpu_handle)
     {
         gemm_.create_binding_tables(cpu_handle, gpu_handle);
-        if (params_.type == GemmType::GemmType_Quant)
-        {
-            gemm_.record_initialize(dml_cmd_recorder_, cmd_list, input_buffer_b_.Get(), input_buffer_c_.Get(), input_buffer_scale_.Get(), input_buffer_zeropoint_.Get());
-        }
-        else
-        {
-            gemm_.record_initialize(dml_cmd_recorder_, cmd_list, input_buffer_b_.Get(), input_buffer_c_.Get());
-        }
+        gemm_.record_initialize(dml_cmd_recorder_, cmd_list, input_buffer_b_.Get(), input_buffer_c_.Get());
     }
 
     void execute(ID3D12GraphicsCommandList* cmd_list)
     {
-        if(params_.type == GemmType::GemmType_Quant)
-        {
-            gemm_.record_execute(dml_cmd_recorder_, cmd_list,
-                output_buffer_.Get(), input_buffer_a_.Get(), input_buffer_b_.Get(), input_buffer_c_.Get(), input_buffer_scale_.Get(), input_buffer_zeropoint_.Get());
-        }
-        else
-        {
-            gemm_.record_execute(dml_cmd_recorder_, cmd_list,
+        gemm_.record_execute(dml_cmd_recorder_, cmd_list,
                 output_buffer_.Get(), input_buffer_a_.Get(), input_buffer_b_.Get(), input_buffer_c_.Get());
-        }
     }
 
 private:

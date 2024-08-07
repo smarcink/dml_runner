@@ -119,7 +119,7 @@ public:
         : params_(std::move(params))
         , dml_cmd_recorder_(dml_cmd_recorder)
         , d3d12_device_(d3d12_device)
-        , input_data_(get_tensor_elements_count(params_.shape, params_.layout) * get_data_type_bytes_width(params_.dt))
+        , input_data_(get_tensor_elements_count(params_.shape, params_.layout) * (std::uint8_t)get_data_type_bytes_width(params_.dt))
     {
         const auto tensor_a_bytes_width = input_data_.size();
         const auto tensor_out_bytes_width = input_data_.size();

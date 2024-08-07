@@ -214,7 +214,7 @@ class MhaBaseDispatcher: public NodeDispatcher
         , d3d12_device_(d3d12_device)
 
     {
-        input_data_.resize(get_tensor_elements_count(params_.shape_input, params_.layout) * get_data_type_bytes_width(params_.dt));
+        input_data_.resize(get_tensor_elements_count(params_.shape_input, params_.layout) * (std::uint8_t)get_data_type_bytes_width(params_.dt));
         if (params_.type == MhaType::MhaType_QKV)
         {
             assert(params_.shape_input.get_dims_count() == 5);
@@ -245,7 +245,7 @@ class MhaBaseDispatcher: public NodeDispatcher
         const auto tensor_input_bytes_width = input_data_.size();
       
         const auto out_shape = get_shape_output();
-        const auto tensor_out_bytes_width = get_tensor_elements_count(out_shape, params_.layout) * get_data_type_bytes_width(params_.dt);
+        const auto tensor_out_bytes_width = get_tensor_elements_count(out_shape, params_.layout) * (std::uint8_t)get_data_type_bytes_width(params_.dt);
 
         upload_buffer_ = create_buffer(d3d12_device_, tensor_input_bytes_width,
             D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ);
@@ -280,7 +280,7 @@ class MhaBaseDispatcher: public NodeDispatcher
     virtual ConformanceResult validate_conformance(ID3D12CommandQueue* command_queue, ID3D12CommandAllocator* command_allocator, ID3D12GraphicsCommandList* command_list, bool print_mismatches, std::size_t reference_dispatch_iterations)
     {
         const auto out_shape = get_shape_output();
-        const auto tensor_out_bytes_width = get_tensor_elements_count(out_shape, params_.layout) * get_data_type_bytes_width(params_.dt);
+        const auto tensor_out_bytes_width = get_tensor_elements_count(out_shape, params_.layout) * (std::uint8_t)get_data_type_bytes_width(params_.dt);
 
         // readback data and validate
         auto readback_buffer = create_buffer(d3d12_device_, tensor_out_bytes_width, D3D12_HEAP_TYPE_READBACK, D3D12_RESOURCE_STATE_COPY_DEST);
