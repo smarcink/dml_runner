@@ -49,7 +49,29 @@ struct TensorShape
 
     inline std::uint32_t get_element_count() const
     {
-        return (n * c * h * w);
+        std::uint32_t ret = 0;
+
+        if (n)
+        {
+            ret = n;
+        }
+        
+        if (c)
+        {
+            ret = ret ? ret * c : c;
+        }
+
+        if (h)
+        {
+            ret = ret ? ret * h : h;
+        }
+
+        if (w)
+        {
+            ret = ret ? ret * w : w;
+        }
+
+        return ret;
     }
 };
 

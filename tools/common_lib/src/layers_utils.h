@@ -365,11 +365,10 @@ inline uint8_t clamp_value(uint8_t value, uint8_t min, uint8_t max)
 // This function is not taking care of unaligned sizes
 inline void fill_quantized_data_half_to_uint4(std::span<std::byte> output_data, std::span<std::byte> input_data, uint32_t chunk_size, std::span<std::byte> output_scale, std::span<std::byte> output_zeropoint)
 {
-    using Dt = Half;
     auto limit = (2 << 3) - 1;
 
-    auto* input_ptr = reinterpret_cast<Dt*>(input_data.data());
-    auto input_data_elements_size = input_data.size() / sizeof(Dt);
+    const auto* input_ptr = reinterpret_cast<Half*>(input_data.data());
+    auto input_data_elements_size = input_data.size() / sizeof(Half);
     for (auto chunk_id = 0; chunk_id < input_data_elements_size / chunk_size; chunk_id++)
     {
         Half InputMax = 0;
@@ -381,16 +380,20 @@ inline void fill_quantized_data_half_to_uint4(std::span<std::byte> output_data, 
         for (auto i = chunk_id * chunk_size; i < (chunk_id + 1) * chunk_size; i++)
         {
             if (input_ptr[i] > InputMax)
+            {
                 InputMax = input_ptr[i];
+            }
+                
             if (input_ptr[i] < InputMin)
+            {
                 InputMin = input_ptr[i];
+            }
         }
         
         Half scale = (InputMax - InputMin) / (max - min);
-        uint8_t zero_point = 0;
-        if(scale)
-            zero_point = min - InputMin / scale; 
+        uint8_t zero_point = scale ? zero_point = min - InputMin / scale : 0;
 
+       
         auto* output_ptr = reinterpret_cast<uint8_t*>(output_data.data());
 
         for (auto i = chunk_id * chunk_size, j = (chunk_id * chunk_size)/2; i < (chunk_id + 1) * chunk_size; i+=2, j++)
@@ -402,7 +405,7 @@ inline void fill_quantized_data_half_to_uint4(std::span<std::byte> output_data, 
             output_ptr[j] |= (value2 << 4);
         }
 
-        auto* out_scale_ptr = reinterpret_cast<Dt*>(output_scale.data());
+        auto* out_scale_ptr = reinterpret_cast<Half*>(output_scale.data());
         out_scale_ptr[chunk_id] = scale;
         auto* out_zero_point_ptr = reinterpret_cast<uint8_t*>(output_zeropoint.data());
         if (chunk_id % 2 == 1)
