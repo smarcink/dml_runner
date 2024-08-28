@@ -36,15 +36,17 @@ enum class DataType
 {
     eFp32 = 0,
     eFp16 = 1,
+    eUint4 = 2,
     eCount
 };
 
-inline std::uint8_t get_data_type_bytes_width(DataType dt)
+inline float get_data_type_bytes_width(DataType dt)
 {
     switch (dt)
     {
     case DataType::eFp32: return sizeof(float);
     case DataType::eFp16: return sizeof(std::uint16_t);
+    case DataType::eUint4: return 0.5f;
     default:
         assert(false && "Unknown data type.");
     }
@@ -58,6 +60,7 @@ inline std::string get_data_type_str(DataType dt)
     {
     case DataType::eFp32: return "FP32";
     case DataType::eFp16: return "FP16";
+    case DataType::eUint4: return "UINT4";
     default:
         assert(false && "Unknown data type.");
     }
@@ -351,11 +354,75 @@ inline void fill_with_constant_linear_container_half(std::span<std::byte> contai
     }
 }
 
+inline uint8_t clamp_value(uint8_t value, uint8_t min, uint8_t max)
+{
+    if (value < min) return min;
+    else if (value > max) return max;
+    else return value;
+}
+
+// This function is not taking care of unaligned sizes
+inline void fill_quantized_data_half_to_uint4(std::span<std::byte> output_data, std::span<std::byte> input_data, uint32_t chunk_size, std::span<std::byte> output_scale, std::span<std::byte> output_zeropoint)
+{
+    auto limit = (2 << 3) - 1;
+
+    const auto* input_ptr = reinterpret_cast<Half*>(input_data.data());
+    auto input_data_elements_size = input_data.size() / sizeof(Half);
+    for (auto chunk_id = 0; chunk_id < input_data_elements_size / chunk_size; chunk_id++)
+    {
+        Half InputMax = 0;
+        Half InputMin = 0xFFFF;
+        uint8_t min = 0;
+        uint8_t max = limit;
+
+        // Find the max and min elements in the chunk
+        for (auto i = chunk_id * chunk_size; i < (chunk_id + 1) * chunk_size; i++)
+        {
+            if (input_ptr[i] > InputMax)
+            {
+                InputMax = input_ptr[i];
+            }
+                
+            if (input_ptr[i] < InputMin)
+            {
+                InputMin = input_ptr[i];
+            }
+        }
+        
+        Half scale = (InputMax - InputMin) / (max - min);
+        uint8_t zero_point = scale ? zero_point = min - InputMin / scale : 0;
+
+       
+        auto* output_ptr = reinterpret_cast<uint8_t*>(output_data.data());
+
+        for (auto i = chunk_id * chunk_size, j = (chunk_id * chunk_size)/2; i < (chunk_id + 1) * chunk_size; i+=2, j++)
+        {
+            uint8_t value1 = std::clamp((uint8_t)(ceil(input_ptr[i] / scale) + zero_point), min, max);
+            uint8_t value2 = std::clamp((uint8_t)(ceil(input_ptr[i + 1] / scale) + zero_point), min, max);
+
+            output_ptr[j] = value1;
+            output_ptr[j] |= (value2 << 4);
+        }
+
+        auto* out_scale_ptr = reinterpret_cast<Half*>(output_scale.data());
+        out_scale_ptr[chunk_id] = scale;
+        auto* out_zero_point_ptr = reinterpret_cast<uint8_t*>(output_zeropoint.data());
+        if (chunk_id % 2 == 1)
+        {
+            out_zero_point_ptr[chunk_id/2] |= (zero_point << 4);
+        }
+        else
+        {
+            out_zero_point_ptr[chunk_id/2] = zero_point;
+        }
+    }
+}
+
 inline auto add_data_type_cli_option(CLI::App* opts, std::string_view opt_name, DataType& dt)
 {
-    return opts->add_option(opt_name.data(), dt)->check(CLI::IsMember({DataType::eFp32, DataType::eFp16}))
+    return opts->add_option(opt_name.data(), dt)->check(CLI::IsMember({DataType::eFp32, DataType::eFp16, DataType::eUint4}))
         ->transform(CLI::Transformer(std::map<std::string, DataType>{
-            {"fp32", DataType::eFp32}, { "fp16", DataType::eFp16 }
+            {"fp32", DataType::eFp32}, { "fp16", DataType::eFp16 }, {"uint4", DataType::eUint4 }
     }, CLI::ignore_case, CLI::ignore_underscore));
 }
 

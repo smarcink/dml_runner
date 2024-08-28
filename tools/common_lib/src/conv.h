@@ -376,8 +376,8 @@ public:
         , d3d12_device_(d3d12_device)
         , dml_cmd_recorder_(dml_cmd_recorder)
         , dml_device_(dml_device)
-        , input_data_(get_tensor_elements_count(params_.input_shape, params_.input_layout)* get_data_type_bytes_width(params_.dt))
-        , filter_data_(get_tensor_elements_count(params_.filter_shape, params_.filter_layout)* get_data_type_bytes_width(params_.dt))
+        , input_data_(get_tensor_elements_count(params_.input_shape, params_.input_layout)* (std::uint8_t)get_data_type_bytes_width(params_.dt))
+        , filter_data_(get_tensor_elements_count(params_.filter_shape, params_.filter_layout)* (std::uint8_t)get_data_type_bytes_width(params_.dt))
 
     {
         if (params_.transposed)
@@ -395,7 +395,7 @@ public:
 
         if (!params_.no_bias)
         {
-            bias_data_ = std::vector<std::byte>(output_shape.c * get_data_type_bytes_width(params_.dt));
+            bias_data_ = std::vector<std::byte>(output_shape.c * (std::uint8_t)get_data_type_bytes_width(params_.dt));
         }
         // randomize data
         std::mt19937 random_generator(42); // static, create it once!
@@ -436,7 +436,7 @@ public:
         const auto tensor_input_bytes_width = input_data_.size();
         const auto tensor_filter_bytes_width = filter_data_.size();
         const auto tensor_bias_bytes_width = bias_data_.size();
-        const auto tensor_out_bytes_width = get_tensor_elements_count(output_shape, params_.output_layout) * get_data_type_bytes_width(params_.dt);
+        const auto tensor_out_bytes_width = get_tensor_elements_count(output_shape, params_.output_layout) * (std::uint8_t)get_data_type_bytes_width(params_.dt);
 
         upload_buffer_ = create_buffer(d3d12_device_, tensor_input_bytes_width + tensor_filter_bytes_width + tensor_bias_bytes_width + tensor_constant_bytes_width,
             D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ);
@@ -1506,7 +1506,7 @@ private:
                     const std::uint32_t ic_chunks_per_hw_thread = 8;
                     const std::uint32_t exec_size = 8;
                     const std::uint32_t dpas_depth = 8;
-                    const std::uint32_t out_dt_size = get_data_type_bytes_width(output_dt);
+                    const std::uint32_t out_dt_size = (std::uint32_t)get_data_type_bytes_width(output_dt);
                     gws_x = oc / exec_size;
                     gws_y = ic / (ic_chunks_per_hw_thread * dpas_depth * out_dt_size);
                     gws_z = 1;
@@ -1640,7 +1640,7 @@ private:
             }
             // compiled success -> create buffer
             {
-                const auto size_bytes = params_.ic * filter_channels * params_.k_size * params_.k_size * get_data_type_bytes_width(params_.output_dt);
+                const auto size_bytes = params_.ic * filter_channels * params_.k_size * params_.k_size * (std::uint8_t)get_data_type_bytes_width(params_.output_dt);
                 output_buffer_ = create_buffer(d3d12_device, size_bytes,
                     D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
             }
@@ -1724,7 +1724,7 @@ private:
                 readback_buffer->Unmap(0, nullptr);
 
                 const Half* data_ptr = reinterpret_cast<const Half*>(data_out.data());
-                for (std::int32_t i = 0; i < tensor_out_bytes_width / get_data_type_bytes_width(params_.output_dt); i++)
+                for (std::int32_t i = 0; i < tensor_out_bytes_width / (std::uint8_t)get_data_type_bytes_width(params_.output_dt); i++)
                 {
                     const auto f = DirectX::PackedVector::XMConvertHalfToFloat(data_ptr[i]);
                     std::cout << (std::int32_t)f << " ";

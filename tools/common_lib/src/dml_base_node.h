@@ -139,6 +139,7 @@ inline DML_TENSOR_DATA_TYPE to_dml_data_type(DataType dt)
     {
     case DataType::eFp32: return DML_TENSOR_DATA_TYPE_FLOAT32;
     case DataType::eFp16: return DML_TENSOR_DATA_TYPE_FLOAT16;
+    case DataType::eUint4: return DML_TENSOR_DATA_TYPE_UINT4;
     default:
         assert(false && "Unknown data type.");
     }

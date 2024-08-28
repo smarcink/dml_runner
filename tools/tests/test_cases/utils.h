@@ -61,7 +61,7 @@ public:
 
         // Bind and execute node
         g_dx12_engine.command_list->SetDescriptorHeaps(1, d3d12_descriptor_heaps);
-        for (int i = 0; i < g_test_config.iterations; i++)
+        for (unsigned int i = 0; i < g_test_config.iterations; i++)
         {
             node->execute(g_dx12_engine.command_list.Get());
         }

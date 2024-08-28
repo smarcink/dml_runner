@@ -201,15 +201,15 @@ public:
         , dml_cmd_recorder_(dml_cmd_recorder)
         , d3d12_device_(d3d12_device)
         , dml_device_(dml_device)
-        , input_data_(get_tensor_elements_count(params_.shape, params_.layout) * get_data_type_bytes_width(params_.dt))
+        , input_data_(get_tensor_elements_count(params_.shape, params_.layout) * (std::uint8_t)get_data_type_bytes_width(params_.dt))
     {
         if (use_bias())
         {
-            bias_data_.resize(params_.shape.c * get_data_type_bytes_width(params_.dt));
+            bias_data_.resize(params_.shape.c * (std::uint8_t)get_data_type_bytes_width(params_.dt));
         }
         if (use_scale())
         {
-            scale_data_.resize(params_.shape.c * get_data_type_bytes_width(params_.dt));
+            scale_data_.resize(params_.shape.c * (std::uint8_t)get_data_type_bytes_width(params_.dt));
         }
 
         // randomize data

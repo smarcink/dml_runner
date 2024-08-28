@@ -46,6 +46,19 @@ struct TensorShape
 
         return ret;
     }
+
+    inline std::uint32_t get_element_count() const
+    {
+        std::uint32_t ret = n;
+
+        auto count = [&](uint32_t element) { ret =  ret ? (ret * element) : element; };
+
+        if (c) count(c);
+        if (h) count(h);
+        if (w) count(w);
+ 
+        return ret;
+    }
 };
 
 inline bool lexical_cast(const std::string& input, TensorShape& ts)

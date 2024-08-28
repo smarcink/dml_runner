@@ -17,6 +17,7 @@ enum class NodeType
     eMvnCm,
     eMhaDml,
     eMemoryBandwidth,
+    eQuantGemmDml,
     eCount
 };
 
