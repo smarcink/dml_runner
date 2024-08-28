@@ -826,8 +826,7 @@ public:
         , dml_device_(dml_device)
         , d3d12_device_(d3d12_device)
     {
-        //const float uint4_size = 0.5f;
-
+        
         uint32_t quant_param_h = params_.b_transposed ? params_.shape_b.h : params_.shape_b.w;
         uint32_t quant_param_w = params_.b_transposed ? params_.shape_b.w / params_.block_size : params_.shape_b.h / params_.block_size;
 
@@ -860,7 +859,6 @@ public:
         const auto N = get_N();
         std::cout << std::format("Running [B, C, M, K, N]: [{}, {}, {}, {}, {}]\n", B, C, M, K, N);
 
-#if 1
         // randomize data
         std::mt19937 random_generator(42); // static, create it once!
         std::uniform_real_distribution<float> uniform_distribution(-1.0f, 1.0f);
@@ -899,7 +897,6 @@ public:
         {
             fill_quantized_data_half_to_uint4(input_data_b_, input_data_dequantized_b_, chunk_size, input_data_scale_, input_data_zeropoint_);
         }
-#endif
 
         const auto tensor_input_a_bytes_width = input_data_a_.size();
         const auto tensor_input_b_bytes_width = input_data_b_.size();

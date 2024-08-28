@@ -1506,7 +1506,7 @@ private:
                     const std::uint32_t ic_chunks_per_hw_thread = 8;
                     const std::uint32_t exec_size = 8;
                     const std::uint32_t dpas_depth = 8;
-                    const std::uint32_t out_dt_size = (std::uint8_t)get_data_type_bytes_width(output_dt);
+                    const std::uint32_t out_dt_size = (std::uint32_t)get_data_type_bytes_width(output_dt);
                     gws_x = oc / exec_size;
                     gws_y = ic / (ic_chunks_per_hw_thread * dpas_depth * out_dt_size);
                     gws_z = 1;

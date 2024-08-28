@@ -40,14 +40,13 @@ enum class DataType
     eCount
 };
 
-//inline std::uint8_t get_data_type_bytes_width(DataType dt)
 inline float get_data_type_bytes_width(DataType dt)
 {
     switch (dt)
     {
     case DataType::eFp32: return sizeof(float);
     case DataType::eFp16: return sizeof(std::uint16_t);
-    case DataType::eUint4: return 0.5;
+    case DataType::eUint4: return 0.5f;
     default:
         assert(false && "Unknown data type.");
     }
@@ -398,8 +397,8 @@ inline void fill_quantized_data_half_to_uint4(std::span<std::byte> output_data, 
 
         for (auto i = chunk_id * chunk_size, j = (chunk_id * chunk_size)/2; i < (chunk_id + 1) * chunk_size; i+=2, j++)
         {
-            uint8_t value1 = clamp_value((uint8_t)ceil(input_ptr[i] / scale) + zero_point, min, max);
-            uint8_t value2 = clamp_value((uint8_t)ceil(input_ptr[i + 1] / scale) + zero_point, min, max);
+            uint8_t value1 = std::clamp((uint8_t)(ceil(input_ptr[i] / scale) + zero_point), min, max);
+            uint8_t value2 = std::clamp((uint8_t)(ceil(input_ptr[i + 1] / scale) + zero_point), min, max);
 
             output_ptr[j] = value1;
             output_ptr[j] |= (value2 << 4);
