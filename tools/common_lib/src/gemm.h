@@ -1719,12 +1719,31 @@ private:
 class GemmUmdD3d12Dispatcher : public GemmBaseDispatcher
 {
 public:
-    GemmUmdD3d12Dispatcher(create_params_t&& params, IntelExtension& intc_ext, ID3D12Device* d3d12_device, IDMLDevice* dml_device, IDMLCommandRecorder* dml_cmd_recorder, ID3D12GraphicsCommandList* cmd_list)
+    struct gemm_umdd3d12_params_t
+    {
+        std::uint32_t verbose_mode = 0;  // 0: disabled; 1: execution; 2: creation and execution
+        bool verbose_dump_to_file = false;
+
+        inline static void add_cli_options(CLI::App* opts, gemm_umdd3d12_params_t& params)
+        {
+            opts->add_option("--verbose_mode", params.verbose_mode)->default_val(0);
+            opts->add_flag("--verbose_file", params.verbose_dump_to_file)->default_val(false);
+        }
+    };
+public:
+    GemmUmdD3d12Dispatcher(create_params_t&& params, gemm_umdd3d12_params_t&& umdd3d12_param, IntelExtension& intc_ext, ID3D12Device* d3d12_device, IDMLDevice* dml_device, IDMLCommandRecorder* dml_cmd_recorder, ID3D12GraphicsCommandList* cmd_list)
         : GemmBaseDispatcher(std::move(params), d3d12_device, dml_device, dml_cmd_recorder, cmd_list)
         , device_(d3d12_device, intc_ext.get_info())
         , dnnl_engine_(dnnl::iumd_interop::make_engine(&device_))
     {
         using namespace dnnl_utils;
+
+        dnnl::set_verbose(umdd3d12_param.verbose_mode);
+
+        if (umdd3d12_param.verbose_dump_to_file)
+        {
+            dnnl::iumd_interop::attach_verbose_attach_printf_callback(dump_onednn_logs_to_file);
+        }
 
         //input_a_memory_desc_ = to_dnnl_mem_desc(params_.a_transposed ? TensorShape{ params_.shape_a.n, params_.shape_a.c, params_.shape_a.w, params_.shape_a.h } : params_.shape_a, params_.layout, params_.dt);
         input_a_memory_desc_ = to_dnnl_mem_desc(params_.shape_a, params_.layout, params_.dt);

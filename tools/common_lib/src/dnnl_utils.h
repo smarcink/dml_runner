@@ -150,4 +150,15 @@ inline dnnl::algorithm to_dnnl_activation_type(const ActivationType& type)
     return dnnl::algorithm::undef;
 }
 
+
+inline void dump_onednn_logs_to_file(const char* str)
+{
+    std::ofstream ofstream_for_verbose("onednn_verbose_dump.txt", std::ofstream::out | std::ofstream::app);
+    if (ofstream_for_verbose.is_open())
+    {
+        ofstream_for_verbose << str;
+    }
+    ofstream_for_verbose.close();
+}
+
 }// namespace dnnl_utils

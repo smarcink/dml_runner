@@ -763,8 +763,13 @@ class ConvolutionUmdD3d12Dispatcher : public ConvolutionBaseDispatcher
 public:
     struct conv_umdd3d12_params_t
     {
+        std::uint32_t verbose_mode = 0;  // 0: disabled; 1: execution; 2: creation and execution
+        bool verbose_dump_to_file = false;
+
         inline static void add_cli_options(CLI::App* opts, conv_umdd3d12_params_t& params)
         {
+            opts->add_option("--verbose_mode", params.verbose_mode)->default_val(0);
+            opts->add_flag("--verbose_file", params.verbose_dump_to_file)->default_val(false);
         }
     };
 
@@ -775,6 +780,13 @@ public:
         , umdd3d12_params_(std::move(umdd3d12_params))
         , dnnl_engine_(dnnl::iumd_interop::make_engine(&device_))
     {      
+        dnnl::set_verbose(umdd3d12_params_.verbose_mode);
+
+        if (umdd3d12_params_.verbose_dump_to_file)
+        {
+            dnnl::iumd_interop::attach_verbose_attach_printf_callback(dnnl_utils::dump_onednn_logs_to_file);
+        }
+
         if (params_.transposed)
         {
             create_convolution<dnnl::deconvolution_forward>();
@@ -1114,6 +1126,8 @@ private:
 
         // create convolution primitive
         convolution_ = T(conv_desc);
+        auto c2 = T(conv_desc);
+        auto c3 = T(conv_desc);
 
         // compile weights reorder kernel and create reorder primitive
         // ToDo: check if reorder needs scratchpad memory??
