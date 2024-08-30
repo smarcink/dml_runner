@@ -763,8 +763,13 @@ class ConvolutionUmdD3d12Dispatcher : public ConvolutionBaseDispatcher
 public:
     struct conv_umdd3d12_params_t
     {
+        std::uint32_t verbose_mode = 0;  // 0: disabled; 1: execution; 2: creation and execution
+        bool verbose_dump_to_file = false;
+
         inline static void add_cli_options(CLI::App* opts, conv_umdd3d12_params_t& params)
         {
+            opts->add_option("--verbose_mode", params.verbose_mode)->default_val(0);
+            opts->add_flag("--verbose_file", params.verbose_dump_to_file)->default_val(false);
         }
     };
 
@@ -773,8 +778,17 @@ public:
         : ConvolutionBaseDispatcher(std::move(params), d3d12_device, dml_device, dml_cmd_recorder, cmd_list)
         , device_(d3d12_device, intc_ext.get_info())
         , umdd3d12_params_(std::move(umdd3d12_params))
-        , dnnl_engine_(dnnl::iumd_interop::make_engine(&device_))
     {      
+        dnnl::set_verbose(umdd3d12_params_.verbose_mode);
+
+        if (umdd3d12_params_.verbose_dump_to_file)
+        {
+            ofstream_for_verbose_.open("onednn_verbose_dump.txt", std::ofstream::out | std::ofstream::app);
+            dnnl::iumd_interop::attach_verbose_output_stream(&ofstream_for_verbose_);
+        }
+        // dnnl engine has to be created after verbose mode was set and stream attached (so engine creation will use proper stream)
+        dnnl_engine_ = dnnl::iumd_interop::make_engine(&device_);
+
         if (params_.transposed)
         {
             create_convolution<dnnl::deconvolution_forward>();
@@ -782,6 +796,14 @@ public:
         else
         {
             create_convolution<dnnl::convolution_forward>();
+        }
+    }
+
+    ~ConvolutionUmdD3d12Dispatcher()
+    {
+        if (ofstream_for_verbose_.is_open())
+        {
+            ofstream_for_verbose_.close();
         }
     }
 
@@ -1114,6 +1136,8 @@ private:
 
         // create convolution primitive
         convolution_ = T(conv_desc);
+        auto c2 = T(conv_desc);
+        auto c3 = T(conv_desc);
 
         // compile weights reorder kernel and create reorder primitive
         // ToDo: check if reorder needs scratchpad memory??
@@ -1182,6 +1206,7 @@ private:
     iumd::custom_metacommand::UmdD3d12Device device_;
     conv_umdd3d12_params_t umdd3d12_params_;
     dnnl::engine dnnl_engine_;
+    std::ofstream ofstream_for_verbose_;
 
     std::variant<dnnl::convolution_forward, dnnl::deconvolution_forward> convolution_;
     dnnl::reorder reorder_weights_;
