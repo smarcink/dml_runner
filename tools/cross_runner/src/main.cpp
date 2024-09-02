@@ -73,6 +73,7 @@ struct CliOptions
     MvnCmDispatcher::mvn_cm_params_t mvn_cm_params{};
     SoftmaxCmDispatcher::softmax_cm_params_t softmax_cm_params{};
     GemmCmDispatcher::cm_params_t gemm_cm_params{};
+    GemmUmdD3d12Dispatcher::gemm_umdd3d12_params_t gemm_umdd3d12_params{};
 
     gpu_op::MemoryBandwidthDispatcher::create_params_t memory_bw_params{};
 };
@@ -137,7 +138,9 @@ int main()
     SoftmaxCmDispatcher::softmax_cm_params_t::add_cli_options(softmax_cm_option_groups, opts.softmax_cm_params);
     auto gemm_cm_option_groups = dml_runner_app.add_subcommand("gemm_cm_opts", "Options for gemm layer with CM implementation.");
     GemmCmDispatcher::cm_params_t::add_cli_options(gemm_cm_option_groups, opts.gemm_cm_params);
-    auto mem_bw_option_group = dml_runner_app.add_subcommand("mem_bw_opts", "Options for memory banddiwth measurments");
+    auto gemm_umdd3d12_option_groups = dml_runner_app.add_subcommand("gemm_umdd3d12_opts", "Options for gemm layer with CM implementation.");
+    GemmUmdD3d12Dispatcher::gemm_umdd3d12_params_t::add_cli_options(gemm_umdd3d12_option_groups, opts.gemm_umdd3d12_params);
+    auto mem_bw_option_group = dml_runner_app.add_subcommand("mem_bw_opts", "Options for memory bandwidths measurements");
     gpu_op::MemoryBandwidthDispatcher::MemoryBandwidthDispatcher::create_params_t::add_cli_options(mem_bw_option_group, opts.memory_bw_params);
 
     try {
@@ -211,7 +214,7 @@ int main()
         }
         else if (opts.node_type == NodeType::eGemmUmdD3d12)
         {
-            node = std::make_unique<GemmUmdD3d12Dispatcher>(std::move(opts.gemm_opts),
+            node = std::make_unique<GemmUmdD3d12Dispatcher>(std::move(opts.gemm_opts), std::move(opts.gemm_umdd3d12_params),
                 intel_extension_d3d12, d3d12_device.Get(), dml_device.Get(), dml_command_recorder.Get(), command_list.Get());
         }
         else if (opts.node_type == NodeType::eConvDml)

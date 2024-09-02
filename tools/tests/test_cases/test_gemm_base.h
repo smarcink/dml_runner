@@ -23,6 +23,7 @@ protected:
         else
         {
             node = std::make_unique<GemmUmdD3d12Dispatcher>(std::move(get_params()),
+                GemmUmdD3d12Dispatcher::gemm_umdd3d12_params_t{},
                 g_dx12_engine.intel_extension_d3d12,
                 g_dx12_engine.d3d12_device.Get(),
                 g_dx12_engine.dml_device.Get(),
