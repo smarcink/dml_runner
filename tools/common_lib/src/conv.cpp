@@ -174,7 +174,50 @@ inline std::vector<std::byte> run_inference(const dnnl_conv_op::bindings_t& bind
         dnnl::reset_profiling(stream);
     }
 
-    T convolution(conv_desc.get());
+    std::ifstream in_key_file("onednn_ocl_persistent_cache.key", std::ofstream::in | std::ifstream::binary);
+    std::ifstream in_value_file("onednn_ocl_persistent_cache.value", std::ofstream::in | std::ifstream::binary);
+    std::vector<std::uint8_t> buffer_key;
+    std::vector<std::uint8_t> buffer_value;
+    if (opts.cache_blob && in_key_file.is_open())
+    {
+        buffer_key = std::vector<std::uint8_t>(std::istreambuf_iterator<char>(in_key_file), {});
+    }
+    if (buffer_key == conv_desc.get_cache_blob_id())
+    {
+        std::cout << "Found persistent cache blob files for OCL. Using them to create convolution primitive!" << std::endl;
+        assert(in_value_file.is_open());
+        buffer_value = std::vector<std::uint8_t>(std::istreambuf_iterator<char>(in_value_file), {});
+    }
+    T convolution;
+    const auto t0 = std::chrono::high_resolution_clock::now();
+    if (buffer_value.empty())
+    {
+        convolution = T(conv_desc.get());
+    }
+    else
+    {
+        convolution = T(conv_desc.get(), buffer_value);
+    }
+    const auto t1 = std::chrono::high_resolution_clock::now();
+    const auto diff = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0);
+    std::cout << "OCL primitive create time: " << diff << std::endl;
+
+    if(opts.cache_blob && buffer_value.empty())
+    {
+        std::cout << "Storing persistent cache blob files for OCL." << std::endl;
+        auto store_binary_data_to_file = [](const auto& file_name, const auto& data)
+            {
+                std::ofstream out_file(file_name, std::ofstream::out | std::ofstream::binary);
+                std::copy(data.begin(), data.end(), std::ostream_iterator<std::uint8_t>(out_file));
+                out_file.close();
+            };
+        const auto cache_blob_id = conv_desc.get_cache_blob_id();
+        store_binary_data_to_file("onednn_ocl_persistent_cache.key", cache_blob_id);
+
+        const auto cache_blob = convolution.get_cache_blob();
+        store_binary_data_to_file("onednn_ocl_persistent_cache.value", cache_blob);
+    }
+
     for (int i = 0; i < opts.execution_iterations; i++)
     {
         convolution.execute(stream, { { DNNL_ARG_SRC, input_memory }, {DNNL_ARG_WEIGHTS, filter_memory}, {DNNL_ARG_BIAS, bias_memory}, {DNNL_ARG_DST, output_memory},

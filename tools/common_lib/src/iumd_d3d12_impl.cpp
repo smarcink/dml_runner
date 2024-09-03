@@ -1,6 +1,8 @@
 #include "iumd_d3d12_impl.h"
 
 #include <cassert>
+#include <chrono>
+#include <iostream>
 
 //////////////////////////////////////////////////////////////////////////
 // Custom Metacommand
@@ -232,8 +234,12 @@ iumd::custom_metacommand::UmdD3d12PipelineStateObject::UmdD3d12PipelineStateObje
         
     }
     assert(create_desc.ShaderLanguage != META_COMMAND_CUSTOM_SHADER_LANGUAGE_NONE);
-
+    
     throw_if_failed(dev5->CreateMetaCommand(GUID_CUSTOM, 0, &create_desc, sizeof(create_desc), IID_PPV_ARGS(mc_.ReleaseAndGetAddressOf())), "cant create custom metacommand");
+
+    // Cache kernel. It's not ideal, but should be enough to represent needs of real mechanism. In driver this would store/read to disk.
+    cached_kernel_.resize(kernel_code_size);
+    std::memcpy(cached_kernel_.data(), kernel_code, kernel_code_size);
 }
 
 const char* iumd::custom_metacommand::UmdD3d12PipelineStateObject::get_name() const
@@ -251,6 +257,18 @@ bool iumd::custom_metacommand::UmdD3d12PipelineStateObject::set_kernel_arg(std::
     auto typed_mem = memory ? dynamic_cast<const iumd::custom_metacommand::UmdD3d12Memory*>(memory) : nullptr;
     resources_[index] = { typed_mem, offset };
     return true;
+}
+
+const void* iumd::custom_metacommand::UmdD3d12PipelineStateObject::get_binary() const
+{
+    assert(!cached_kernel_.empty());
+    return cached_kernel_.data();
+}
+
+const std::size_t iumd::custom_metacommand::UmdD3d12PipelineStateObject::get_binary_size() const
+{
+    assert(!cached_kernel_.empty());
+    return cached_kernel_.size();
 }
 
 bool iumd::custom_metacommand::UmdD3d12PipelineStateObject::set_kernel_arg(std::size_t index, IUMDPipelineStateObject::ScalarArgType scalar)

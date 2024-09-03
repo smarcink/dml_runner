@@ -64,6 +64,9 @@ namespace custom_metacommand
         bool set_kernel_arg(std::size_t index, IUMDPipelineStateObject::ScalarArgType scalar) override;
         bool set_kernel_arg(std::size_t index, std::size_t slm_size) override;
 
+        const void* get_binary() const override;
+        const std::size_t get_binary_size() const override;
+
         bool execute(ID3D12GraphicsCommandList4* cmd_list, const std::array<std::size_t, 3>& gws, const std::array<std::size_t, 3>& lws);
 
     private:
@@ -78,6 +81,7 @@ namespace custom_metacommand
         std::unordered_map<std::size_t, ScalarArgType> scalars_;
         std::unordered_map<std::size_t, std::size_t> locals_;
         std::string name_;
+        std::vector<std::uint8_t> cached_kernel_;
     };
 
     class UmdD3d12Event : public IUMDEvent
@@ -90,6 +94,11 @@ namespace custom_metacommand
     {
     public:
         UmdD3d12Device(ID3D12Device* device, INTCExtensionInfo extension_info);
+
+        version_t get_version() const override
+        {
+            return { 0u, 0u, 0u };
+        }
 
         IUMDPipelineStateObject::Ptr
             create_pipeline_state_object(const char* kernel_name,

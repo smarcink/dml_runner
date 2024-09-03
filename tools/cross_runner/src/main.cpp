@@ -229,7 +229,7 @@ int main()
         }
         else if (opts.node_type == NodeType::eConvUmdD3d12)
         {
-            node = std::make_unique<ConvolutionUmdD3d12Dispatcher>(std::move(opts.conv_opts), std::move(opts.conv_umdd3d12_params),
+            node = std::make_unique<ConvolutionUmdD3d12Dispatcher>(opts.conv_opts, opts.conv_umdd3d12_params,
                 intel_extension_d3d12, d3d12_device.Get(), dml_device.Get(), dml_command_recorder.Get(), command_list.Get());
         }
         else if (opts.node_type == NodeType::eSoftmaxDml)

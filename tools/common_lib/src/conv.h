@@ -35,6 +35,7 @@ struct opts_t
     bool force_winograd = false;
     bool dump_weights = false;
     bool dump_scratchpad = false;
+    bool cache_blob = false;
 
     std::size_t execution_iterations = 1ul; // set it to bigger value to run more iterations
 };
@@ -371,7 +372,7 @@ public:
         }
     };
 
-    ConvolutionBaseDispatcher(create_params_t&& params, ID3D12Device* d3d12_device, IDMLDevice* dml_device, IDMLCommandRecorder* dml_cmd_recorder, ID3D12GraphicsCommandList* cmd_list)
+    ConvolutionBaseDispatcher(const create_params_t& params, ID3D12Device* d3d12_device, IDMLDevice* dml_device, IDMLCommandRecorder* dml_cmd_recorder, ID3D12GraphicsCommandList* cmd_list)
         : params_(std::move(params))
         , d3d12_device_(d3d12_device)
         , dml_cmd_recorder_(dml_cmd_recorder)
@@ -544,6 +545,11 @@ public:
     }
 
 protected:
+    virtual bool use_persitent_cache_for_dnnl_reference() const
+    {
+        return false;
+    }
+
     inline TensorShape get_output_shape() const
     {
         TensorShape ret;
@@ -643,6 +649,7 @@ protected:
         opts.dump_scratchpad = dump_weights();
         opts.use_fp32_accu = params_.dt == DataType::eFp16 && !params_.allow_fp16_computations;
         opts.groups = params_.groups;
+        opts.cache_blob = use_persitent_cache_for_dnnl_reference();
         if (params_.transposed)
         {
             return dnnl_conv_op::deconvolution(bindings, opts);
@@ -765,26 +772,42 @@ public:
     {
         std::uint32_t verbose_mode = 0;  // 0: disabled; 1: execution; 2: creation and execution
         bool verbose_dump_to_file = false;
+        bool cache_blob = false;
 
         inline static void add_cli_options(CLI::App* opts, conv_umdd3d12_params_t& params)
         {
             opts->add_option("--verbose_mode", params.verbose_mode)->default_val(0);
             opts->add_flag("--verbose_file", params.verbose_dump_to_file)->default_val(false);
+            opts->add_flag("--cache_blob", params.cache_blob, "Use to test persitent cache blob.")->default_val(false);
         }
     };
 
 public:
-    ConvolutionUmdD3d12Dispatcher(create_params_t&& params, conv_umdd3d12_params_t&& umdd3d12_params, IntelExtension& intc_ext, ID3D12Device* d3d12_device, IDMLDevice* dml_device, IDMLCommandRecorder* dml_cmd_recorder, ID3D12GraphicsCommandList* cmd_list)
+    ConvolutionUmdD3d12Dispatcher(const create_params_t& params, const conv_umdd3d12_params_t& umdd3d12_params, IntelExtension& intc_ext, ID3D12Device* d3d12_device, IDMLDevice* dml_device, IDMLCommandRecorder* dml_cmd_recorder, ID3D12GraphicsCommandList* cmd_list)
         : ConvolutionBaseDispatcher(std::move(params), d3d12_device, dml_device, dml_cmd_recorder, cmd_list)
         , device_(d3d12_device, intc_ext.get_info())
         , umdd3d12_params_(std::move(umdd3d12_params))
-        , dnnl_engine_(dnnl::iumd_interop::make_engine(&device_))
     {      
+
+        const auto t0 = std::chrono::high_resolution_clock::now();
+        dnnl_engine_ = dnnl::iumd_interop::make_engine(&device_);
+        const auto t1 = std::chrono::high_resolution_clock::now();
+        const auto diff = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0);
+        std::cout << "Engine create time: " << diff << std::endl;
+
         dnnl::set_verbose(umdd3d12_params_.verbose_mode);
 
         if (umdd3d12_params_.verbose_dump_to_file)
         {
-            dnnl::iumd_interop::attach_verbose_attach_printf_callback(dnnl_utils::dump_onednn_logs_to_file);
+            try
+            {
+                dnnl::iumd_interop::attach_verbose_attach_printf_callback(dnnl_utils::dump_onednn_logs_to_file);
+            }
+            catch (...)
+            {
+                // do nothing, callback was already attached
+            }
+
         }
 
         if (params_.transposed)
@@ -1070,6 +1093,7 @@ private:
         }();
 
         // this doesnt respect cmd line option: "managed_weights" ToDo: add non managed support
+        const auto t00 = std::chrono::high_resolution_clock::now();
         const auto conv_desc = T::primitive_desc(
             dnnl_engine_,
             dnnl::prop_kind::forward_inference,
@@ -1084,6 +1108,9 @@ private:
             pad,
             attr
         );
+        const auto t11 = std::chrono::high_resolution_clock::now();
+        const auto diff1 = std::chrono::duration_cast<std::chrono::milliseconds>(t11 - t00);
+        std::cout << "Primitive-desc create time: " << diff1 << std::endl;
         std::cout << "dnnl-umd kernel impl: " << conv_desc.impl_info_str() << std::endl;
 
         filter_memory_desc_ = conv_desc.query_md(dnnl::query::weights_md);
@@ -1125,9 +1152,49 @@ private:
         }
 
         // create convolution primitive
-        convolution_ = T(conv_desc);
-        auto c2 = T(conv_desc);
-        auto c3 = T(conv_desc);
+        std::ifstream in_key_file("onednn_persistent_cache.key", std::ofstream::in | std::ifstream::binary);
+        std::ifstream in_value_file("onednn_persistent_cache.value", std::ofstream::in | std::ifstream::binary);
+        std::vector<std::uint8_t> buffer_key;
+        std::vector<std::uint8_t> buffer_value;
+        const auto conv_blob_key = conv_desc.get_cache_blob_id();
+        if (umdd3d12_params_.cache_blob && in_key_file.is_open())
+        {
+            buffer_key = std::vector<std::uint8_t>(std::istreambuf_iterator<char>(in_key_file), {});
+        }  
+        if (buffer_key == conv_blob_key)
+        {
+            std::cout << "Found persistent cache blob files. Using them to create convolution primitive!" << std::endl;
+            assert(in_value_file.is_open());  // Proper file  with key value exists, but file with cache blob (value) does not exist. Delete file with key and rerun application.
+            buffer_value = std::vector<std::uint8_t>(std::istreambuf_iterator<char>(in_value_file), {});       
+        }
+        const auto t0 = std::chrono::high_resolution_clock::now();
+        if (buffer_value.empty())
+        {
+            convolution_ = T(conv_desc);
+        }
+        else
+        {
+            convolution_ = T(conv_desc, buffer_value);
+        }
+        const auto t1 = std::chrono::high_resolution_clock::now();
+        const auto diff = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0);
+        std::cout << "Primitive create time: " << diff << std::endl;
+
+        if (umdd3d12_params_.cache_blob && buffer_value.empty())
+        {
+            std::cout << "Storing persistent cache blob files for." << std::endl;
+            auto store_binary_data_to_file = [](const auto& file_name, const auto& data)
+                {
+                    std::ofstream out_file(file_name, std::ofstream::out | std::ofstream::binary);
+                    std::copy(data.begin(), data.end(), std::ostream_iterator<std::uint8_t>(out_file));
+                    out_file.close();
+                };
+            const auto cache_blob_id = conv_desc.get_cache_blob_id();
+            store_binary_data_to_file("onednn_persistent_cache.key", cache_blob_id);
+
+            const auto cache_blob = std::get<T>(convolution_).get_cache_blob();
+            store_binary_data_to_file("onednn_persistent_cache.value", cache_blob);
+        }
 
         // compile weights reorder kernel and create reorder primitive
         // ToDo: check if reorder needs scratchpad memory??
@@ -1190,6 +1257,12 @@ private:
 
         const auto ret = ConvolutionBaseDispatcher::validate_conformance(command_queue, command_allocator, command_list, print_mismatche, reference_dispatch_iterations);
         return ret;
+    }
+
+protected:
+    bool use_persitent_cache_for_dnnl_reference() const override
+    {
+        return umdd3d12_params_.cache_blob;
     }
 
 private:
