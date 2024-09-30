@@ -151,6 +151,7 @@ inline dml::TensorPolicy to_dml_tensor_policy(DataLayout layout)
     switch (layout)
     {
     case DataLayout::eCHW:
+    case DataLayout::eNCDHW:
     case DataLayout::eNCHW: return dml::TensorPolicy::Default();
     case DataLayout::eNHWC: return dml::TensorPolicy::InterleavedChannel();
     case DataLayout::eW: return dml::TensorPolicy(compute_w_tensor_policy);
