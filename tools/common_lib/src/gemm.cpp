@@ -124,7 +124,7 @@ std::vector<std::byte> dnnl_gemm_op::gemm(const bindings_t& bindings, opts_t opt
     }
     if (input_c_memory)
     {
-        args.insert({DNNL_ARG_ATTR_MULTIPLE_POST_OP(post_ops_idx) | DNNL_ARG_SRC_1, input_c_memory});
+        args.insert({static_cast<int>(DNNL_ARG_ATTR_MULTIPLE_POST_OP(post_ops_idx) | DNNL_ARG_SRC_1), input_c_memory});
         post_ops_idx++;
     }
     if (has_beta_scaling_factors())

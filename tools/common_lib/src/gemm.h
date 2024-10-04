@@ -834,13 +834,13 @@ public:
         params_.shape_zeropoint = TensorShape(params_.shape_b.n, params_.shape_b.c, quant_param_h, quant_param_w);
 
         input_data_a_.resize(get_tensor_elements_count(params_.shape_a, params_.layout) * (std::uint8_t)get_data_type_bytes_width(params_.dt));
-        input_data_b_.resize(get_tensor_elements_count(params_.shape_b, params_.layout) * (float)get_data_type_bytes_width(params_.quant_dt));
+        input_data_b_.resize(static_cast<size_t>(get_tensor_elements_count(params_.shape_b, params_.layout) * get_data_type_bytes_width(params_.quant_dt)));
         if (params_.shape_c.get_dims_count() > 0)
         {
             input_data_c_.resize(get_tensor_elements_count(params_.shape_c, params_.layout) * (std::uint8_t)get_data_type_bytes_width(params_.dt));
         }
         input_data_scale_.resize(get_tensor_elements_count(params_.shape_scale, params_.layout) * (std::uint8_t)get_data_type_bytes_width(params_.dt));
-        input_data_zeropoint_.resize(get_tensor_elements_count(params_.shape_zeropoint, params_.layout) * (float)get_data_type_bytes_width(params_.quant_dt));
+        input_data_zeropoint_.resize(static_cast<size_t>(get_tensor_elements_count(params_.shape_zeropoint, params_.layout) * get_data_type_bytes_width(params_.quant_dt)));
 
         std::vector<std::byte> input_data_dequantized_b_;
         input_data_dequantized_b_.resize(get_tensor_elements_count(params_.shape_b, params_.layout) * (std::uint8_t)get_data_type_bytes_width(params_.dt));
@@ -2097,7 +2097,7 @@ public:
 
         if (input_c_memory)
         {
-            args.insert({ DNNL_ARG_ATTR_MULTIPLE_POST_OP(post_ops_idx) | DNNL_ARG_SRC_1, input_c_memory });
+            args.insert({ static_cast<int>(DNNL_ARG_ATTR_MULTIPLE_POST_OP(post_ops_idx) | DNNL_ARG_SRC_1), input_c_memory });
             post_ops_idx++;
         }
 
