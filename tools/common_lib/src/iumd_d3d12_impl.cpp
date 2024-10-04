@@ -3,6 +3,7 @@
 #include <cassert>
 #include <chrono>
 #include <iostream>
+#include <algorithm>
 
 //////////////////////////////////////////////////////////////////////////
 // Custom Metacommand
@@ -81,7 +82,9 @@ iumd::custom_metacommand::UmdD3d12Device::UmdD3d12Device(ID3D12Device* device, I
         sku_.max_simd_size = options1.WaveLaneCountMax;
     }
     const auto wstr_name = std::wstring(adapter_desc.Description);
-    sku_.name = std::string(wstr_name.begin(), wstr_name.end());  // not ideal, enough for now
+    //sku_.name = std::string(wstr_name.begin(), wstr_name.end());  // not ideal, enough for now
+    sku_.name = std::string(wstr_name.length(), 0);  // not ideal, enough for now
+    std::transform(wstr_name.begin(), wstr_name.end(), sku_.name.begin(), [](wchar_t ch) {return (char)ch; }); // good enough for latin characters...
     sku_.eu_count = extension_info.IntelDeviceInfo.EUCount;
     sku_.igfx = [](const auto name)
     {

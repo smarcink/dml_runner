@@ -63,7 +63,7 @@ namespace
         {
             dims[i] = sizes[i];
         }
-        dims.back() = align(dims.back(), 320);
+        dims.back() = static_cast<uint32_t>(align(dims.back(), 320));
 
         uint32_t stride = 1;
         for (std::uint32_t i = dimension_count; i > 0; i--)
@@ -94,7 +94,7 @@ namespace
         {
             dims[i] = sizes[i];
         }
-        dims[H] = align(dims[H], 40);
+        dims[H] = static_cast<uint32_t>(align(dims[H], 40));
 
         // N dimension strides
         if (dimensionCount >= 1)

@@ -834,13 +834,13 @@ public:
         params_.shape_zeropoint = TensorShape(params_.shape_b.n, params_.shape_b.c, quant_param_h, quant_param_w);
 
         input_data_a_.resize(get_tensor_elements_count(params_.shape_a, params_.layout) * (std::uint8_t)get_data_type_bytes_width(params_.dt));
-        input_data_b_.resize(get_tensor_elements_count(params_.shape_b, params_.layout) * (float)get_data_type_bytes_width(params_.quant_dt));
+        input_data_b_.resize(static_cast<size_t>(get_tensor_elements_count(params_.shape_b, params_.layout) * get_data_type_bytes_width(params_.quant_dt)));
         if (params_.shape_c.get_dims_count() > 0)
         {
             input_data_c_.resize(get_tensor_elements_count(params_.shape_c, params_.layout) * (std::uint8_t)get_data_type_bytes_width(params_.dt));
         }
         input_data_scale_.resize(get_tensor_elements_count(params_.shape_scale, params_.layout) * (std::uint8_t)get_data_type_bytes_width(params_.dt));
-        input_data_zeropoint_.resize(get_tensor_elements_count(params_.shape_zeropoint, params_.layout) * (float)get_data_type_bytes_width(params_.quant_dt));
+        input_data_zeropoint_.resize(static_cast<size_t>(get_tensor_elements_count(params_.shape_zeropoint, params_.layout) * get_data_type_bytes_width(params_.quant_dt)));
 
         std::vector<std::byte> input_data_dequantized_b_;
         input_data_dequantized_b_.resize(get_tensor_elements_count(params_.shape_b, params_.layout) * (std::uint8_t)get_data_type_bytes_width(params_.dt));
@@ -1303,8 +1303,8 @@ public:
     };
 public:
 
-    GemmBaseDispatcher(create_params_t&& params, ID3D12Device* d3d12_device, IDMLDevice* dml_device, IDMLCommandRecorder* dml_cmd_recorder, ID3D12GraphicsCommandList* cmd_list)
-        : params_(std::move(params))
+    GemmBaseDispatcher(const create_params_t& params, ID3D12Device* d3d12_device, IDMLDevice* dml_device, IDMLCommandRecorder* dml_cmd_recorder, ID3D12GraphicsCommandList* cmd_list)
+        : params_(params)
         , dml_cmd_recorder_(dml_cmd_recorder)
         , dml_device_(dml_device)
         , d3d12_device_(d3d12_device)
@@ -1723,16 +1723,18 @@ public:
     {
         std::uint32_t verbose_mode = 0;  // 0: disabled; 1: execution; 2: creation and execution
         bool verbose_dump_to_file = false;
+        bool cache_blob = false;
 
         inline static void add_cli_options(CLI::App* opts, gemm_umdd3d12_params_t& params)
         {
             opts->add_option("--verbose_mode", params.verbose_mode)->default_val(0);
             opts->add_flag("--verbose_file", params.verbose_dump_to_file)->default_val(false);
+            opts->add_flag("--cache_blob", params.cache_blob, "Use to test persistent cache blob.")->default_val(false);
         }
     };
 public:
-    GemmUmdD3d12Dispatcher(create_params_t&& params, gemm_umdd3d12_params_t&& umdd3d12_param, IntelExtension& intc_ext, ID3D12Device* d3d12_device, IDMLDevice* dml_device, IDMLCommandRecorder* dml_cmd_recorder, ID3D12GraphicsCommandList* cmd_list)
-        : GemmBaseDispatcher(std::move(params), d3d12_device, dml_device, dml_cmd_recorder, cmd_list)
+    GemmUmdD3d12Dispatcher(const create_params_t& params, const gemm_umdd3d12_params_t& umdd3d12_param, IntelExtension& intc_ext, ID3D12Device* d3d12_device, IDMLDevice* dml_device, IDMLCommandRecorder* dml_cmd_recorder, ID3D12GraphicsCommandList* cmd_list)
+        : GemmBaseDispatcher(params, d3d12_device, dml_device, dml_cmd_recorder, cmd_list)
         , device_(d3d12_device, intc_ext.get_info())
         , dnnl_engine_(dnnl::iumd_interop::make_engine(&device_))
     {
@@ -1861,7 +1863,51 @@ public:
         }
 
         // create convolution primitive
-        gemm_ = dnnl::matmul(matmul_desc);
+
+
+		std::ifstream in_key_file("onednn_persistent_cache.key", std::ofstream::in | std::ifstream::binary);
+		std::ifstream in_value_file("onednn_persistent_cache.value", std::ofstream::in | std::ifstream::binary);
+		std::vector<std::uint8_t> buffer_key;
+		std::vector<std::uint8_t> buffer_value;
+		const auto conv_blob_key = matmul_desc.get_cache_blob_id();
+		if (umdd3d12_param.cache_blob && in_key_file.is_open())
+		{
+			buffer_key = std::vector<std::uint8_t>(std::istreambuf_iterator<char>(in_key_file), {});
+		}
+		if (buffer_key == conv_blob_key)
+		{
+			std::cout << "Found persistent cache blob files. Using them to create gemm primitive!" << std::endl;
+			assert(in_value_file.is_open());  // Proper file  with key value exists, but file with cache blob (value) does not exist. Delete file with key and rerun application.
+			buffer_value = std::vector<std::uint8_t>(std::istreambuf_iterator<char>(in_value_file), {});
+		}
+		const auto t0 = std::chrono::high_resolution_clock::now();
+		if (buffer_value.empty())
+		{
+            gemm_ = dnnl::matmul(matmul_desc);
+		}
+		else
+		{
+            gemm_ = dnnl::matmul(matmul_desc, buffer_value);
+		}
+		const auto t1 = std::chrono::high_resolution_clock::now();
+		const auto diff = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0);
+		std::cout << "Primitive create time: " << diff << std::endl;
+
+		if (umdd3d12_param.cache_blob && buffer_value.empty())
+		{
+			std::cout << "Storing persistent cache blob files for." << std::endl;
+			auto store_binary_data_to_file = [](const auto& file_name, const auto& data)
+				{
+					std::ofstream out_file(file_name, std::ofstream::out | std::ofstream::binary);
+					std::copy(data.begin(), data.end(), std::ostream_iterator<std::uint8_t>(out_file));
+					out_file.close();
+				};
+			const auto cache_blob_id = matmul_desc.get_cache_blob_id();
+			store_binary_data_to_file("onednn_persistent_cache.key", cache_blob_id);
+
+			const auto cache_blob = gemm_.get_cache_blob();
+			store_binary_data_to_file("onednn_persistent_cache.value", cache_blob);
+		}
 
         if (params_.b_managed)
         {
@@ -2051,7 +2097,7 @@ public:
 
         if (input_c_memory)
         {
-            args.insert({ DNNL_ARG_ATTR_MULTIPLE_POST_OP(post_ops_idx) | DNNL_ARG_SRC_1, input_c_memory });
+            args.insert({ static_cast<int>(DNNL_ARG_ATTR_MULTIPLE_POST_OP(post_ops_idx) | DNNL_ARG_SRC_1), input_c_memory });
             post_ops_idx++;
         }
 

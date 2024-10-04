@@ -373,7 +373,7 @@ public:
     };
 
     ConvolutionBaseDispatcher(const create_params_t& params, ID3D12Device* d3d12_device, IDMLDevice* dml_device, IDMLCommandRecorder* dml_cmd_recorder, ID3D12GraphicsCommandList* cmd_list)
-        : params_(std::move(params))
+        : params_(params)
         , d3d12_device_(d3d12_device)
         , dml_cmd_recorder_(dml_cmd_recorder)
         , dml_device_(dml_device)
@@ -778,7 +778,7 @@ public:
         {
             opts->add_option("--verbose_mode", params.verbose_mode)->default_val(0);
             opts->add_flag("--verbose_file", params.verbose_dump_to_file)->default_val(false);
-            opts->add_flag("--cache_blob", params.cache_blob, "Use to test persitent cache blob.")->default_val(false);
+            opts->add_flag("--cache_blob", params.cache_blob, "Use to test persistent cache blob.")->default_val(false);
         }
     };
 
