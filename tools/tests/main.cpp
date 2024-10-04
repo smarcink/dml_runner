@@ -40,7 +40,7 @@ int main( int argc, char* argv[ ] )
     tests_app.add_flag("--run_dml", g_test_config.run_dml, "Run DirectML dispatcher instead of POC umd d3d12 dispatcher class.")->default_val(false);
     tests_app.add_option("--iters", g_test_config.iterations, "How many iterations to run given dispatcher. This record to single command list and executes after cmd list is recorded.")->default_val(1);
     try {
-        tests_app.parse();
+        tests_app.parse(argc, argv);
     }
     catch (const CLI::ParseError& e) {
         return tests_app.exit(e);

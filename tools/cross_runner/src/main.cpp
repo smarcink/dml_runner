@@ -78,7 +78,7 @@ struct CliOptions
     gpu_op::MemoryBandwidthDispatcher::create_params_t memory_bw_params{};
 };
 
-int main()
+int main(int argc, const char*argv[])
 {
     constexpr const std::uint32_t MAX_ITERATIONS = 10'000;
 
@@ -144,7 +144,7 @@ int main()
     gpu_op::MemoryBandwidthDispatcher::MemoryBandwidthDispatcher::create_params_t::add_cli_options(mem_bw_option_group, opts.memory_bw_params);
 
     try {
-        dml_runner_app.parse();
+        dml_runner_app.parse(argc, argv);
     }
     catch (const CLI::ParseError& e) {
         return dml_runner_app.exit(e);
@@ -160,7 +160,7 @@ int main()
     if ((opts.node_type == NodeType::eConvCm || opts.node_type == NodeType::eConvDml)
         && !conv_option_groups->parsed())
     {
-        std::cout << "Convoltion options not set.\n";
+        std::cout << "Convolution options not set.\n";
         return -1;
     }
     if ((opts.node_type == NodeType::eGemmDml || opts.node_type == NodeType::eGemmCm) && !gemm_option_groups->parsed())
@@ -352,7 +352,7 @@ int main()
     }
     catch (...)
     {
-        std::cerr << std::format("Unknwon exception caught.");
+        std::cerr << std::format("Unknown exception caught.");
         return -1;
     }
     return 0;
