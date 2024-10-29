@@ -57,6 +57,7 @@ struct CliOptions
     bool no_conformance_check = false;
     bool print_opts = false;
     bool use_rcs = false;
+    bool use_stateless = false;
 
     // generic type of layers params
     GemmBaseDispatcher::create_params_t gemm_opts{};
@@ -112,6 +113,7 @@ int main(int argc, const char*argv[])
     dml_runner_app.add_flag("--no_conform", opts.no_conformance_check);
     dml_runner_app.add_flag("--print_opts", opts.print_opts);
     dml_runner_app.add_flag("--use_rcs", opts.use_rcs, "Force using RCS (DIRECT cmd list).")->default_val(false);
+    dml_runner_app.add_flag("--use_stateless", opts.use_stateless);
 
     // generic type of layers options
     auto gemm_option_groups = dml_runner_app.add_subcommand("gemm_opts", "Options for genn layer.");
@@ -259,7 +261,11 @@ int main(int argc, const char*argv[])
         }
         else if (opts.node_type == NodeType::eMemoryBandwidth)
         {
-            node = std::make_unique<gpu_op::MemoryBandwidthDispatcher>(std::move(opts.memory_bw_params), d3d12_device.Get(), command_list.Get(), intel_extension_d3d12);
+            node = std::make_unique<gpu_op::MemoryBandwidthDispatcher>(std::move(opts.memory_bw_params), 
+                                                                        d3d12_device.Get(), 
+                                                                        command_list.Get(), 
+                                                                        intel_extension_d3d12,
+                                                                        opts.use_stateless);
         }
         else if (opts.node_type == NodeType::eQuantGemmDml)
         {
@@ -274,20 +280,26 @@ int main(int argc, const char*argv[])
         close_execute_reset_wait(d3d12_device.Get(), command_queue.Get(), command_allocator.Get(), command_list.Get());
         const auto descriptors_count = node->get_total_descriptor_count();
         
-        // bind descriptor heap
-        auto descriptor_heap = create_descriptor_heap(d3d12_device.Get(), descriptors_count);
-        ID3D12DescriptorHeap* d3d12_descriptor_heaps[] = { descriptor_heap.Get() };
-        command_list->SetDescriptorHeaps(1, d3d12_descriptor_heaps);
+        // if in staless mode, there is no need to have a descriptor heap, 
+        // otherwise we should create one to bind resources.
 
-        // initalize
-        node->initialize(command_list.Get(), descriptor_heap->GetCPUDescriptorHandleForHeapStart(), descriptor_heap->GetGPUDescriptorHandleForHeapStart());
-        close_execute_reset_wait(d3d12_device.Get(), command_queue.Get(), command_allocator.Get(), command_list.Get());
+        ComPtr<ID3D12DescriptorHeap> descriptor_heap;
+        if(!opts.use_stateless) 
+        {
+            std::cout << "Use Stateless: " << std::boolalpha << opts.use_stateless << std::endl;
+            // bind descriptor heap
+            descriptor_heap = create_descriptor_heap(d3d12_device.Get(), descriptors_count);
+            ID3D12DescriptorHeap* d3d12_descriptor_heaps[] = { descriptor_heap.Get() };
+            command_list->SetDescriptorHeaps(1, d3d12_descriptor_heaps);
 
-        // 
-        // Bind and execute the operator on the GPU.
-        // 
-        // 
-        command_list->SetDescriptorHeaps(1, d3d12_descriptor_heaps);
+            // initalize
+            node->initialize(command_list.Get(), descriptor_heap->GetCPUDescriptorHandleForHeapStart(), descriptor_heap->GetGPUDescriptorHandleForHeapStart());
+            close_execute_reset_wait(d3d12_device.Get(), command_queue.Get(), command_allocator.Get(), command_list.Get());
+
+
+            // Bind and execute the operator on the GPU.
+            command_list->SetDescriptorHeaps(1, d3d12_descriptor_heaps);
+        }
 
         for (std::uint32_t i = 0; i < opts.dispatch_iterations; ++i)
         {
