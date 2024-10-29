@@ -212,7 +212,8 @@ int main(int argc, const char*argv[])
         else if (opts.node_type == NodeType::eGemmCm)
         {
             node = std::make_unique<GemmCmDispatcher>(std::move(opts.gemm_opts), std::move(opts.gemm_cm_params),
-                intel_extension_d3d12, d3d12_device.Get(), dml_device.Get(), dml_command_recorder.Get(), command_list.Get());
+                intel_extension_d3d12, d3d12_device.Get(), dml_device.Get(), dml_command_recorder.Get(), command_list.Get(),
+                opts.use_stateless);
         }
         else if (opts.node_type == NodeType::eGemmUmdD3d12)
         {

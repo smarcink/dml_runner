@@ -1308,7 +1308,6 @@ public:
         , dml_cmd_recorder_(dml_cmd_recorder)
         , dml_device_(dml_device)
         , d3d12_device_(d3d12_device)
-
     {
         input_data_a_.resize(get_tensor_elements_count(params_.shape_a, params_.layout) * (std::uint8_t)get_data_type_bytes_width(params_.dt));
         input_data_b_.resize(get_tensor_elements_count(params_.shape_b, params_.layout) * (std::uint8_t)get_data_type_bytes_width(params_.dt));
@@ -2245,10 +2244,11 @@ public:
     };
 
 public:
-    GemmCmDispatcher(create_params_t&& params, cm_params_t&& cm_params, IntelExtension& intc_ext, ID3D12Device* d3d12_device, IDMLDevice* dml_device, IDMLCommandRecorder* dml_cmd_recorder, ID3D12GraphicsCommandList* cmd_list)
+    GemmCmDispatcher(create_params_t&& params, cm_params_t&& cm_params, IntelExtension& intc_ext, ID3D12Device* d3d12_device, IDMLDevice* dml_device, IDMLCommandRecorder* dml_cmd_recorder, ID3D12GraphicsCommandList* cmd_list, bool use_stateless)
         : GemmBaseDispatcher(std::move(params), d3d12_device, dml_device, dml_cmd_recorder, cmd_list)
         , intc_ext_(intc_ext)
         , cm_params_(std::move(cm_params))
+        , use_stateless_(use_stateless)
     {
         //validate
         assert(params_.dt == DataType::eFp16);
@@ -2336,14 +2336,63 @@ public:
         assert(cm_params_.tile_n > 0);
         assert(cm_params_.slice_k > 0);
 
+        // root signature
         {
-            std::vector< DescType> desc_list =
+            if(use_stateless_)
             {
-                DescType::eSrv, // input a
-                DescType::eSrv, // input b
-                DescType::eUav // output
-            };
-            root_signature_ = create_root_signature(d3d12_device, desc_list);
+                // Use UAV root parameters to pass GPU virtual addresses
+                D3D12_ROOT_PARAMETER rootParameters[3];
+                rootParameters[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_UAV;
+                rootParameters[0].Descriptor.ShaderRegister = 0;
+                rootParameters[0].Descriptor.RegisterSpace = 0;
+                rootParameters[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+
+                rootParameters[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_UAV;
+                rootParameters[1].Descriptor.ShaderRegister = 1;
+                rootParameters[1].Descriptor.RegisterSpace = 0;
+                rootParameters[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+
+                rootParameters[2].ParameterType = D3D12_ROOT_PARAMETER_TYPE_UAV;
+                rootParameters[2].Descriptor.ShaderRegister = 2;
+                rootParameters[2].Descriptor.RegisterSpace = 0;
+                rootParameters[2].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+
+                D3D12_ROOT_SIGNATURE_DESC rootSignatureDesc = {};
+                rootSignatureDesc.NumParameters = _countof(rootParameters);
+                rootSignatureDesc.pParameters = rootParameters;
+                rootSignatureDesc.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
+
+                ComPtr<ID3DBlob> signature;
+                ComPtr<ID3DBlob> error;
+                HRESULT hr = D3D12SerializeRootSignature(&rootSignatureDesc, D3D_ROOT_SIGNATURE_VERSION_1, &signature, &error);
+                if (FAILED(hr))
+                {
+                    if (error)
+                    {
+                        OutputDebugStringA((char*)error->GetBufferPointer());
+                    }
+                    throw std::runtime_error("Failed to serialize root signature");
+                }
+
+                hr = d3d12_device_->CreateRootSignature(0, 
+                                                        signature->GetBufferPointer(), 
+                                                        signature->GetBufferSize(), 
+                                                        IID_PPV_ARGS(&root_signature_));
+                if (FAILED(hr))
+                {
+                    throw std::runtime_error("Failed to create root signature");
+                }
+            }
+            else
+            {
+                std::vector< DescType> desc_list =
+                {
+                    DescType::eSrv, // input a
+                    DescType::eSrv, // input b
+                    DescType::eUav // output
+                };
+                root_signature_ = create_root_signature(d3d12_device, desc_list);
+            }
         }
 
 
@@ -2411,19 +2460,31 @@ public:
         const auto lws_x = " -DLWS_SIZE_X=" + std::to_string(cm_params_.lws[0]);
         const auto lws_y = " -DLWS_SIZE_Y=" + std::to_string(cm_params_.lws[1]);
         const auto lws_z = " -DLWS_SIZE_Z=" + std::to_string(cm_params_.lws[2]);
-        const auto build_options_final = " -I \" \" " + build_options + dump_asm_str + large_grf_str + print_reg_str + lws_x + lws_y + lws_z;
+
+        auto build_options_final = " -I \" \" " + build_options + dump_asm_str + large_grf_str + print_reg_str + lws_x + lws_y + lws_z;
+        if(use_stateless_)
+        {
+            build_options_final += " -DCM_STATELESS=1";
+        }
 
         if (cm_params_.dump_asm)
         {
             std::cout << build_options_final << std::endl;
         }
 
-        auto kernel_source_content = [](GemmType type)
+        auto kernel_source_content = [&](GemmType type)
         {
             std::string path = "";
             switch (type)
             {
-            case GemmType::GemmType_AB: path = "gemm_nchw_fp16.cpp"; break;
+            case GemmType::GemmType_AB: 
+                path = "gemm_nchw_fp16.cpp"; 
+                if(use_stateless_)
+                {
+                    std::cout << "Using stateless mode" << std::endl;
+                    path = "gemm_nchw_fp16_stateless.cpp";
+                }
+                break;
             case GemmType::GemmType_QK_QKV: path = "mha_qk_qkv_gemm_fp16.cpp"; break;
             case GemmType::GemmType_SV_S_QKV: path = "mha_sv_s_qkv_gemm_fp16.cpp";  break;
             case GemmType::GemmType_SV_S_KV: path = "mha_sv_s_kv_gemm_fp16.cpp";  break;
@@ -2461,17 +2522,19 @@ public:
 
     void initialize(ID3D12GraphicsCommandList* cmd_list, D3D12_CPU_DESCRIPTOR_HANDLE cpu_handle, D3D12_GPU_DESCRIPTOR_HANDLE gpu_handle)
     {
-
-        std::vector<std::pair<DescType, ID3D12Resource*>> resources_list;
-        resources_list.reserve(get_total_descriptor_count());
-        resources_list.push_back({ DescType::eSrv, input_buffer_a_.Get() });
-        if (input_buffer_b_)
+        if(!use_stateless_)
         {
-            resources_list.push_back({ DescType::eSrv, input_buffer_b_.Get() });
-        }
-        resources_list.push_back({ DescType::eUav, output_buffer_.Get() });
+            std::vector<std::pair<DescType, ID3D12Resource*>> resources_list;
+            resources_list.reserve(get_total_descriptor_count());
+            resources_list.push_back({ DescType::eSrv, input_buffer_a_.Get() });
+            if (input_buffer_b_)
+            {
+                resources_list.push_back({ DescType::eSrv, input_buffer_b_.Get() });
+            }
+            resources_list.push_back({ DescType::eUav, output_buffer_.Get() });
 
-        gpu_handles_ = create_resource_views_and_handles(d3d12_device_, resources_list, cpu_handle, gpu_handle);
+            gpu_handles_ = create_resource_views_and_handles(d3d12_device_, resources_list, cpu_handle, gpu_handle);
+        }
     }
 
     void execute(ID3D12GraphicsCommandList* cmd_list)
@@ -2479,11 +2542,22 @@ public:
         cmd_list->SetComputeRootSignature(root_signature_.Get());
         cmd_list->SetPipelineState(pso_.Get());
 
-        uint32_t root_index = 1; // start with 1, beacuse Cross compiler CM driver path needs that
-        for (uint32_t i = 0; i < gpu_handles_.size(); i++)
+        if(use_stateless_) // if in stateless mode, all buffers are set to UAV accoring to its GPU address
+        {  
+            // the root parameter index should start from 1, in order to skip first constant buffer.
+            cmd_list->SetComputeRootUnorderedAccessView(1, input_buffer_a_->GetGPUVirtualAddress());
+            cmd_list->SetComputeRootUnorderedAccessView(2, input_buffer_b_->GetGPUVirtualAddress());
+            cmd_list->SetComputeRootUnorderedAccessView(3, output_buffer_->GetGPUVirtualAddress());
+        } 
+        else 
         {
-            const auto gpu_heap_handle = gpu_handles_[i];
-            cmd_list->SetComputeRootDescriptorTable(root_index++, gpu_heap_handle);
+            uint32_t root_index = 1; // start with 1, beacuse Cross compiler CM driver path needs that
+            for (uint32_t i = 0; i < gpu_handles_.size(); i++)
+            {
+                const auto gpu_heap_handle = gpu_handles_[i];
+                cmd_list->SetComputeRootDescriptorTable(root_index++, gpu_heap_handle);
+            }
+
         }
 
         const auto gws = get_gws();
@@ -2533,6 +2607,7 @@ public:
         }
 
 private:
+    bool use_stateless_;
     cm_params_t cm_params_;
     IntelExtension& intc_ext_;
     std::vector<CD3DX12_GPU_DESCRIPTOR_HANDLE> gpu_handles_;
