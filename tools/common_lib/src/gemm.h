@@ -2340,48 +2340,7 @@ public:
         {
             if(use_stateless_)
             {
-                // Use UAV root parameters to pass GPU virtual addresses
-                D3D12_ROOT_PARAMETER rootParameters[3];
-                rootParameters[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_UAV;
-                rootParameters[0].Descriptor.ShaderRegister = 0;
-                rootParameters[0].Descriptor.RegisterSpace = 0;
-                rootParameters[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
-
-                rootParameters[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_UAV;
-                rootParameters[1].Descriptor.ShaderRegister = 1;
-                rootParameters[1].Descriptor.RegisterSpace = 0;
-                rootParameters[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
-
-                rootParameters[2].ParameterType = D3D12_ROOT_PARAMETER_TYPE_UAV;
-                rootParameters[2].Descriptor.ShaderRegister = 2;
-                rootParameters[2].Descriptor.RegisterSpace = 0;
-                rootParameters[2].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
-
-                D3D12_ROOT_SIGNATURE_DESC rootSignatureDesc = {};
-                rootSignatureDesc.NumParameters = _countof(rootParameters);
-                rootSignatureDesc.pParameters = rootParameters;
-                rootSignatureDesc.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
-
-                ComPtr<ID3DBlob> signature;
-                ComPtr<ID3DBlob> error;
-                HRESULT hr = D3D12SerializeRootSignature(&rootSignatureDesc, D3D_ROOT_SIGNATURE_VERSION_1, &signature, &error);
-                if (FAILED(hr))
-                {
-                    if (error)
-                    {
-                        OutputDebugStringA((char*)error->GetBufferPointer());
-                    }
-                    throw std::runtime_error("Failed to serialize root signature");
-                }
-
-                hr = d3d12_device_->CreateRootSignature(0, 
-                                                        signature->GetBufferPointer(), 
-                                                        signature->GetBufferSize(), 
-                                                        IID_PPV_ARGS(&root_signature_));
-                if (FAILED(hr))
-                {
-                    throw std::runtime_error("Failed to create root signature");
-                }
+                root_signature_ = create_root_signature_without_roottable(d3d12_device, 3);
             }
             else
             {
@@ -2481,7 +2440,6 @@ public:
                 path = "gemm_nchw_fp16.cpp"; 
                 if(use_stateless_)
                 {
-                    std::cout << "Using stateless mode" << std::endl;
                     path = "gemm_nchw_fp16_stateless.cpp";
                 }
                 break;
@@ -2522,19 +2480,17 @@ public:
 
     void initialize(ID3D12GraphicsCommandList* cmd_list, D3D12_CPU_DESCRIPTOR_HANDLE cpu_handle, D3D12_GPU_DESCRIPTOR_HANDLE gpu_handle)
     {
-        if(!use_stateless_)
+        assert(!use_stateless_);
+        std::vector<std::pair<DescType, ID3D12Resource*>> resources_list;
+        resources_list.reserve(get_total_descriptor_count());
+        resources_list.push_back({ DescType::eSrv, input_buffer_a_.Get() });
+        if (input_buffer_b_)
         {
-            std::vector<std::pair<DescType, ID3D12Resource*>> resources_list;
-            resources_list.reserve(get_total_descriptor_count());
-            resources_list.push_back({ DescType::eSrv, input_buffer_a_.Get() });
-            if (input_buffer_b_)
-            {
-                resources_list.push_back({ DescType::eSrv, input_buffer_b_.Get() });
-            }
-            resources_list.push_back({ DescType::eUav, output_buffer_.Get() });
-
-            gpu_handles_ = create_resource_views_and_handles(d3d12_device_, resources_list, cpu_handle, gpu_handle);
+            resources_list.push_back({ DescType::eSrv, input_buffer_b_.Get() });
         }
+        resources_list.push_back({ DescType::eUav, output_buffer_.Get() });
+
+        gpu_handles_ = create_resource_views_and_handles(d3d12_device_, resources_list, cpu_handle, gpu_handle);
     }
 
     void execute(ID3D12GraphicsCommandList* cmd_list)

@@ -212,8 +212,9 @@ int main(int argc, const char*argv[])
         else if (opts.node_type == NodeType::eGemmCm)
         {
             node = std::make_unique<GemmCmDispatcher>(std::move(opts.gemm_opts), std::move(opts.gemm_cm_params),
-                intel_extension_d3d12, d3d12_device.Get(), dml_device.Get(), dml_command_recorder.Get(), command_list.Get(),
-                opts.use_stateless);
+                                                        intel_extension_d3d12, d3d12_device.Get(), 
+                                                        dml_device.Get(), dml_command_recorder.Get(), 
+                                                        command_list.Get(), opts.use_stateless);
         }
         else if (opts.node_type == NodeType::eGemmUmdD3d12)
         {
@@ -280,10 +281,9 @@ int main(int argc, const char*argv[])
 
         close_execute_reset_wait(d3d12_device.Get(), command_queue.Get(), command_allocator.Get(), command_list.Get());
         const auto descriptors_count = node->get_total_descriptor_count();
-        
+
         // if in staless mode, there is no need to have a descriptor heap, 
         // otherwise we should create one to bind resources.
-
         ComPtr<ID3D12DescriptorHeap> descriptor_heap;
         if(!opts.use_stateless) 
         {
@@ -296,7 +296,6 @@ int main(int argc, const char*argv[])
             // initalize
             node->initialize(command_list.Get(), descriptor_heap->GetCPUDescriptorHandleForHeapStart(), descriptor_heap->GetGPUDescriptorHandleForHeapStart());
             close_execute_reset_wait(d3d12_device.Get(), command_queue.Get(), command_allocator.Get(), command_list.Get());
-
 
             // Bind and execute the operator on the GPU.
             command_list->SetDescriptorHeaps(1, d3d12_descriptor_heaps);

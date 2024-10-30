@@ -291,6 +291,47 @@ inline ComPtr<ID3D12RootSignature> create_root_signature(ID3D12Device* d3d12_dev
     return ret;
 }
 
+inline ComPtr<ID3D12RootSignature> create_root_signature_without_roottable(ID3D12Device* d3d12_device, const int param_num)
+{
+    // Use UAV root parameters to pass GPU virtual addresses
+    std::vector<D3D12_ROOT_PARAMETER> rootParameters(param_num);
+    for(int i = 0; i < param_num; i++)
+    {
+        rootParameters[i].ParameterType = D3D12_ROOT_PARAMETER_TYPE_UAV;
+        rootParameters[i].Descriptor.ShaderRegister = i;
+        rootParameters[i].Descriptor.RegisterSpace = 0;
+        rootParameters[i].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+    }
+    D3D12_ROOT_SIGNATURE_DESC rootSignatureDesc = {};
+    rootSignatureDesc.NumParameters = param_num;
+    rootSignatureDesc.pParameters = rootParameters.data();
+    rootSignatureDesc.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
+
+    ComPtr<ID3DBlob> signature;
+    ComPtr<ID3DBlob> error;
+    HRESULT hr = D3D12SerializeRootSignature(&rootSignatureDesc, 
+    D3D_ROOT_SIGNATURE_VERSION_1, &signature, &error);
+    if (FAILED(hr))
+    {
+        if (error)
+        {
+            OutputDebugStringA((char*)error->GetBufferPointer());
+        }
+        throw std::runtime_error("Failed to serialize root signature");
+    }
+
+    ComPtr<ID3D12RootSignature> root_signature_;
+    hr = d3d12_device->CreateRootSignature(0, 
+                                        signature->GetBufferPointer(), 
+                                        signature->GetBufferSize(), 
+                                        IID_PPV_ARGS(&root_signature_));
+    if (FAILED(hr))
+    {
+        throw std::runtime_error("Failed to create root signature");
+    }
+    return root_signature_;
+}
+
 inline std::vector<CD3DX12_GPU_DESCRIPTOR_HANDLE> create_resource_views_and_handles(ID3D12Device* d3d12_device, std::span<const std::pair<DescType, ID3D12Resource*>> resources_list, D3D12_CPU_DESCRIPTOR_HANDLE cpu_handle, D3D12_GPU_DESCRIPTOR_HANDLE gpu_handle)
 {
     const auto desc_heap_incrs_size = d3d12_device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
