@@ -1308,7 +1308,6 @@ public:
         , dml_cmd_recorder_(dml_cmd_recorder)
         , dml_device_(dml_device)
         , d3d12_device_(d3d12_device)
-
     {
         input_data_a_.resize(get_tensor_elements_count(params_.shape_a, params_.layout) * (std::uint8_t)get_data_type_bytes_width(params_.dt));
         input_data_b_.resize(get_tensor_elements_count(params_.shape_b, params_.layout) * (std::uint8_t)get_data_type_bytes_width(params_.dt));
@@ -2216,6 +2215,7 @@ public:
         bool large_grf;
         bool print_reg_usage;
         bool fp32_accu = false;
+        bool use_stateless = false;
 
         std::array<std::uint32_t, 3> lws{ 1u, 1u, 1u };
 
@@ -2231,6 +2231,7 @@ public:
             opts->add_flag("--large_grf", params.large_grf)->default_val(false);
             opts->add_flag("--print_reg_usage", params.print_reg_usage)->default_val(false);
             opts->add_flag("--fp32_accu", params.fp32_accu)->default_val(false);
+            opts->add_flag("--use_stateless", params.use_stateless)->default_val(false);
 
             opts->add_option("--tile_m", params.tile_m);
             opts->add_option("--tile_k", params.tile_k);
@@ -2336,14 +2337,22 @@ public:
         assert(cm_params_.tile_n > 0);
         assert(cm_params_.slice_k > 0);
 
+        // root signature
         {
-            std::vector< DescType> desc_list =
+            if(cm_params_.use_stateless)
             {
-                DescType::eSrv, // input a
-                DescType::eSrv, // input b
-                DescType::eUav // output
-            };
-            root_signature_ = create_root_signature(d3d12_device, desc_list);
+                root_signature_ = create_root_signature_stateless(d3d12_device, 3);
+            }
+            else
+            {
+                std::vector< DescType> desc_list =
+                {
+                    DescType::eSrv, // input a
+                    DescType::eSrv, // input b
+                    DescType::eUav // output
+                };
+                root_signature_ = create_root_signature(d3d12_device, desc_list);
+            }
         }
 
 
@@ -2411,19 +2420,31 @@ public:
         const auto lws_x = " -DLWS_SIZE_X=" + std::to_string(cm_params_.lws[0]);
         const auto lws_y = " -DLWS_SIZE_Y=" + std::to_string(cm_params_.lws[1]);
         const auto lws_z = " -DLWS_SIZE_Z=" + std::to_string(cm_params_.lws[2]);
-        const auto build_options_final = " -I \" \" " + build_options + dump_asm_str + large_grf_str + print_reg_str + lws_x + lws_y + lws_z;
+
+        auto build_options_final = " -I \" \" " + build_options + dump_asm_str + large_grf_str + print_reg_str + lws_x + lws_y + lws_z;
+
+        if(cm_params_.use_stateless)
+        {
+            build_options_final += " -DCM_STATELESS=1";
+        }
 
         if (cm_params_.dump_asm)
         {
             std::cout << build_options_final << std::endl;
         }
 
-        auto kernel_source_content = [](GemmType type)
+        auto kernel_source_content = [&](GemmType type)
         {
             std::string path = "";
             switch (type)
             {
-            case GemmType::GemmType_AB: path = "gemm_nchw_fp16.cpp"; break;
+            case GemmType::GemmType_AB: 
+                path = "gemm_nchw_fp16.cpp"; 
+                if(cm_params_.use_stateless)
+                {
+                    path = "gemm_nchw_fp16_stateless.cpp";
+                }
+                break;
             case GemmType::GemmType_QK_QKV: path = "mha_qk_qkv_gemm_fp16.cpp"; break;
             case GemmType::GemmType_SV_S_QKV: path = "mha_sv_s_qkv_gemm_fp16.cpp";  break;
             case GemmType::GemmType_SV_S_KV: path = "mha_sv_s_kv_gemm_fp16.cpp";  break;
@@ -2461,7 +2482,6 @@ public:
 
     void initialize(ID3D12GraphicsCommandList* cmd_list, D3D12_CPU_DESCRIPTOR_HANDLE cpu_handle, D3D12_GPU_DESCRIPTOR_HANDLE gpu_handle)
     {
-
         std::vector<std::pair<DescType, ID3D12Resource*>> resources_list;
         resources_list.reserve(get_total_descriptor_count());
         resources_list.push_back({ DescType::eSrv, input_buffer_a_.Get() });
@@ -2479,11 +2499,22 @@ public:
         cmd_list->SetComputeRootSignature(root_signature_.Get());
         cmd_list->SetPipelineState(pso_.Get());
 
-        uint32_t root_index = 1; // start with 1, beacuse Cross compiler CM driver path needs that
-        for (uint32_t i = 0; i < gpu_handles_.size(); i++)
+        if(cm_params_.use_stateless) // if in stateless mode, all buffers are set to UAV accoring to its GPU address
+        {  
+            // the root parameter index should start from 1, in order to skip first constant buffer.
+            cmd_list->SetComputeRootUnorderedAccessView(1, input_buffer_a_->GetGPUVirtualAddress());
+            cmd_list->SetComputeRootUnorderedAccessView(2, input_buffer_b_->GetGPUVirtualAddress());
+            cmd_list->SetComputeRootUnorderedAccessView(3, output_buffer_->GetGPUVirtualAddress());
+        } 
+        else 
         {
-            const auto gpu_heap_handle = gpu_handles_[i];
-            cmd_list->SetComputeRootDescriptorTable(root_index++, gpu_heap_handle);
+            uint32_t root_index = 1; // start with 1, beacuse Cross compiler CM driver path needs that
+            for (uint32_t i = 0; i < gpu_handles_.size(); i++)
+            {
+                const auto gpu_heap_handle = gpu_handles_[i];
+                cmd_list->SetComputeRootDescriptorTable(root_index++, gpu_heap_handle);
+            }
+
         }
 
         const auto gws = get_gws();
@@ -2500,6 +2531,10 @@ public:
         const auto thg_y = gws_y / cm_params_.lws[1];
         const auto thg_z = gws_z / cm_params_.lws[2];
         cmd_list->Dispatch(thg_x, thg_y, thg_z);
+    }
+
+    bool is_needing_descriptor_heap() override {
+        return !cm_params_.use_stateless;
     }
 
     private:
