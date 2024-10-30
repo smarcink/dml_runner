@@ -291,7 +291,7 @@ inline ComPtr<ID3D12RootSignature> create_root_signature(ID3D12Device* d3d12_dev
     return ret;
 }
 
-inline ComPtr<ID3D12RootSignature> create_root_signature_without_roottable(ID3D12Device* d3d12_device, const int param_num)
+inline ComPtr<ID3D12RootSignature> create_root_signature_stateless(ID3D12Device* d3d12_device, const int param_num)
 {
     // Use UAV root parameters to pass GPU virtual addresses
     std::vector<D3D12_ROOT_PARAMETER> rootParameters(param_num);

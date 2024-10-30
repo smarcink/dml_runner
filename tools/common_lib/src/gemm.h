@@ -2215,6 +2215,7 @@ public:
         bool large_grf;
         bool print_reg_usage;
         bool fp32_accu = false;
+        bool use_stateless = false;
 
         std::array<std::uint32_t, 3> lws{ 1u, 1u, 1u };
 
@@ -2230,6 +2231,7 @@ public:
             opts->add_flag("--large_grf", params.large_grf)->default_val(false);
             opts->add_flag("--print_reg_usage", params.print_reg_usage)->default_val(false);
             opts->add_flag("--fp32_accu", params.fp32_accu)->default_val(false);
+            opts->add_flag("--use_stateless", params.use_stateless)->default_val(false);
 
             opts->add_option("--tile_m", params.tile_m);
             opts->add_option("--tile_k", params.tile_k);
@@ -2244,11 +2246,10 @@ public:
     };
 
 public:
-    GemmCmDispatcher(create_params_t&& params, cm_params_t&& cm_params, IntelExtension& intc_ext, ID3D12Device* d3d12_device, IDMLDevice* dml_device, IDMLCommandRecorder* dml_cmd_recorder, ID3D12GraphicsCommandList* cmd_list, bool use_stateless)
+    GemmCmDispatcher(create_params_t&& params, cm_params_t&& cm_params, IntelExtension& intc_ext, ID3D12Device* d3d12_device, IDMLDevice* dml_device, IDMLCommandRecorder* dml_cmd_recorder, ID3D12GraphicsCommandList* cmd_list)
         : GemmBaseDispatcher(std::move(params), d3d12_device, dml_device, dml_cmd_recorder, cmd_list)
         , intc_ext_(intc_ext)
         , cm_params_(std::move(cm_params))
-        , use_stateless_(use_stateless)
     {
         //validate
         assert(params_.dt == DataType::eFp16);
@@ -2338,9 +2339,9 @@ public:
 
         // root signature
         {
-            if(use_stateless_)
+            if(cm_params_.use_stateless)
             {
-                root_signature_ = create_root_signature_without_roottable(d3d12_device, 3);
+                root_signature_ = create_root_signature_stateless(d3d12_device, 3);
             }
             else
             {
@@ -2421,7 +2422,8 @@ public:
         const auto lws_z = " -DLWS_SIZE_Z=" + std::to_string(cm_params_.lws[2]);
 
         auto build_options_final = " -I \" \" " + build_options + dump_asm_str + large_grf_str + print_reg_str + lws_x + lws_y + lws_z;
-        if(use_stateless_)
+
+        if(cm_params_.use_stateless)
         {
             build_options_final += " -DCM_STATELESS=1";
         }
@@ -2438,7 +2440,7 @@ public:
             {
             case GemmType::GemmType_AB: 
                 path = "gemm_nchw_fp16.cpp"; 
-                if(use_stateless_)
+                if(cm_params_.use_stateless)
                 {
                     path = "gemm_nchw_fp16_stateless.cpp";
                 }
@@ -2480,7 +2482,6 @@ public:
 
     void initialize(ID3D12GraphicsCommandList* cmd_list, D3D12_CPU_DESCRIPTOR_HANDLE cpu_handle, D3D12_GPU_DESCRIPTOR_HANDLE gpu_handle)
     {
-        assert(!use_stateless_);
         std::vector<std::pair<DescType, ID3D12Resource*>> resources_list;
         resources_list.reserve(get_total_descriptor_count());
         resources_list.push_back({ DescType::eSrv, input_buffer_a_.Get() });
@@ -2498,7 +2499,7 @@ public:
         cmd_list->SetComputeRootSignature(root_signature_.Get());
         cmd_list->SetPipelineState(pso_.Get());
 
-        if(use_stateless_) // if in stateless mode, all buffers are set to UAV accoring to its GPU address
+        if(cm_params_.use_stateless) // if in stateless mode, all buffers are set to UAV accoring to its GPU address
         {  
             // the root parameter index should start from 1, in order to skip first constant buffer.
             cmd_list->SetComputeRootUnorderedAccessView(1, input_buffer_a_->GetGPUVirtualAddress());
@@ -2532,6 +2533,10 @@ public:
         cmd_list->Dispatch(thg_x, thg_y, thg_z);
     }
 
+    bool is_needing_descriptor_heap(){
+        return !cm_params_.use_stateless;
+    }
+
     private:
         std::vector<std::uint32_t> get_gws() const
         {
@@ -2563,7 +2568,6 @@ public:
         }
 
 private:
-    bool use_stateless_;
     cm_params_t cm_params_;
     IntelExtension& intc_ext_;
     std::vector<CD3DX12_GPU_DESCRIPTOR_HANDLE> gpu_handles_;

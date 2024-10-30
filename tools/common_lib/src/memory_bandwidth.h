@@ -32,12 +32,11 @@ public:
         }
     };
 public:
-    MemoryBandwidthDispatcher(create_params_t&& params, ID3D12Device* d3d12_device, ID3D12GraphicsCommandList* cmd_list, IntelExtension& intc_ext, bool use_stateless)
+    MemoryBandwidthDispatcher(create_params_t&& params, ID3D12Device* d3d12_device, ID3D12GraphicsCommandList* cmd_list, IntelExtension& intc_ext)
         : params_(std::move(params))
         , input_data_(get_tensor_elements_count(params_.shape, DataLayout::eNCHW) * (std::uint8_t)get_data_type_bytes_width(params_.dt))
         , intc_ext_(intc_ext)
         , d3d12_device_(d3d12_device)
-        , use_stateless_(use_stateless)
     {
         // randomize data
         std::mt19937 random_generator(42); // static, create it once!
@@ -88,17 +87,10 @@ public:
 
         // root signature
         {
-            if(use_stateless_)
-            {
-                root_signature_ = create_root_signature_without_roottable(d3d12_device_, 2);
-            } 
-            else 
-            {
-                // input, filter
-                std::vector<DescType> desc_list = { DescType::eSrv, DescType::eUav };
-                root_signature_ = create_root_signature(d3d12_device_, desc_list);
-                assert(root_signature_);
-            }
+            // input, filter
+            std::vector<DescType> desc_list = { DescType::eSrv, DescType::eUav };
+            root_signature_ = create_root_signature(d3d12_device_, desc_list);
+            assert(root_signature_);
         }
 
         // kernel jits
@@ -133,10 +125,6 @@ public:
         const auto lws_z = " -DLWS_SIZE_Z=1";
 
         auto build_options_final = " -I \" \" " + build_options + dump_asm_str + large_grf_str + print_reg_str + lws_x + lws_y + lws_z;
-        if(use_stateless_)
-        {
-            build_options_final += " -DCM_STATELESS=1";
-        }
 
         std::cout << "Build options: " << build_options_final << std::endl;
 
@@ -148,10 +136,6 @@ public:
         auto kernel_source_content = [&]()
         {
             auto path = "memory_copy.cpp";
-            if(use_stateless_)
-            {
-                path = "memory_copy_stateless.cpp";
-            }
             std::fstream file(path);
             if (!file.is_open())
             {
@@ -175,7 +159,6 @@ public:
 
     void initialize(ID3D12GraphicsCommandList* cmd_list, D3D12_CPU_DESCRIPTOR_HANDLE cpu_handle, D3D12_GPU_DESCRIPTOR_HANDLE gpu_handle) override
     {
-        assert(!use_stateless_);
         const auto desc_heap_incrs_size = d3d12_device_->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
         // i.e. add weights reorder
 
@@ -195,22 +178,13 @@ public:
     {
         cmd_list->SetComputeRootSignature(root_signature_.Get());
         cmd_list->SetPipelineState(pso_.Get());
-        if(use_stateless_) // if in stateless mode, all buffers are set to UAV accoring to its GPU address
+        uint32_t root_index = 1; // start with 1, beacuse Cross compiler CM driver path needs that
+        for (uint32_t i = 0; i < gpu_handles_.size(); i++)
         {
-            // the root parameter index should start from 1, in order to skip first constant buffer.
-            cmd_list->SetComputeRootUnorderedAccessView(1, input_buffer_->GetGPUVirtualAddress());
-            cmd_list->SetComputeRootUnorderedAccessView(2, output_buffer_->GetGPUVirtualAddress());
-        } 
-        else 
-        {
-            uint32_t root_index = 1; // start with 1, beacuse Cross compiler CM driver path needs that
-            for (uint32_t i = 0; i < gpu_handles_.size(); i++)
-            {
-                const auto gpu_heap_handle = gpu_handles_[i];
-                cmd_list->SetComputeRootDescriptorTable(root_index++, gpu_heap_handle);
-            }
-
+            const auto gpu_heap_handle = gpu_handles_[i];
+            cmd_list->SetComputeRootDescriptorTable(root_index++, gpu_heap_handle);
         }
+
 
         const auto gws_x = (params_.shape.n * params_.shape.c * params_.shape.h * params_.shape.w) / params_.items_per_hw;
 
@@ -264,7 +238,6 @@ public:
 protected:
 
 protected:
-    bool use_stateless_;
     create_params_t params_;
     ID3D12Device* d3d12_device_;
 

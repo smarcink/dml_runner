@@ -9,17 +9,13 @@
 1. add --use_stateless in your command line, like:
    
 ```bash
-# memory bandwidth test case
-./cross_runner.exe --iters 1  --use_stateless --type mem_bw mem_bw_opts --data_type fp16 --shape 1,1,64,64 --items_per_hw 64
-
 # GEMM test case
-./cross_runner.exe --iters 1  --use_stateless --type gemm_cm gemm_opts --gemm_type ab  --data_type fp16 --layout nchw --shape_a 1,1,1024,16 --shape_b 1,1,16,1024 --b_managed gemm_cm_opts --large_grf --tile_m 1 --tile_k 16 --tile_n 16 --slice_k 1 --dump_asm
+./cross_runner.exe --iters 1  --type gemm_cm gemm_opts --gemm_type ab  --data_type fp16 --layout nchw --shape_a 1,1,1024,16 --shape_b 1,1,16,1024 --b_managed gemm_cm_opts --large_grf --tile_m 1 --tile_k 16 --tile_n 16 --slice_k 1 --dump_asm --use_stateless 
 
 ```
 2. copy stateless version kernel to crossrunner binary folder, now we have two samples:
 ```bash
 tools\cross_runner\kernels\gemm_nchw_fp16_stateless.cpp
-tools\cross_runner\kernels\memory_copy_stateless.cpp
 ```
 
 # Building
