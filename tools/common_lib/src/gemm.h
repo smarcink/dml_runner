@@ -2533,7 +2533,7 @@ public:
         cmd_list->Dispatch(thg_x, thg_y, thg_z);
     }
 
-    bool is_needing_descriptor_heap(){
+    bool is_needing_descriptor_heap() override {
         return !cm_params_.use_stateless;
     }
 
