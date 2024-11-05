@@ -797,18 +797,18 @@ public:
 
         dnnl::set_verbose(umdd3d12_params_.verbose_mode);
 
-        if (umdd3d12_params_.verbose_dump_to_file)
-        {
-            try
-            {
-                dnnl::iumd_interop::attach_verbose_attach_printf_callback(dnnl_utils::dump_onednn_logs_to_file);
-            }
-            catch (...)
-            {
-                // do nothing, callback was already attached
-            }
+        //if (umdd3d12_params_.verbose_dump_to_file)
+        //{
+        //    try
+        //    {
+        //        dnnl::iumd_interop::attach_verbose_attach_printf_callback(dnnl_utils::dump_onednn_logs_to_file);
+        //    }
+        //    catch (...)
+        //    {
+        //        // do nothing, callback was already attached
+        //    }
 
-        }
+        //}
 
         if (params_.transposed)
         {

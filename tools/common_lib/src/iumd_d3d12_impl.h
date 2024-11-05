@@ -152,7 +152,8 @@ namespace custom_metacommand
         {
             if (sku_.igfx == UMD_IGFX::eDG2 ||
                 sku_.igfx == UMD_IGFX::eLNL ||
-                sku_.igfx == UMD_IGFX::eBMG)
+                sku_.igfx == UMD_IGFX::eBMG ||
+                sku_.igfx == UMD_IGFX::eARL )
             {
                 return true;
             }

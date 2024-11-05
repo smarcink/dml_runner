@@ -1742,10 +1742,10 @@ public:
 
         dnnl::set_verbose(umdd3d12_param.verbose_mode);
 
-        if (umdd3d12_param.verbose_dump_to_file)
+        /*if (umdd3d12_param.verbose_dump_to_file)
         {
             dnnl::iumd_interop::attach_verbose_attach_printf_callback(dump_onednn_logs_to_file);
-        }
+        }*/
 
         //input_a_memory_desc_ = to_dnnl_mem_desc(params_.a_transposed ? TensorShape{ params_.shape_a.n, params_.shape_a.c, params_.shape_a.w, params_.shape_a.h } : params_.shape_a, params_.layout, params_.dt);
         input_a_memory_desc_ = to_dnnl_mem_desc(params_.shape_a, params_.layout, params_.dt);
