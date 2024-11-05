@@ -31,6 +31,10 @@ public:
     virtual ConformanceResult validate_conformance(ID3D12CommandQueue* command_queue,
         ID3D12CommandAllocator* command_allocator, ID3D12GraphicsCommandList* command_list, bool print_mismatches, std::size_t reference_dispatch_iterations) = 0;
 
+    virtual bool is_needing_descriptor_heap(){
+        return true;
+    }
+
     virtual ~NodeDispatcher() = default;
 };
 

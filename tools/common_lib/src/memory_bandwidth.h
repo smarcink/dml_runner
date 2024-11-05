@@ -123,16 +123,19 @@ public:
         const auto lws_x = " -DLWS_SIZE_X=" + std::to_string(params_.lws_x);
         const auto lws_y = " -DLWS_SIZE_Y=1";
         const auto lws_z = " -DLWS_SIZE_Z=1";
-        const auto build_options_final = " -I \" \" " + build_options + dump_asm_str + large_grf_str + print_reg_str + lws_x + lws_y + lws_z;
+
+        auto build_options_final = " -I \" \" " + build_options + dump_asm_str + large_grf_str + print_reg_str + lws_x + lws_y + lws_z;
+
+        std::cout << "Build options: " << build_options_final << std::endl;
 
         if (params_.dump_asm)
         {
             std::cout << build_options_final << std::endl;
         }
 
-        auto kernel_source_content = []()
+        auto kernel_source_content = [&]()
         {
-            const auto path = "memory_copy.cpp";
+            auto path = "memory_copy.cpp";
             std::fstream file(path);
             if (!file.is_open())
             {
@@ -175,13 +178,13 @@ public:
     {
         cmd_list->SetComputeRootSignature(root_signature_.Get());
         cmd_list->SetPipelineState(pso_.Get());
-
         uint32_t root_index = 1; // start with 1, beacuse Cross compiler CM driver path needs that
         for (uint32_t i = 0; i < gpu_handles_.size(); i++)
         {
             const auto gpu_heap_handle = gpu_handles_[i];
             cmd_list->SetComputeRootDescriptorTable(root_index++, gpu_heap_handle);
         }
+
 
         const auto gws_x = (params_.shape.n * params_.shape.c * params_.shape.h * params_.shape.w) / params_.items_per_hw;
 
