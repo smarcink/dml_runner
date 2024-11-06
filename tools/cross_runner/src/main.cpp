@@ -57,6 +57,7 @@ struct CliOptions
     bool no_conformance_check = false;
     bool print_opts = false;
     bool use_rcs = false;
+    bool volatile_flag = true;
 
     // generic type of layers params
     GemmBaseDispatcher::create_params_t gemm_opts{};
@@ -112,6 +113,7 @@ int main(int argc, const char*argv[])
     dml_runner_app.add_flag("--no_conform", opts.no_conformance_check);
     dml_runner_app.add_flag("--print_opts", opts.print_opts);
     dml_runner_app.add_flag("--use_rcs", opts.use_rcs, "Force using RCS (DIRECT cmd list).")->default_val(false);
+    dml_runner_app.add_flag("--volatile_flag", opts.volatile_flag, "Force using RCS (DIRECT cmd list).")->default_val(true);
 
     // generic type of layers options
     auto gemm_option_groups = dml_runner_app.add_subcommand("gemm_opts", "Options for genn layer.");
@@ -204,7 +206,7 @@ int main(int argc, const char*argv[])
         std::unique_ptr<NodeDispatcher> node;
         if (opts.node_type == NodeType::eGemmDml)
         {
-            node = std::make_unique<GemmDmlDispatcher>(std::move(opts.gemm_opts), true, 
+            node = std::make_unique<GemmDmlDispatcher>(std::move(opts.gemm_opts), opts.volatile_flag,
                 d3d12_device.Get(), dml_device.Get(), dml_command_recorder.Get(), command_list.Get());
         }
         else if (opts.node_type == NodeType::eGemmCm)
@@ -221,7 +223,7 @@ int main(int argc, const char*argv[])
         }
         else if (opts.node_type == NodeType::eConvDml)
         {
-            node = std::make_unique<ConvolutionDirectMLDispatcher>(std::move(opts.conv_opts), true,
+            node = std::make_unique<ConvolutionDirectMLDispatcher>(std::move(opts.conv_opts), opts.volatile_flag,
                 d3d12_device.Get(), dml_device.Get(), dml_command_recorder.Get(), command_list.Get());
         }
         else if (opts.node_type == NodeType::eConvCm)
