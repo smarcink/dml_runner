@@ -158,7 +158,9 @@ inline bool lexical_cast(const std::string& input, ActivationSettings& act)
 enum class DataLayout
 {
     eNCHW = 0,
-    eNHWC = 1,
+    eNCHW_stride_N3x,
+    eNHWC,
+    eNHWC_stride_C3x,
     eNCHW_AlignW320,  // example layout for unpacked tensor, ToDo: refactor cross runner to work with strides instead of hardcoded data layouts
     eNHWC_AlignH48,  // example layout for unpacked tensor, ToDo: refactor cross runner to work with strides instead of hardcoded data layouts
     eCHW,      // 3d dims for GEMMS
@@ -189,9 +191,11 @@ inline std::string data_layout_name(DataLayout l)
     switch (l)
     {
     case DataLayout::eNCHW: return "NCHW";
+    case DataLayout::eNCHW_stride_N3x: return "NCHW_stride_N3x";
     case DataLayout::eNCHW_AlignW320: return "NCHW_AlignW320";
-    case DataLayout::eNHWC_AlignH48: return "eNHWC_AlignH48";
+    case DataLayout::eNHWC_AlignH48: return "NHWC_AlignH48";
     case DataLayout::eNHWC: return "NHWC";
+    case DataLayout::eNHWC_stride_C3x: return "NHWC_stride_C3x";
     case DataLayout::eCHW:  return "CHW";
     case DataLayout::eW:    return "W";
     case DataLayout::eOIYX: return "OIYX";
@@ -212,8 +216,10 @@ inline std::uint8_t data_layout_dimensions_count(DataLayout l)
     switch (l)
     {
     case DataLayout::eNCHW:
+    case DataLayout::eNCHW_stride_N3x:
     case DataLayout::eNCHW_AlignW320:
     case DataLayout::eNHWC_AlignH48:
+    case DataLayout::eNHWC_stride_C3x:
     case DataLayout::eNHWC:
         return 4;
     case DataLayout::eCHW:
@@ -230,15 +236,15 @@ inline std::uint8_t data_layout_dimensions_count(DataLayout l)
 
 inline bool is_data_layout_unpacked(const DataLayout l)
 {
-    if (DataLayout::eNCHW_AlignW320 == l ||
-        DataLayout::eNHWC_AlignH48 == l)
+    if (DataLayout::eNCHW_AlignW320 == l || DataLayout::eNHWC_stride_C3x == l
+        || DataLayout::eNHWC_AlignH48 == l || DataLayout::eNCHW_stride_N3x == l)
     {
         return true;
     }
     return false;
 }
 
-inline std::size_t data_layout_w_alignment(const DataLayout l)
+inline std::size_t data_layout_w_alignment(TensorShape shape, const DataLayout l)
 {
     if (DataLayout::eNCHW_AlignW320 == l)
     {
@@ -247,7 +253,7 @@ inline std::size_t data_layout_w_alignment(const DataLayout l)
     return 1ull;
 }
 
-inline std::size_t data_layout_h_alignment(const DataLayout l)
+inline std::size_t data_layout_h_alignment(TensorShape shape, const DataLayout l)
 {
     if (DataLayout::eNHWC_AlignH48 == l)
     {
@@ -256,22 +262,43 @@ inline std::size_t data_layout_h_alignment(const DataLayout l)
     return 1ull;
 }
 
+inline std::size_t data_layout_c_alignment(TensorShape shape, const DataLayout l)
+{
+    if (DataLayout::eNHWC_stride_C3x == l)
+    {
+        return 3 * shape.c;
+    }
+    return 1ull;
+}
+
+inline std::size_t data_layout_b_alignment(TensorShape shape, const DataLayout l)
+{
+    if (DataLayout::eNCHW_stride_N3x == l)
+    {
+        return 3 * shape.c * shape.h * shape.w;
+    }
+    return 1ull;
+}
+
 inline TensorShape data_layout_to_strides(TensorShape shape, DataLayout l)
 {
-    const auto c = shape.c;
-    const auto d = shape.d;
-    const auto h = static_cast<std::uint32_t>(align(shape.h, data_layout_h_alignment(l)));
-    const auto w = static_cast<std::uint32_t>(align(shape.w, data_layout_w_alignment(l)));
+    auto c = shape.c != 0 ? shape.c : 1;
+    c = static_cast<std::uint32_t>(align(c, data_layout_c_alignment(shape, l)));
+    const auto d = shape.d != 0 ? shape.d : 1;
+    const auto h = static_cast<std::uint32_t>(align(shape.h, data_layout_h_alignment(shape, l)));
+    const auto w = static_cast<std::uint32_t>(align(shape.w, data_layout_w_alignment(shape, l)));
+    const auto n = static_cast<std::uint32_t>(align(c * h * d * w, data_layout_b_alignment(shape, l)));
 
 
     TensorShape ret{};
     switch (l)
     {
+    case DataLayout::eNCHW_stride_N3x:
     case DataLayout::eNCHW_AlignW320:
     case DataLayout::eNCHW:
     {
         ret = TensorShape(
-            c * h * w,
+            n,
             h * w,
             w,
             1);
@@ -279,9 +306,10 @@ inline TensorShape data_layout_to_strides(TensorShape shape, DataLayout l)
     }
     case DataLayout::eNHWC:
     case DataLayout::eNHWC_AlignH48:
+    case DataLayout::eNHWC_stride_C3x:
     {
         ret = TensorShape(
-            c * h * w,
+            n,
             1,
             c * w,
             c);
@@ -290,7 +318,7 @@ inline TensorShape data_layout_to_strides(TensorShape shape, DataLayout l)
     case DataLayout::eNCDHW:
     {
         ret = TensorShape(
-            c * h * d * w,
+            n,
             h * d* w,
             d * w,
             w,
@@ -298,19 +326,19 @@ inline TensorShape data_layout_to_strides(TensorShape shape, DataLayout l)
         break;
     case DataLayout::eNHW:
         ret = TensorShape(
-            h * w,
+            n,
             w,
             1);
         break;
     case DataLayout::eNCH:
         ret = TensorShape(
-            c * h,
+            n,
             h,
             1);
         break;
     }
     default:
-        assert("!unsupported right now");
+        assert(!"unsupported right now");
     }
     return ret;
 }
@@ -455,8 +483,11 @@ inline auto add_data_type_cli_option(CLI::App* opts, std::string_view opt_name, 
 
 inline auto add_data_layout_cli_option(CLI::App* opts, std::string_view opt_name, DataLayout& layout)
 {
-    return opts->add_option(opt_name.data(), layout)->check(CLI::IsMember({DataLayout::eNCHW, DataLayout::eNHWC, DataLayout::eW, DataLayout::eCHW, DataLayout::eNCHW_AlignW320, DataLayout::eNHWC_AlignH48, DataLayout::eNCDHW }))
+    return opts->add_option(opt_name.data(), layout)->check(CLI::IsMember(
+        {DataLayout::eNCHW, DataLayout::eNHWC, DataLayout::eW, DataLayout::eCHW, DataLayout::eNCHW_AlignW320, DataLayout::eNHWC_AlignH48, DataLayout::eNCDHW, DataLayout::eNCHW_stride_N3x, DataLayout::eNHWC_stride_C3x }))
         ->transform(CLI::Transformer(std::map<std::string, DataLayout>{
-            {"nchw", DataLayout::eNCHW}, { "nhwc", DataLayout::eNHWC }, { "w", DataLayout::eW }, { "chw", DataLayout::eCHW }, { "nchw_alignw320", DataLayout::eNCHW_AlignW320 }, { "nhwc_alignh48", DataLayout::eNHWC_AlignH48 }, { "ncdhw", DataLayout::eNCDHW },
+            {"nchw", DataLayout::eNCHW}, { "nhwc", DataLayout::eNHWC }, { "w", DataLayout::eW }, { "chw", DataLayout::eCHW },
+            { "nchw_alignw320", DataLayout::eNCHW_AlignW320 }, { "nhwc_alignh48", DataLayout::eNHWC_AlignH48 }, { "ncdhw", DataLayout::eNCDHW },
+            { "nchw_stride_N3x", DataLayout::eNCHW_stride_N3x }, {"nhwc_stride_C3x", DataLayout::eNHWC_stride_C3x }
     }, CLI::ignore_case, CLI::ignore_underscore));
 }

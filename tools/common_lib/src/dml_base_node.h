@@ -129,6 +129,80 @@ namespace
         props.guaranteedBaseOffsetAlignment = 0;
         return props;
     }
+
+    inline static dml::TensorProperties compute_nchw_strideN3x_tensor_policy(
+        DML_TENSOR_DATA_TYPE dataType,
+        DML_TENSOR_FLAGS /*flags*/,
+        std::span<const uint32_t> sizes)
+    {
+        uint32_t dimension_count = static_cast<uint32_t>(sizes.size());
+        dml::TensorStrides strides(dimension_count);
+
+        uint32_t stride = 1;
+        for (std::uint32_t i = dimension_count; i > 0; i--)
+        {
+            strides[i - 1] = stride;
+            stride *= sizes[i - 1];
+        }
+
+        strides[0] = 3 * sizes[1] * sizes[2] * sizes[3];
+
+        dml::TensorProperties props;
+        props.strides = std::move(strides);
+        props.totalTensorSizeInBytes = DMLCalcBufferTensorSize(dataType, dimension_count, sizes.data(), props.strides->data());
+        props.guaranteedBaseOffsetAlignment = 0;
+        return props;
+    }
+
+    inline static dml::TensorProperties compute_nhwc_strideC3x_tensor_policy(
+        DML_TENSOR_DATA_TYPE dataType,
+        DML_TENSOR_FLAGS /*flags*/,
+        std::span<const uint32_t> sizes)
+    {
+        uint32_t dimensionCount = static_cast<uint32_t>(sizes.size());
+        dml::TensorStrides strides(dimensionCount);
+
+        enum Axes { N, C, H, W /* more dims*/ };
+
+        dml::TensorDimensions dims(dimensionCount);
+        for (std::uint32_t i = 0; i < dimensionCount; i++)
+        {
+            dims[i] = sizes[i];
+        }
+        dims[C] *= 3;
+
+        // N dimension strides
+        if (dimensionCount >= 1)
+        {
+            strides[N] = 1;
+            for (uint32_t i = 1; i < dimensionCount; ++i)
+            {
+                strides[N] *= dims[i];
+            }
+        }
+
+        // C dimension strides
+        if (dimensionCount >= 2)
+        {
+            strides[C] = 1;
+        }
+
+        // Spatial dimension strides
+        if (dimensionCount >= 3)
+        {
+            uint32_t stride = dims[C];
+            for (uint32_t i = dimensionCount - 1; i >= 2; --i)
+            {
+                strides[i] = stride;
+                stride *= dims[i];
+            }
+        }
+        dml::TensorProperties props;
+        props.strides = std::move(strides);
+        props.totalTensorSizeInBytes = DMLCalcBufferTensorSize(dataType, dimensionCount, sizes.data(), props.strides->data());
+        props.guaranteedBaseOffsetAlignment = 0;
+        return props;
+    }
 }
 
 inline std::string to_string(const std::string& value) { return value; }
@@ -153,6 +227,8 @@ inline dml::TensorPolicy to_dml_tensor_policy(DataLayout layout)
     case DataLayout::eCHW:
     case DataLayout::eNCDHW:
     case DataLayout::eNCHW: return dml::TensorPolicy::Default();
+    case DataLayout::eNCHW_stride_N3x: return dml::TensorPolicy(compute_nchw_strideN3x_tensor_policy);
+    case DataLayout::eNHWC_stride_C3x: return dml::TensorPolicy(compute_nhwc_strideC3x_tensor_policy);
     case DataLayout::eNHWC: return dml::TensorPolicy::InterleavedChannel();
     case DataLayout::eW: return dml::TensorPolicy(compute_w_tensor_policy);
     case DataLayout::eNCHW_AlignW320: return dml::TensorPolicy(compute_nchw_alignw320_tensor_policy);
