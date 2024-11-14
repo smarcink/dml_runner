@@ -75,6 +75,7 @@ struct CliOptions
     SoftmaxCmDispatcher::softmax_cm_params_t softmax_cm_params{};
     GemmCmDispatcher::cm_params_t gemm_cm_params{};
     GemmUmdD3d12Dispatcher::gemm_umdd3d12_params_t gemm_umdd3d12_params{};
+    MhaCmDispatcher::cm_params_t mha_cm_opts{};
 
     gpu_op::MemoryBandwidthDispatcher::create_params_t memory_bw_params{};
 };
@@ -91,7 +92,7 @@ int main(int argc, const char*argv[])
         NodeType::eGemmDml, NodeType::eGemmCm, NodeType::eGemmUmdD3d12,
         NodeType::eSoftmaxDml, NodeType::eSoftmaxCm,
         NodeType::eMvnDml, NodeType::eMvnCm,
-        NodeType::eMhaDml,
+        NodeType::eMhaDml, NodeType::eMhaCm,
         NodeType::eMemoryBandwidth, NodeType::eQuantGemmDml
         }))->
         transform(CLI::Transformer(std::map<std::string, NodeType>{
@@ -106,6 +107,7 @@ int main(int argc, const char*argv[])
             { "mvn_dml", NodeType::eMvnDml },
             { "mvn_cm", NodeType::eMvnCm },
             { "mha_dml", NodeType::eMhaDml},
+            { "mha_cm", NodeType::eMhaCm},
             { "mem_bw", NodeType::eMemoryBandwidth },
             { "quant_gemm_dml", NodeType::eQuantGemmDml },
     }, CLI::ignore_case, CLI::ignore_underscore));
@@ -144,7 +146,8 @@ int main(int argc, const char*argv[])
     GemmUmdD3d12Dispatcher::gemm_umdd3d12_params_t::add_cli_options(gemm_umdd3d12_option_groups, opts.gemm_umdd3d12_params);
     auto mem_bw_option_group = dml_runner_app.add_subcommand("mem_bw_opts", "Options for memory bandwidths measurements");
     gpu_op::MemoryBandwidthDispatcher::MemoryBandwidthDispatcher::create_params_t::add_cli_options(mem_bw_option_group, opts.memory_bw_params);
-
+    auto mha_cm_option_groups = dml_runner_app.add_subcommand("mha_cm_opts", "Options for mha layer with CM implementation.");
+    MhaCmDispatcher::cm_params_t::add_cli_options(mha_cm_option_groups, opts.mha_cm_opts);
     try {
         dml_runner_app.parse(argc, argv);
     }
@@ -260,6 +263,11 @@ int main(int argc, const char*argv[])
         {
             node = std::make_unique<MhaDmlDispatcher>(std::move(opts.mha_opts),
                 d3d12_device.Get(), dml_device.Get(), dml_command_recorder.Get(), command_list.Get());
+        }
+        else if (opts.node_type == NodeType::eMhaCm)
+        {
+            node = std::make_unique<MhaCmDispatcher>(std::move(opts.mha_opts), std::move(opts.mha_cm_opts),
+                intel_extension_d3d12, d3d12_device.Get(), dml_device.Get(), dml_command_recorder.Get(), command_list.Get());
         }
         else if (opts.node_type == NodeType::eMemoryBandwidth)
         {
