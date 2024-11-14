@@ -620,3 +620,192 @@ private:
     gpu_op::Mha mha_;
 };
 
+
+class MhaCmDispatcher : public MhaBaseDispatcher
+{
+public:
+    struct cm_params_t
+    {
+        bool dump_asm;
+        bool large_grf;
+        bool print_reg_usage;
+
+        bool use_stateless = true;
+
+        std::array<std::uint32_t, 3> lws{ 1u, 1u, 1u };
+        std::uint32_t seq_len_block;
+        
+        inline static void add_cli_options(CLI::App* opts, MhaCmDispatcher::cm_params_t& params)
+        {
+            opts->add_flag("--dump_asm", params.dump_asm)->default_val(false);
+            opts->add_flag("--large_grf", params.large_grf)->default_val(false);
+            opts->add_flag("--print_reg_usage", params.print_reg_usage)->default_val(false);
+            opts->add_option("--seq_len_block", params.seq_len_block)->default_val(8);
+
+            opts->add_option("--lws_x", params.lws[0]);
+            opts->add_option("--lws_y", params.lws[1]);
+            opts->add_option("--lws_z", params.lws[2]);
+        }
+    };
+
+public:
+    MhaCmDispatcher(create_params_t&& params, cm_params_t&& cm_params, IntelExtension& intc_ext, ID3D12Device* d3d12_device, IDMLDevice* dml_device, IDMLCommandRecorder* dml_cmd_recorder, ID3D12GraphicsCommandList* cmd_list)
+        : MhaBaseDispatcher(std::move(params), d3d12_device, dml_device, dml_cmd_recorder, cmd_list)
+        , intc_ext_(intc_ext)
+        , cm_params_(std::move(cm_params))
+    {
+        //validate
+        assert(params_.dt == DataType::eFp16);
+        assert(params_.type == MhaType::MhaType_QKV);
+        assert(cm_params_.seq_len_block == 8 || cm_params_.seq_len_block == 16);
+
+        root_signature_ = create_root_signature_stateless(d3d12_device, get_total_descriptor_count());
+
+        // kernel jits
+        std::string build_options = "-Qxcm_jit_option=-noLocalSplit -Qxcm_jit_option=-globalTokenAllocation -Qxcm_jit_option=-enableBCR -Qxcm_jit_option=-SWSBDepReduction -DCM_STATELESS=1 ";
+        const std::string pre_jit = "-D";
+        const std::string post_jit = " ";
+        const std::string between_name_and_value = "=";
+
+        auto add_define = [&](const std::string& name, auto value) {
+            using namespace std;
+            std::string value_str;
+            if (std::is_floating_point<decltype(value)>::value)
+            {// to_*string precision is not enough to ensure good match betweeen GPU and CPU or pytorch execution results:
+                value_str = (std::stringstream() << std::setiosflags(std::ios_base::showpoint | std::ios_base::fixed) << std::setprecision((std::numeric_limits<decltype(value)>::max_digits10 + 1)) << value).str();
+            }
+            else
+            { // fine for other types:
+                value_str = to_string(value);
+            }
+
+            build_options += pre_jit + name + between_name_and_value + value_str + post_jit;
+            };
+
+
+        const auto batch_size = params_.shape_input_qkv.n;
+        const auto sequence_length = params_.shape_input_qkv.c;
+        const auto kv_sequence_length = sequence_length;
+        const auto head_count = params_.shape_input_qkv.d;
+        const auto head_size = params_.shape_input_qkv.w;
+        const auto lws = get_lws();
+        const auto gws = get_gws();
+
+        add_define("LWS_SIZE_X", lws[0]);
+        add_define("LWS_SIZE_Y", lws[1]);
+        add_define("LWS_SIZE_Z", lws[2]);
+
+        add_define("GWS_SIZE_X", gws[0]);
+        add_define("GWS_SIZE_Y", gws[1]);
+        add_define("GWS_SIZE_Z", gws[2]);
+
+        add_define("BATCH_SIZE", batch_size);
+        add_define("SEQUENCE_LENGTH", sequence_length);
+        add_define("KV_SEQUENCE_LENGTH", sequence_length);
+        add_define("MAX_SEQ", std::max(sequence_length, kv_sequence_length));
+        add_define("NUM_HEADS", head_count);
+        add_define("HEAD_SIZE", head_size);
+        add_define("ALPHA", 0.001000f);
+        add_define("OUTPUT_OFFSET", 0);
+
+        add_define("SEQ_LEN_BLOCK", cm_params_.seq_len_block);
+
+        const auto dump_asm_str = cm_params_.dump_asm ? " -mdump_asm" : "";
+        const auto large_grf_str = cm_params_.large_grf ? " -Qxcm_doubleGRF" : "";
+        const auto print_reg_str = cm_params_.print_reg_usage ? " -mCM_printregusage" : "";
+        auto build_options_final = " -I \" \" " + build_options + dump_asm_str + large_grf_str + print_reg_str;
+
+        if (cm_params_.dump_asm)
+        {
+            std::cout << build_options_final << std::endl;
+        }
+
+        auto kernel_source_content = [&](const auto type)
+            {
+                const std::string path = "mha_qkv_gemm_dpas16.cpp";
+                std::fstream file(path);
+                if (!file.is_open())
+                {
+                    const auto msg = std::format("Kernel file cant be opened:{} \n.", path);
+                    throw std::runtime_error(msg);
+                }
+                return std::string((std::istreambuf_iterator<char>(file)), (std::istreambuf_iterator<char>()));
+            }(params_.type);
+
+        CD3DX12_SHADER_BYTECODE byte_code;
+        byte_code.pShaderBytecode = kernel_source_content.data();
+        byte_code.BytecodeLength = kernel_source_content.size();
+        pso_ = intc_ext_.create_pipeline(byte_code, build_options_final, root_signature_.Get(), INTC_D3D12_SHADER_INPUT_TYPE::CM);
+        std::cout << std::format("gws: [{}, {}, {}], lws: [{}, {}, {}]\n", gws[0], gws[1], gws[2], lws[0], lws[1], lws[2]);
+    }
+
+    std::uint32_t get_total_descriptor_count() override
+    {
+        // input_qkv, output
+        std::uint32_t descriptor_count = 2;
+        return descriptor_count;
+    }
+
+    void initialize(ID3D12GraphicsCommandList* cmd_list, D3D12_CPU_DESCRIPTOR_HANDLE cpu_handle, D3D12_GPU_DESCRIPTOR_HANDLE gpu_handle)
+    {
+        // do nothing
+    }
+
+    void execute(ID3D12GraphicsCommandList* cmd_list)
+    {
+
+        cmd_list->SetComputeRootSignature(root_signature_.Get());
+        cmd_list->SetPipelineState(pso_.Get());
+
+        assert(cm_params_.use_stateless == true);
+        assert(params_.type == MhaType::MhaType_QKV);
+        cmd_list->SetComputeRootUnorderedAccessView(1, input_buffer_qkv->GetGPUVirtualAddress());
+        cmd_list->SetComputeRootUnorderedAccessView(2, output_buffer_->GetGPUVirtualAddress());
+
+        const auto gws = get_gws();
+        const auto lws = get_lws();
+
+        const auto gws_x = gws[0];
+        const auto gws_y = gws[1];
+        const auto gws_z = gws[2];
+
+        const auto lws_x = lws[0];
+        const auto lws_y = lws[1];
+        const auto lws_z = lws[2];
+
+        assert(gws_x % lws_x == 0);
+        assert(gws_y % lws_y == 0);
+        assert(gws_z % lws_z == 0);
+
+        const auto thg_x = gws_x / lws_x;
+        const auto thg_y = gws_y / lws_y;
+        const auto thg_z = gws_z / lws_z;
+        cmd_list->Dispatch(thg_x, thg_y, thg_z);
+    }
+
+    bool is_needing_descriptor_heap() override 
+    {
+        return !cm_params_.use_stateless;
+    }
+
+private:
+    std::array<std::uint32_t, 3> get_gws() const
+    {
+        const auto batch_size = params_.shape_input_qkv.n;
+        const auto sequence_length = params_.shape_input_qkv.c;
+        const auto head_count = params_.shape_input_qkv.d;
+        return { 1, (sequence_length + (cm_params_.seq_len_block-1)) / cm_params_.seq_len_block, batch_size * head_count };
+    }
+
+    std::array<std::uint32_t, 3> get_lws() const
+    {
+        return cm_params_.lws;
+    }
+
+private:
+    cm_params_t cm_params_;
+    IntelExtension& intc_ext_;
+
+    ComPtr<ID3D12PipelineState> pso_;
+    ComPtr<ID3D12RootSignature> root_signature_;
+};
