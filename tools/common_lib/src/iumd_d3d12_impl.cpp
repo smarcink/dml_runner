@@ -110,12 +110,14 @@ iumd::custom_metacommand::UmdD3d12Device::UmdD3d12Device(ID3D12Device* device, I
         }
         else if (std::wcscmp(name, L"Arrowlake") == 0)
         {
-            return UMD_IGFX::eARL;
+            std::cout << "Fix arrow lake path." << std::endl;
+            assert(false);
+            return UMD_IGFX::eUNKNOWN;
         }
         return UMD_IGFX::eUNKNOWN;
     }(extension_info.IntelDeviceInfo.GTGenerationName);
 
-    if (sku_.igfx == UMD_IGFX::eDG2 || sku_.igfx == UMD_IGFX::eMETEORLAKE || sku_.igfx == UMD_IGFX::eARL)
+    if (sku_.igfx == UMD_IGFX::eDG2 || sku_.igfx == UMD_IGFX::eMETEORLAKE || sku_.igfx == UMD_IGFX::eARLH || sku_.igfx == UMD_IGFX::eARLS)
     {
         sku_.eu_per_dss = 16;
         sku_.threads_per_eu = 8;
@@ -198,9 +200,10 @@ bool iumd::custom_metacommand::UmdD3d12Device::do_support_extension(UMD_EXTENSIO
 bool iumd::custom_metacommand::UmdD3d12Device::do_support_ngen_kernels() const
 {
     // look at OneDNN for OpenCL runtime - they compile dummy kernel to get information if NGEN is supported - this is good and roboust solution.
+    // For arrowlake: only arl-h which has DPAS.
     printf("Add proper NGEN support detection mechanism!\n"); 
     if (sku_.igfx == UMD_IGFX::eDG2 || sku_.igfx == UMD_IGFX::eMETEORLAKE || 
-        sku_.igfx == UMD_IGFX::eLNL || sku_.igfx == UMD_IGFX::eBMG || sku_.igfx == UMD_IGFX::eARL)
+        sku_.igfx == UMD_IGFX::eLNL || sku_.igfx == UMD_IGFX::eBMG || sku_.igfx == UMD_IGFX::eARLH)
     {
         return true;
     }
