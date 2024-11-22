@@ -1,3 +1,5 @@
 add_subdirectory(common_lib)
 add_subdirectory(cross_runner)
 add_subdirectory(tests)
+add_subdirectory(inference_engine)
+add_subdirectory(inference_engine_tests)
