@@ -499,7 +499,7 @@ public:
     QuantGemm(const DML_TENSOR_DATA_TYPE data_type, const dml::TensorPolicy& tensor_policy_ab, const dml::TensorPolicy& tensor_policy_c,
         const TensorShape& shape_a, const TensorShape& shape_b, const TensorShape& shape_c, const TensorShape& shape_out,
         const TensorShape& shape_scale, const TensorShape& shape_zeropoint, bool a_quantized, bool b_quantized, bool c_quantized, const uint32_t block_size, const DML_TENSOR_DATA_TYPE quantized_data_type, bool has_zero_point,
-        bool a_transposed, bool b_managed, bool b_transposed, bool c_managed, float alpha, float beta,
+        bool a_transposed, bool b_managed, bool b_transposed, bool bs_managed, bool bz_managed, bool c_managed, float alpha, float beta,
         bool allow_fp16_computations, const ActivationSettings& activation_settings,
         IDMLDevice* dml_device, ID3D12Device* d3d12_device, bool allow_descriptors_volatile, bool disable_mc = false)
         : DirectMlBaseNode(dml_device, d3d12_device)
@@ -546,7 +546,7 @@ public:
         dimensions_scale.push_back(shape_scale.c);
         dimensions_scale.push_back(shape_scale.h);
         dimensions_scale.push_back(shape_scale.w);
-        dml::TensorDesc desc_scale = { data_type, DML_TENSOR_FLAG_NONE, dimensions_scale };
+        dml::TensorDesc desc_scale = { data_type, bs_managed ? DML_TENSOR_FLAG_OWNED_BY_DML : DML_TENSOR_FLAG_NONE, dimensions_scale };
         input_1_scale_ = dml::InputTensor(graph_, index, desc_scale);
 
         dml::TensorDesc::Dimensions dimensions_zero_point;
@@ -554,7 +554,7 @@ public:
         dimensions_zero_point.push_back(shape_zeropoint.c);
         dimensions_zero_point.push_back(shape_zeropoint.h);
         dimensions_zero_point.push_back(shape_zeropoint.w);
-        dml::TensorDesc desc_zeropoint = { quantized_data_type, DML_TENSOR_FLAG_NONE, dimensions_zero_point };
+        dml::TensorDesc desc_zeropoint = { quantized_data_type, bz_managed ? DML_TENSOR_FLAG_OWNED_BY_DML : DML_TENSOR_FLAG_NONE, dimensions_zero_point };
         input_1_zeropoint_ = dml::InputTensor(graph_, index + 1, desc_zeropoint);
 
         std::vector<dml::Expression> tensor_b_quantization_params(2);
@@ -657,8 +657,27 @@ public:
             }
         }
 
-        input_bindings.push_back({ DML_BINDING_TYPE_BUFFER, &input_scale_buffer_binding });
-        input_bindings.push_back({ DML_BINDING_TYPE_BUFFER, &input_zeropoint_buffer_binding });
+        if (input_1_scale_.GetOutputDesc().flags == DML_TENSOR_FLAG_OWNED_BY_DML)
+        {
+            input_scale_buffer_binding = { nullptr, 0, 0 };
+            input_bindings.push_back({ DML_BINDING_TYPE_NONE, &input_scale_buffer_binding });
+        }
+        else
+        {
+            input_scale_buffer_binding = { resource_scale, 0, resource_scale->GetDesc().Width };
+            input_bindings.push_back({ DML_BINDING_TYPE_BUFFER, &input_scale_buffer_binding });
+        }
+
+        if (input_1_zeropoint_.GetOutputDesc().flags == DML_TENSOR_FLAG_OWNED_BY_DML)
+        {
+            input_zeropoint_buffer_binding = { nullptr, 0, 0 };
+            input_bindings.push_back({ DML_BINDING_TYPE_NONE, &input_zeropoint_buffer_binding });
+        }
+        else
+        {
+            input_zeropoint_buffer_binding = { resource_zeropoint, 0, resource_zeropoint->GetDesc().Width };
+            input_bindings.push_back({ DML_BINDING_TYPE_BUFFER, &input_zeropoint_buffer_binding });
+        }
 
 
         std::vector<DML_BINDING_DESC> output_bindings;
@@ -713,8 +732,25 @@ public:
             input_binds.push_back({ nullptr, 0, 0 });
         }
 
-        input_binds.push_back({ nullptr, 0, 0 });  // tensor scale
-        input_binds.push_back({ nullptr, 0, 0 });  // tensor zero point
+        // tensor scale
+        if (input_1_scale_.GetOutputDesc().flags == DML_TENSOR_FLAG_OWNED_BY_DML)
+        {
+            input_binds.push_back({ resource_scale, 0, resource_scale->GetDesc().Width });
+        }
+        else
+        {
+            input_binds.push_back({ nullptr, 0, 0 });
+        }
+
+        // tensor zero point
+        if (input_1_zeropoint_.GetOutputDesc().flags == DML_TENSOR_FLAG_OWNED_BY_DML)
+        {
+            input_binds.push_back({ resource_zeropoint, 0, resource_zeropoint->GetDesc().Width });
+        }
+        else
+        {
+            input_binds.push_back({ nullptr, 0, 0 });
+        }
 
         DML_BUFFER_ARRAY_BINDING input_bind{};
         input_bind.BindingCount = static_cast<UINT>(input_binds.size());
@@ -769,6 +805,8 @@ public:
         float beta = 1.0f;
 
         bool b_managed = false;
+        bool bs_managed = false;
+        bool bz_managed = false;
         bool c_managed = false;
         bool a_transposed = false;
         bool b_transposed = false;
@@ -800,6 +838,8 @@ public:
             opts->add_flag("--a_transposed", params.a_transposed)->default_val(false);
             opts->add_flag("--b_transposed", params.b_transposed)->default_val(false);
             opts->add_flag("--b_managed", params.b_managed)->default_val(false);
+            opts->add_flag("--bs_managed", params.bs_managed)->default_val(false);
+            opts->add_flag("--bz_managed", params.bz_managed)->default_val(false);
             opts->add_flag("--c_managed", params.c_managed)->default_val(false);
             opts->add_flag("--allow_fp16_computations", params.allow_fp16_computations);
 
@@ -1081,7 +1121,7 @@ public:
             gpu_op::QuantGemm gemm_ref(to_dml_data_type(params_.dt), to_dml_tensor_policy(params_.layout), to_dml_tensor_policy(params_.layout_c),
                 params_.shape_a, params_.shape_b, params_.shape_c, get_shape_output(),
                 get_shape_quant_param(), get_shape_quant_param(), params_.a_quantized, params_.b_quantized, params_.c_quantized, params_.block_size, to_dml_data_type(params_.quant_dt), params_.has_zero_point,
-                params_.a_transposed, false /*params_.b_managed*/, params_.b_transposed, false /*params_.c_managed*/, params_.alpha, params_.beta,
+                params_.a_transposed, false /*params_.b_managed*/, params_.b_transposed, false /*params_.bs_managed*/, false /*params_.bz_managed*/, false /*params_.c_managed*/, params_.alpha, params_.beta,
                 params_.allow_fp16_computations, params_.activation,
                 dml_device_, d3d12_device_, false, true);
             // bind descriptor heap
@@ -1202,7 +1242,7 @@ public:
         : QuantGemmBaseDispatcher(std::move(params), d3d12_device, dml_device, dml_cmd_recorder, cmd_list)
         , quantgemm_(to_dml_data_type(params_.dt), to_dml_tensor_policy(params_.layout), to_dml_tensor_policy(params_.layout_c), params_.shape_a, params_.shape_b, params_.shape_c, get_shape_output(),
             get_shape_quant_param(), get_shape_quant_param(), params_.a_quantized, params_.b_quantized, params_.c_quantized, params_.block_size, to_dml_data_type(params_.quant_dt), params_.has_zero_point,
-            params_.a_transposed, params_.b_managed, params_.b_transposed, params_.c_managed,
+            params_.a_transposed, params_.b_managed, params_.b_transposed, params_.bs_managed, params_.bz_managed, params_.c_managed,
             params_.alpha, params_.beta, params_.allow_fp16_computations, params_.activation,
             dml_device, d3d12_device, allow_descriptors_volatile, false)
     {
