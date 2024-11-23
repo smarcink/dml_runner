@@ -142,6 +142,16 @@ iumd::custom_metacommand::UmdD3d12Device::UmdD3d12Device(ID3D12Device* device, I
         sku_.threads_per_eu = 8;
         sku_.hw_simd_size = 16;
     }
+
+    switch(sku_.igfx)
+    {
+    case UMD_IGFX::eARLH:
+        sku_.l3_cache_size = 8192 * 1024;
+        break;
+    default:
+        break;  // to-do - add more cases
+    }
+
 }
 
 
