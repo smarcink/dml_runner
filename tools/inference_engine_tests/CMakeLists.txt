@@ -7,6 +7,7 @@ project(${PROJECT_NAME})
 set(MAIN_LABEL "")
 set(MAIN_SOURCES
     main.cpp
+    utils.h
 )
 
 # add the test cases
@@ -14,6 +15,8 @@ set(TEST_CASES_DIR      "${CMAKE_CURRENT_SOURCE_DIR}/test_cases")
 set(TEST_CASES_LABEL    "test cases")
 set(TEST_CASES_SOURCES
     ${TEST_CASES_DIR}/test_api.cpp
+    ${TEST_CASES_DIR}/test_operators.cpp
+    ${TEST_CASES_DIR}/test_model.cpp
 )
 
 

@@ -6,7 +6,17 @@ set(SOURCES_DIR "src")
 
 set(TARGET_SOURCES
     ${HEADERS_DIR}/inference_engine.h
+    ${HEADERS_DIR}/inference_engine_export.h
+    ${HEADERS_DIR}/inference_engine_operators.h
+    ${HEADERS_DIR}/inference_engine_tensor.h
+    ${HEADERS_DIR}/inference_engine_model.h
+    
     ${SOURCES_DIR}/inference_engine.cpp
+    ${SOURCES_DIR}/inference_engine_operators.cpp
+    ${SOURCES_DIR}/inference_engine_model.cpp
+    
+    ${SOURCES_DIR}/impl/model.cpp
+    ${SOURCES_DIR}/impl/model.h
 )
 
 add_library(${TARGET_NAME} SHARED ${TARGET_SOURCES})

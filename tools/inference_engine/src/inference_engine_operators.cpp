@@ -1,0 +1,37 @@
+#include "inference_engine_operators.h"
+#include "impl/model.h"
+
+#include <iostream>
+
+
+INFERENCE_ENGINE_API inference_engine_node_t inferenceEngineCreatePort(inference_engine_port_desc_t desc)
+{
+    std::cout << "Created Port" << std::endl;
+
+    auto ret = new inference_engine::Port(desc);
+    return reinterpret_cast<inference_engine_node_t>(ret);
+}
+
+INFERENCE_ENGINE_API void inferenceEngineDestroyNode(inference_engine_node_t node)
+{
+    std::cout << "Destroyed Node" << std::endl;
+    auto typed_node = reinterpret_cast<inference_engine::INode*>(node);
+    delete typed_node;
+}
+
+INFERENCE_ENGINE_API inference_engine_node_t inferenceEngineCreateMatMul(inference_engine_matmul_desc_t desc)
+{
+    std::cout << "Created MatMul" << std::endl;
+
+    auto ret = new inference_engine::MatMul(desc);
+    return reinterpret_cast<inference_engine_node_t>(ret);
+}
+
+INFERENCE_ENGINE_API inference_engine_node_t inferenceEngineCreateActivation(inference_engine_activation_desc_t desc)
+{
+    std::cout << "Created Activation" << std::endl;
+
+    auto ret = new inference_engine::Activation(desc);
+    return reinterpret_cast<inference_engine_node_t>(ret);
+}
+
