@@ -2,7 +2,7 @@
 #include "impl/model.h"
 
 #include <iostream>
-
+#include <cassert>
 
 INFERENCE_ENGINE_API inference_engine_node_t inferenceEngineCreatePort(inference_engine_port_desc_t desc)
 {
@@ -17,6 +17,14 @@ INFERENCE_ENGINE_API void inferenceEngineDestroyNode(inference_engine_node_t nod
     std::cout << "Destroyed Node" << std::endl;
     auto typed_node = reinterpret_cast<inference_engine::INode*>(node);
     delete typed_node;
+}
+
+INFERENCE_ENGINE_API inference_engine_result_t inferenceEngineSetResource(inference_engine_node_t node, inference_engine_resource_t resource)
+{
+    std::cout << "inferenceEngineSetResource" << std::endl;
+    auto typed_node = reinterpret_cast<inference_engine::INode*>(node);
+    typed_node->set_resource(resource);
+    return INFERENCE_ENGINE_RESULT_SUCCESS;
 }
 
 INFERENCE_ENGINE_API inference_engine_node_t inferenceEngineCreateMatMul(inference_engine_matmul_desc_t desc)

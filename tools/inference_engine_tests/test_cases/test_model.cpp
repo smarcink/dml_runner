@@ -1,3 +1,4 @@
+#include "test_gpu_context.h"
 #include "inference_engine_model.h"
 #include "utils.h"
 
@@ -30,8 +31,15 @@ TEST(ModelTest, MatMul_fused_activation)
     // create model with empty config
     auto model_desc = inferenceEngineCreateModelDescriptor({}, &port_out, 1);
 
-    inferenceEngineGetPartitions(model_desc);
+    test_ctx::TestGpuContext gpu_ctx{};
 
+    const auto model = inferenceEngineCompileModelDescriptor(gpu_ctx.get(), model_desc);
+    // can execute here (assign resources call execute)
+    inference_engine_stream_t stream{};
+    inferenceEngineExecuteModel(model, stream);
+    // do conformance check etc ..
+    // ...
+    // delete model
     if (model_desc)
     {
         inferenceEngineDestroyModelDescriptor(model_desc);

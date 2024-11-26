@@ -1,4 +1,5 @@
 #include "inference_engine_model.h"
+#include "impl/gpu_context.h"
 #include "impl/model.h"
 
 #include <iostream>
@@ -30,7 +31,7 @@ INFERENCE_ENGINE_API inference_engine_model_descriptor_t inferenceEngineCreateMo
     }
     else
     {
-        assert(!"not implemeneted");
+        assert(!"not implemented");
     }
 
     std::cout << "Created Model Descriptor" << std::endl;
@@ -52,11 +53,18 @@ INFERENCE_ENGINE_API void inferenceEngineDestroyModelDescriptor(inference_engine
     delete typed_md;
 }
 
-INFERENCE_ENGINE_API inference_engine_model_partition_t* inferenceEngineGetPartitions(inference_engine_model_descriptor_t model_desc)
+INFERENCE_ENGINE_API inference_engine_model_t inferenceEngineCompileModelDescriptor(inference_engine_context_handle_t context, inference_engine_model_descriptor_t model_desc)
 {
+    std::cout << "inferenceEngineCompileModelDescriptor" << std::endl;
+    auto ctx = reinterpret_cast<inference_engine::GpuContext*>(context);
     auto md = reinterpret_cast<inference_engine::ModelDescriptor*>(model_desc);
-    std::cout << "Model descriptor get partitions" << std::endl;
-    const auto partitions = md->get_partitions();
-    return nullptr;
+    auto* exec_model = new inference_engine::ExecutableModel(md->compile_for_gpu(*ctx));
+    return reinterpret_cast<inference_engine_model_t>(exec_model);
+}
+
+INFERENCE_ENGINE_API inference_engine_result_t inferenceEngineExecuteModel(inference_engine_model_t model, inference_engine_stream_t stream)
+{
+    std::cout << "inferenceEngineExecuteModel" << std::endl;
+    return INFERENCE_ENGINE_RESULT_ERROR_UNKNOWN;
 }
 

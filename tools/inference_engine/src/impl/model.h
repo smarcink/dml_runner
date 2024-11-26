@@ -1,3 +1,6 @@
+#pragma once
+#include "impl/gpu_context.h"
+
 #include <vector>
 #include <variant>
 #include <string>
@@ -34,25 +37,33 @@ struct Tensor
 
 struct INode
 {
-    INode() = default;
+    INode()
+    {
+    }
+
     virtual ~INode() = default;
 
-    const std::vector<INode*>& inputs() const {
+    virtual const std::vector<INode*>& inputs() const {
         return inputs_;
     }
 
-    const std::vector<INode*>& output() const {
+    virtual const std::vector<INode*>& output() const {
         return outputs_;
     }
 
-    const ModelNodeType type() const {
+    virtual const ModelNodeType type() const {
         return type_;
+    }
+
+    virtual void set_resource(inference_engine_resource_t r) {
+        resource_ = r;
     }
 
 protected:
     std::vector<INode*> inputs_;
     std::vector<INode*> outputs_;
     ModelNodeType type_ = ModelNodeType::eUnknown;
+    inference_engine_resource_t resource_ = nullptr;
 };
 
 struct Port : public INode
@@ -85,30 +96,57 @@ struct Activation : public INode
     }
 };
 
+
+struct ExecutableModel
+{
+public:
+    ExecutableModel(const std::vector<INode*>& nodes)
+        : nodes_(nodes)
+    {
+        std::cout << "ExecutableModel:" << std::endl;
+    }
+
+    ~ExecutableModel()
+    {
+        std::cout << "~ExecutableModel:" << std::endl;
+    }
+
+    void execute()
+    {
+        std::cout << "ExecutableModel execute()" << std::endl;
+    }
+
+private:
+    std::vector<INode*> nodes_;
+};
+
 class ModelDescriptor
 {
 public:
     ModelDescriptor(std::vector<INode*>&& nodes)
         : nodes_(std::move(nodes))
     {
+        std::cout << "ModelDescriptor:" << std::endl;
     }
 
-    struct Partition
+    ~ModelDescriptor()
     {
+        std::cout << "~ModelDescriptor:" << std::endl;
+    }
 
-    };
-
-    std::vector<Partition> get_partitions() const
+    ExecutableModel compile_for_gpu(GpuContext& gpu_ctx) const
     {
-        std::cout << "Nodes added to model desc:" << std::endl;
+        std::cout << "compile_for_gpu -- Nodes added to model desc:" << std::endl;
         for (const auto& n : nodes_)
         {
             std::cout <<"\t" << model_node_type_to_string(n->type()) << std::endl;
         }
-        return {};
+        return ExecutableModel(nodes_);
     }
 
 private:
     std::vector<INode*> nodes_;
 };
+
+
 }
