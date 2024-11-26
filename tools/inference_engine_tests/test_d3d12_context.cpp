@@ -1,21 +1,6 @@
-#pragma once 
-#include <inference_engine.h>
-#include <inference_engine_operators.h>
+#include "test_d3d12_context.h"
 
-#include <gtest/gtest.h>
-
-template <typename T, typename U>
-inline void set_array(T* array, U x)
-{
-    *array = x;
-}
-
-template <typename T, typename U, typename... V>
-inline void set_array(T* array, U x, V... y)
-{
-    *array = x;
-    set_array(array + 1, y...);
-}
+#include <iostream>
 
 static inference_engine_kernel_t gpu_device_create_kernel(inference_engine_device_t device, const char* kernel_name, const void* kernel_code, size_t kernel_code_size, const char* build_options)
 {
@@ -54,10 +39,19 @@ static void gpu_stream_fill_memory(inference_engine_stream_t stream, inference_e
     std::cout << "Dummy callback gpu_stream_fill_memory" << std::endl;
 }
 
-inline void destroy_node_if_valid(inference_engine_node_t n)
+test_ctx::TestGpuContext::TestGpuContext()
 {
-    if (n)
-    {
-        inferenceEngineDestroyNode(n);
-    }
+    inference_engine_context_callbacks_t callbacks{};
+
+    callbacks.fn_gpu_device_create_kernel = &gpu_device_create_kernel;
+    callbacks.fn_gpu_device_allocate_resource = &gpu_device_allocate_resource;
+
+    callbacks.fn_gpu_kernel_set_arg_resource = &gpu_kernel_set_arg_resource;
+    callbacks.fn_gpu_kernel_set_arg_uint32 = &gpu_kernel_set_arg_uint32;
+    callbacks.fn_gpu_kernel_set_arg_float = &gpu_kernel_set_arg_float;
+
+    callbacks.fn_gpu_stream_execute_kernel = &gpu_stream_execute_kernel;
+    callbacks.fn_gpu_stream_fill_memory = &gpu_stream_fill_memory;
+
+    ctx_ = inferenceEngineCreateContext(INFERENCE_ENGINE_ACCELERATOR_TYPE_GPU, device_, callbacks);
 }
