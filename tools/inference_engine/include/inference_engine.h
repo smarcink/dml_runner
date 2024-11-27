@@ -2,8 +2,8 @@
 #define INFERENCE_ENGINE_H
 
 #include "inference_engine_export.h"
-
-#include <stdint.h>
+#include "inference_engine_error.h"
+#include <cstdint>
 
 #ifdef __cplusplus
 extern "C" {
@@ -44,14 +44,6 @@ typedef struct _inference_engine_callbacks_t
     FN_GPU_STREAM_FILL_MEMORY    fn_gpu_stream_fill_memory;
 
 } inference_engine_context_callbacks_t;
-
-typedef enum _inference_engine_result_t
-{
-    INFERENCE_ENGINE_RESULT_SUCCESS = 0,
-    INFERENCE_ENGINE_RESULT_WRONG_INPUTS = 1,       // possibly extend to give more context...
-    INFERENCE_ENGINE_RESULT_ERROR_UNKNOWN = -1000,
-} inference_engine_result_t;
-
 
 INFERENCE_ENGINE_API inference_engine_context_handle_t inferenceEngineCreateContext(inference_engine_device_t device, inference_engine_context_callbacks_t callbacks);
 INFERENCE_ENGINE_API void inferenceEngineDestroyContext(inference_engine_context_handle_t ctx);

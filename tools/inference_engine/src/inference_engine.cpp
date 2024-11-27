@@ -1,12 +1,23 @@
 #include "inference_engine.h"
 #include "impl/gpu_context.h"
-#include <cassert>
+#include "impl/error.h"
 
 
 INFERENCE_ENGINE_API inference_engine_context_handle_t inferenceEngineCreateContext(inference_engine_device_t device, inference_engine_context_callbacks_t callbacks)
 {
-    auto ctx = new inference_engine::GpuContext(device, callbacks);
-    return reinterpret_cast<inference_engine_context_handle_t>(ctx);
+    try {
+        auto ctx = new inference_engine::GpuContext(device, callbacks);
+        return reinterpret_cast<inference_engine_context_handle_t>(ctx);
+    }
+    catch (const std::bad_alloc&)
+    {
+        inference_engine::set_last_error(INFERENCE_ENGINE_RESULT_BAD_ALLOC);
+    }
+    catch (...)
+    {
+        // don't set the error, as it, hopefully, should be handled already...
+    }
+    return nullptr;
 }
 
 INFERENCE_ENGINE_API void inferenceEngineDestroyContext(inference_engine_context_handle_t ctx)
@@ -17,6 +28,6 @@ INFERENCE_ENGINE_API void inferenceEngineDestroyContext(inference_engine_context
 
 INFERENCE_ENGINE_API inference_engine_result_t inferenceEngineGetLastError()
 {
-    return INFERENCE_ENGINE_RESULT_ERROR_UNKNOWN;
+    return inference_engine::get_last_error();
 }
 

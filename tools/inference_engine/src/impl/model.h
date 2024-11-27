@@ -103,10 +103,6 @@ private:
 struct MatMul : public INode
 {
 	MatMul(const inference_engine_matmul_desc_t& desc);
-  MatMul(const inference_engine_matmul_desc_t& desc) 
-        : INode(ModelNodeType::eMatmul, { to_node(desc.tensor_a), to_node(desc.tensor_b) })
-    {
-    }
 
 	const Tensor& tensor_a() const
 	{

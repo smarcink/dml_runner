@@ -6,6 +6,7 @@ set(SOURCES_DIR "src")
 
 set(TARGET_SOURCES
     ${HEADERS_DIR}/inference_engine.h
+	${HEADERS_DIR}/inference_engine_error.h
     ${HEADERS_DIR}/inference_engine_export.h
     ${HEADERS_DIR}/inference_engine_operators.h
     ${HEADERS_DIR}/inference_engine_tensor.h
@@ -19,6 +20,8 @@ set(TARGET_SOURCES
     ${SOURCES_DIR}/impl/gpu_context.h
     ${SOURCES_DIR}/impl/model.cpp
     ${SOURCES_DIR}/impl/model.h
+    ${SOURCES_DIR}/impl/error.cpp
+	${SOURCES_DIR}/impl/error.h
 )
 
 add_library(${TARGET_NAME} SHARED ${TARGET_SOURCES})

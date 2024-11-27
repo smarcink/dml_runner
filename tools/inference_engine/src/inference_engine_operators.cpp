@@ -1,14 +1,26 @@
 #include "inference_engine_operators.h"
 #include "impl/model.h"
+#include "impl/error.h"
 
 #include <iostream>
 #include <cassert>
 
 INFERENCE_ENGINE_API inference_engine_node_t inferenceEngineCreatePort(inference_engine_port_desc_t desc)
 {
-	std::cout << "Created Port" << std::endl;
-	auto ret = new inference_engine::Port(desc);
-	return reinterpret_cast<inference_engine_node_t>(ret);
+    try {
+	    std::cout << "Created Port" << std::endl;
+	    auto ret = new inference_engine::Port(desc);
+	    return reinterpret_cast<inference_engine_node_t>(ret);
+    }
+	catch (const std::bad_alloc&)
+	{
+		inference_engine::set_last_error(INFERENCE_ENGINE_RESULT_BAD_ALLOC);
+	}
+	catch (...)
+	{
+		// don't set the error, as it, hopefully, should be handled already...
+	}
+	return nullptr;
 }
 
 INFERENCE_ENGINE_API void inferenceEngineDestroyNode(inference_engine_node_t node)
@@ -22,6 +34,7 @@ INFERENCE_ENGINE_API inference_engine_result_t inferenceEngineSetResource(infere
 {
     std::cout << "inferenceEngineSetResource" << std::endl;
     auto typed_node = reinterpret_cast<inference_engine::INode*>(node);
+    assert(typed_node != nullptr);
     typed_node->set_resource(resource);
     return INFERENCE_ENGINE_RESULT_SUCCESS;
 }
@@ -33,17 +46,32 @@ INFERENCE_ENGINE_API inference_engine_node_t inferenceEngineCreateMatMul(inferen
         auto ret = new inference_engine::MatMul(desc);
         return reinterpret_cast<inference_engine_node_t>(ret);
     }
-    catch (...) { // support and set last error...
-
-    }
-    return nullptr;
+	catch (const std::bad_alloc&)
+	{
+		inference_engine::set_last_error(INFERENCE_ENGINE_RESULT_BAD_ALLOC);
+	}
+	catch (...)
+	{
+		// don't set the error, as it, hopefully, should be handled already...
+	}
+	return nullptr;
 }
 
 INFERENCE_ENGINE_API inference_engine_node_t inferenceEngineCreateActivation(inference_engine_activation_desc_t desc)
 {
-    std::cout << "Created Activation" << std::endl;
-
-    auto ret = new inference_engine::Activation(desc);
-    return reinterpret_cast<inference_engine_node_t>(ret);
+	try {
+		std::cout << "Created Activation" << std::endl;
+		auto ret = new inference_engine::Activation(desc);
+		return reinterpret_cast<inference_engine_node_t>(ret);
+	}
+	catch (const std::bad_alloc&)
+	{
+		inference_engine::set_last_error(INFERENCE_ENGINE_RESULT_BAD_ALLOC);
+	}
+	catch (...)
+	{
+		// don't set the error, as it, hopefully, should be handled already...
+	}
+	return nullptr;
 }
 

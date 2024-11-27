@@ -1,6 +1,7 @@
 #include "model.h"
 #include "inference_engine_model.h"
 #include "inference_engine_tensor.h"
+#include "error.h"
 
 namespace inference_engine {
 
@@ -58,14 +59,13 @@ namespace inference_engine {
 	}
 
 	MatMul::MatMul(const inference_engine_matmul_desc_t& desc)
+		: INode(ModelNodeType::eMatmul, { to_node(desc.tensor_a), to_node(desc.tensor_b) })
 	{
-		type_ = ModelNodeType::eMatmul;
-		inputs_.push_back(reinterpret_cast<Port*>(desc.tensor_a));
-		inputs_.push_back(reinterpret_cast<Port*>(desc.tensor_b));
-		outputs_.push_back(this);
-
 		if (!are_tensors_compatible_for_matmul(tensor_a(), tensor_b()))
-			throw std::runtime_error("tensors doesn't match");
+		{
+			inference_engine::set_last_error(INFERENCE_ENGINE_RESULT_INVALID_ARGUMENT);
+			throw std::invalid_argument("tensors doesn't match");
+		}
 	}
 
 } // namespace inference_engine
