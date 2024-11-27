@@ -2,7 +2,9 @@
 #include <stdexcept>
 #include <optional>
 #include <span>
+#include <iostream>
 
+#include <dxcore.h>
 #include <dxgi1_4.h>
 #include <d3d12.h>
 #include <wrl/client.h>
@@ -35,7 +37,7 @@ inline void throw_if_failed(HRESULT hr, std::string_view msg)
     }
 }
 
-inline void initalize_d3d12(ComPtr<ID3D12Device>& d3D12_device, ComPtr<ID3D12CommandQueue>& command_queue, ComPtr<ID3D12CommandAllocator>& command_allocator, ComPtr<ID3D12GraphicsCommandList>& command_list, bool use_rcs)
+inline void initalize_d3d12(ComPtr<ID3D12Device>& d3D12_device, ComPtr<ID3D12CommandQueue>& command_queue, ComPtr<ID3D12CommandAllocator>& command_allocator, ComPtr<ID3D12GraphicsCommandList>& command_list, bool use_rcs, bool use_core_1_0 = false)
 {
 #if defined(_DEBUG)
     ComPtr<ID3D12Debug> d3D12Debug;
@@ -47,36 +49,91 @@ inline void initalize_d3d12(ComPtr<ID3D12Device>& d3D12_device, ComPtr<ID3D12Com
     }
     d3D12Debug->EnableDebugLayer();
 #endif
-    ComPtr<IDXGIFactory4> dxgi_factory;
-    throw_if_failed(CreateDXGIFactory1(IID_PPV_ARGS(dxgi_factory.ReleaseAndGetAddressOf())), "dxgi factory");
 
-    ComPtr<IDXGIAdapter> dxgiAdapter;
-    UINT adapterIndex{};
     HRESULT hr{};
-    do
+    bool use_dx_core_api = false;
+    if (use_dx_core_api)
     {
-        dxgiAdapter = nullptr;
-        throw_if_failed(dxgi_factory->EnumAdapters(adapterIndex, dxgiAdapter.GetAddressOf()), "enum adapters");
-        ++adapterIndex;
+        ComPtr<IDXCoreAdapterFactory> dxcore_adapter_factory;
+        throw_if_failed(::DXCoreCreateAdapterFactory(dxcore_adapter_factory.ReleaseAndGetAddressOf()), "DXCoreCreateAdapterFactory");
+        
+        ComPtr<IDXCoreAdapterList> core_compute_adapters;
+        GUID attributes[]{ DXCORE_ADAPTER_ATTRIBUTE_D3D12_CORE_COMPUTE };
 
-        DXGI_ADAPTER_DESC desc{};
-        throw_if_failed(dxgiAdapter->GetDesc(&desc), "get adapter desc");
-        if (desc.VendorId != 0x8086) // intel
+        throw_if_failed(dxcore_adapter_factory->CreateAdapterList(_countof(attributes),
+                attributes, core_compute_adapters.ReleaseAndGetAddressOf()), "CreateAdapterList");
+
+        ComPtr<IDXCoreAdapter> preferred_adapter;       
+        const auto adapters_count = core_compute_adapters->GetAdapterCount();
+        for (uint32_t i = 0; i < adapters_count; ++i)
         {
-            hr = S_FALSE;
-            continue;
-        }
+            ComPtr<IDXCoreAdapter> candidate_adapter;
+            throw_if_failed(core_compute_adapters->GetAdapter(i, candidate_adapter.ReleaseAndGetAddressOf()), "GetAdapter");
 
-        hr = ::D3D12CreateDevice(
-            dxgiAdapter.Get(),
-            D3D_FEATURE_LEVEL_12_0,
+            std::string drv_description = "";
+            if(candidate_adapter->IsPropertySupported(DXCoreAdapterProperty::DriverDescription))
+            {
+                std::size_t buffer_size = 0;
+                candidate_adapter->GetPropertySize(DXCoreAdapterProperty::DriverDescription, &buffer_size);
+                drv_description.resize(buffer_size);
+                throw_if_failed(candidate_adapter->GetProperty(DXCoreAdapterProperty::DriverDescription, drv_description.size(), drv_description.data()),
+                    "GetProperty DXCoreAdapterProperty::DriverDescription");
+            }
+            std::cout << "DXCoreAdapterProperty::DriverDescription: " << drv_description << std::endl;
+
+            bool is_hardware = false;
+            throw_if_failed(candidate_adapter->GetProperty(DXCoreAdapterProperty::IsHardware, &is_hardware),
+                "GetProperty DXCoreAdapterProperty::IsHardware");
+            std::cout << "DXCoreAdapterProperty::IsHardware: " << is_hardware << std::endl;
+            
+            if (is_hardware)
+            {
+                // Choose the first hardware adapter
+                preferred_adapter = candidate_adapter;
+                break;
+            }
+
+            if (!preferred_adapter)
+            {
+                preferred_adapter = candidate_adapter;
+            }
+        }
+        hr = ::D3D12CreateDevice(preferred_adapter.Get(), use_core_1_0 ? D3D_FEATURE_LEVEL_1_0_CORE : D3D_FEATURE_LEVEL_12_0,
             IID_PPV_ARGS(d3D12_device.ReleaseAndGetAddressOf()));
-        if (hr == DXGI_ERROR_UNSUPPORTED)
+        throw_if_failed(hr, "FAILED DEVICE CREATE");
+    }
+    else
+    {
+        ComPtr<IDXGIFactory4> dxgi_factory;
+        throw_if_failed(CreateDXGIFactory1(IID_PPV_ARGS(dxgi_factory.ReleaseAndGetAddressOf())), "dxgi factory");
+
+        ComPtr<IDXGIAdapter> dxgiAdapter;
+        UINT adapterIndex{};
+        do
         {
-            continue;
-        }
-        throw_if_failed(hr, "create device");
-    } while (hr != S_OK);
+            dxgiAdapter = nullptr;
+            throw_if_failed(dxgi_factory->EnumAdapters(adapterIndex, dxgiAdapter.GetAddressOf()), "enum adapters");
+            ++adapterIndex;
+
+            DXGI_ADAPTER_DESC desc{};
+            throw_if_failed(dxgiAdapter->GetDesc(&desc), "get adapter desc");
+            if (desc.VendorId != 0x8086) // intel
+            {
+                hr = S_FALSE;
+                continue;
+            }
+
+            hr = ::D3D12CreateDevice(
+                dxgiAdapter.Get(),
+                use_core_1_0 ? D3D_FEATURE_LEVEL_1_0_CORE : D3D_FEATURE_LEVEL_12_0,
+                IID_PPV_ARGS(d3D12_device.ReleaseAndGetAddressOf()));
+            if (hr == DXGI_ERROR_UNSUPPORTED)
+            {
+                continue;
+            }
+            throw_if_failed(hr, "create device");
+        } while (hr != S_OK);
+    }
 
     const auto queue_type = use_rcs ? D3D12_COMMAND_LIST_TYPE_DIRECT : D3D12_COMMAND_LIST_TYPE_COMPUTE;
 

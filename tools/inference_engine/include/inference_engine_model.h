@@ -13,12 +13,7 @@ extern "C" {
 typedef struct _inference_engine_model_descriptor_t* inference_engine_model_descriptor_t;
 typedef struct _inference_engine_model_t* inference_engine_model_t;
 
-typedef struct _inference_engine_model_descriptor_config_t
-{
-    inference_engine_accelerator_type_t* preffered_accelerator_list; // List finished with nullptr. Leave empty for model descriptor to choose.
-} inference_engine_model_descriptor_config_t;
-
-INFERENCE_ENGINE_API inference_engine_model_descriptor_t inferenceEngineCreateModelDescriptor(inference_engine_model_descriptor_config_t config, inference_engine_node_t* out_nodes, uint32_t out_nodes_count);
+INFERENCE_ENGINE_API inference_engine_model_descriptor_t inferenceEngineCreateModelDescriptor(inference_engine_node_t* out_nodes, uint32_t out_nodes_count);
 INFERENCE_ENGINE_API void inferenceEngineDestroyModelDescriptor(inference_engine_model_descriptor_t md);
 INFERENCE_ENGINE_API inference_engine_model_t inferenceEngineCompileModelDescriptor(inference_engine_context_handle_t context, inference_engine_model_descriptor_t model_desc);
 INFERENCE_ENGINE_API inference_engine_result_t inferenceEngineExecuteModel(inference_engine_model_t model, inference_engine_stream_t stream);

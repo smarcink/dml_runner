@@ -18,20 +18,11 @@ inline void add_node_to_model_descriptor(inference_engine::INode* node, std::vec
     }
 }
 
-INFERENCE_ENGINE_API inference_engine_model_descriptor_t inferenceEngineCreateModelDescriptor(inference_engine_model_descriptor_config_t config, inference_engine_node_t* nodes, uint32_t out_nodes_count)
+INFERENCE_ENGINE_API inference_engine_model_descriptor_t inferenceEngineCreateModelDescriptor(inference_engine_node_t* nodes, uint32_t out_nodes_count)
 {
     if (!nodes || out_nodes_count == 0)
     {
         return nullptr;
-    }
-    
-    if (!config.preffered_accelerator_list)
-    {
-        std::cout << "preffered_accelerator_list is empty, model descriptor will pick default one: GPU" << std::endl;
-    }
-    else
-    {
-        assert(!"not implemented");
     }
 
     std::cout << "Created Model Descriptor" << std::endl;
