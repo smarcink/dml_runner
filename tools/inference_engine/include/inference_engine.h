@@ -29,8 +29,6 @@ typedef void(*FN_GPU_STREAM_FILL_MEMORY)(inference_engine_stream_t stream, infer
 
 typedef struct _inference_engine_callbacks_t
 {
-    // gpu callbacks..
-
     // device
     FN_GPU_DEVICE_CREATE_KERNEL fn_gpu_device_create_kernel;
     FN_GPU_DEVICE_ALLOCATE_RESOURCE fn_gpu_device_allocate_resource;
@@ -45,10 +43,6 @@ typedef struct _inference_engine_callbacks_t
     FN_GPU_STREAM_EXECUTE_KERNEL fn_gpu_stream_execute_kernel;
     FN_GPU_STREAM_FILL_MEMORY    fn_gpu_stream_fill_memory;
 
-    // cpu callbacks
-
-    // npu callbacks
-
 } inference_engine_context_callbacks_t;
 
 typedef enum _inference_engine_result_t
@@ -58,16 +52,8 @@ typedef enum _inference_engine_result_t
     INFERENCE_ENGINE_RESULT_ERROR_UNKNOWN = -1000,
 } inference_engine_result_t;
 
-typedef enum _inference_engine_accelerator_type_t
-{
-    INFERENCE_ENGINE_ACCELERATOR_TYPE_GPU = 0,
-    INFERENCE_ENGINE_ACCELERATOR_TYPE_CPU,
-    INFERENCE_ENGINE_ACCELERATOR_TYPE_NPU,
-    
-    INFERENCE_ENGINE_ACCELERATOR_TYPE_UNKNOWN = -1000,
-} inference_engine_accelerator_type_t;
 
-INFERENCE_ENGINE_API inference_engine_context_handle_t inferenceEngineCreateContext(inference_engine_accelerator_type_t type, inference_engine_device_t device, inference_engine_context_callbacks_t callbacks);
+INFERENCE_ENGINE_API inference_engine_context_handle_t inferenceEngineCreateContext(inference_engine_device_t device, inference_engine_context_callbacks_t callbacks);
 INFERENCE_ENGINE_API void inferenceEngineDestroyContext(inference_engine_context_handle_t ctx);
 INFERENCE_ENGINE_API inference_engine_result_t inferenceEngineGetLastError();
 

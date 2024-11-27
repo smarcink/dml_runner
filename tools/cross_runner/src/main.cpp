@@ -57,6 +57,7 @@ struct CliOptions
     bool no_conformance_check = false;
     bool print_opts = false;
     bool use_rcs = false;
+    bool use_core_1_0 = false;
     bool volatile_flag = true;
 
     // generic type of layers params
@@ -115,6 +116,7 @@ int main(int argc, const char*argv[])
     dml_runner_app.add_flag("--no_conform", opts.no_conformance_check);
     dml_runner_app.add_flag("--print_opts", opts.print_opts);
     dml_runner_app.add_flag("--use_rcs", opts.use_rcs, "Force using RCS (DIRECT cmd list).")->default_val(false);
+    dml_runner_app.add_flag("--use_core_1_0", opts.use_core_1_0, "Force using CORE_1_0 FEATURE_LEVEL.")->default_val(false);
     dml_runner_app.add_flag("--volatile_flag", opts.volatile_flag, "Force using RCS (DIRECT cmd list).")->default_val(true);
 
     // generic type of layers options
@@ -196,7 +198,7 @@ int main(int argc, const char*argv[])
         ComPtr<ID3D12CommandQueue> command_queue;
         ComPtr<ID3D12CommandAllocator> command_allocator;
         ComPtr<ID3D12GraphicsCommandList> command_list;
-        initalize_d3d12(d3d12_device, command_queue, command_allocator, command_list, opts.use_rcs);
+        initalize_d3d12(d3d12_device, command_queue, command_allocator, command_list, opts.use_rcs, opts.use_core_1_0);
         auto dml_device = create_dml_device(d3d12_device.Get());
         assert(opts.dispatch_iterations < MAX_ITERATIONS);
         auto performance_collector = initialize_d3d12_performance_collector(d3d12_device.Get(), MAX_ITERATIONS);

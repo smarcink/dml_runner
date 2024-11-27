@@ -25,7 +25,7 @@ set(TARGET_SOURCES
 )
 
 add_library(${TARGET_NAME} STATIC ${TARGET_SOURCES})
-target_link_libraries(${TARGET_NAME} PUBLIC dml d3d12 dxgi dxguid d3d12x dmlx dnnl CLI11::CLI11 igdext)
+target_link_libraries(${TARGET_NAME} PUBLIC dml d3d12 dxcore dxgi dxguid d3d12x dmlx dnnl CLI11::CLI11 igdext)
 target_include_directories(${TARGET_NAME} PUBLIC "src")
 target_compile_features(${TARGET_NAME} PUBLIC cxx_std_20)
 target_compile_options(${TARGET_NAME} PUBLIC /W3)

@@ -1,19 +1,13 @@
 #include "utils.h"
-#include "test_d3d12_context.h"
+#include "test_gpu_context.h"
 
 TEST(OperatorTest, Port_basic_0)
 {
-    test_ctx::TestGpuContext gpu_ctx{};
-
     inference_engine_port_desc_t desc{};
     desc.tensor.data_type = inference_engine_data_type_t::XESS_DATA_TYPE_FP16;
     set_array(desc.tensor.dims, 1, 16, 32, 32);
     auto port = inferenceEngineCreatePort(desc);
     EXPECT_TRUE(port != nullptr);
-
-
-
-
     destroy_node_if_valid(port);
 }
 

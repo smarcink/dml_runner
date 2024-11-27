@@ -33,10 +33,17 @@ struct Tensor
 	std::size_t size() const;
 };
 
-struct INode
+class INode
 {
-    INode()
+public:
+
+    INode(ModelNodeType type, const std::vector<INode*>& inputs)
+        : type_(type), inputs_(inputs)
     {
+        for (auto& i : inputs_)
+        {
+            i->add_output(this);
+        }
     }
 
     virtual ~INode() = default;
@@ -47,6 +54,11 @@ struct INode
 
     virtual const std::vector<INode*>& output() const {
         return outputs_;
+    }
+
+    virtual void add_output(INode* n)
+    {
+        outputs_.push_back(n);
     }
 
     virtual const ModelNodeType type() const {
@@ -64,10 +76,16 @@ protected:
     inference_engine_resource_t resource_ = nullptr;
 };
 
+inline INode* to_node(inference_engine_node_t n)
+{
+    return reinterpret_cast<INode*>(n);
+}
+
 struct Port : public INode
 {
 	Port(const inference_engine_port_desc_t& desc)
-		: tensor_(desc.tensor)
+		: INode(ModelNodeType::ePort, {})
+    , tensor_(desc.tensor)
 	{
 		type_ = ModelNodeType::ePort;
 		outputs_.push_back(this);
@@ -85,6 +103,10 @@ private:
 struct MatMul : public INode
 {
 	MatMul(const inference_engine_matmul_desc_t& desc);
+  MatMul(const inference_engine_matmul_desc_t& desc) 
+        : INode(ModelNodeType::eMatmul, { to_node(desc.tensor_a), to_node(desc.tensor_b) })
+    {
+    }
 
 	const Tensor& tensor_a() const
 	{
@@ -100,10 +122,8 @@ struct MatMul : public INode
 struct Activation : public INode
 {
     Activation(const inference_engine_activation_desc_t& desc)
+        : INode(ModelNodeType::eActivation, { to_node(desc.tensor) })
     {
-        type_ = ModelNodeType::eActivation;
-        inputs_.push_back(reinterpret_cast<Port*>(desc.tensor));
-        outputs_.push_back(this);
     }
 };
 
