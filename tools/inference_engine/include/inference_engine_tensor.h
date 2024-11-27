@@ -17,17 +17,9 @@ extern "C" {
         XESS_DATA_TYPE_UNKNOWN = -1000,
     } inference_engine_data_type_t;
 
-	typedef enum {
-		TENSOR_LAYOUT_NCHW,
-		TENSOR_LAYOUT_NHWC,
-		// .. others... 
-		TENSOR_LAYOUT_UNDEFINED = INT32_MAX
-	} inference_engine_tensor_layout_t;
-
 	typedef struct _inference_engine_tensor_t
 	{
 		inference_engine_data_type_t data_type;
-		inference_engine_tensor_layout_t layout;
 		uint64_t dims[INFERENCE_ENGINE_MAX_TENSOR_DIMS];
 		uint64_t strides[INFERENCE_ENGINE_MAX_TENSOR_DIMS];
 	} inference_engine_tensor_t;

@@ -40,15 +40,15 @@ TEST(OperatorTest, Matmul_basic_0)
     destroy_node_if_valid(port_out);
 }
 
-TEST(OperatorTest, Matmul_basic_check_inputs)
+TEST(OperatorTest, Matmul_basic_wrong_2d_sizes)
 {
 	inference_engine_port_desc_t input_desc{};
 	input_desc.tensor.data_type = inference_engine_data_type_t::XESS_DATA_TYPE_FP16;
-	set_array(input_desc.tensor.dims, 1, 2, 16, 32);
+	set_array(input_desc.tensor.dims, 16, 32);
 
 	inference_engine_port_desc_t input_desc2{};
 	input_desc2.tensor.data_type = inference_engine_data_type_t::XESS_DATA_TYPE_FP16;
-	set_array(input_desc2.tensor.dims, 1, 2, 32, 16);
+	set_array(input_desc2.tensor.dims, 3333, 11);
 
 	auto tensor_a = inferenceEngineCreatePort(input_desc);
 	EXPECT_TRUE(tensor_a != nullptr);
@@ -60,11 +60,9 @@ TEST(OperatorTest, Matmul_basic_check_inputs)
 	desc.tensor_b = tensor_b;
 
 	auto port_out = inferenceEngineCreateMatMul(desc);
-	EXPECT_TRUE(port_out != nullptr);
-	EXPECT_EQ(inferenceEngineCheckNodeInputs(port_out), INFERENCE_ENGINE_RESULT_SUCCESS);
+	EXPECT_TRUE(port_out == nullptr);
 	destroy_node_if_valid(tensor_a);
 	destroy_node_if_valid(tensor_b);
-	destroy_node_if_valid(port_out);
 }
 
 TEST(OperatorTest, Activation_basic_0)

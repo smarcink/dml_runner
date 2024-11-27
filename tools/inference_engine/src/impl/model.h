@@ -20,18 +20,15 @@ enum class ModelNodeType
     eUnknown
 };
 const char* to_string(ModelNodeType t);
-const char* to_string(inference_engine_tensor_layout_t t);
 
 
 struct Tensor
 {
     inference_engine_data_type_t data_type = XESS_DATA_TYPE_UNKNOWN;
-    inference_engine_tensor_layout_t layout = TENSOR_LAYOUT_UNDEFINED;
-    void* data = nullptr;   // non-owning pointer to data
     std::vector<std::uint64_t> dims;
 	std::vector<std::uint64_t> strides;
 
-	Tensor(const inference_engine_tensor_t& tensor_desc, void* data_ptr);
+	Tensor(const inference_engine_tensor_t& tensor_desc);
 
 	std::size_t size() const;
 };
@@ -60,10 +57,6 @@ struct INode
         resource_ = r;
     }
 
-    virtual bool check_inputs() const {
-        return true;
-    }
-
 protected:
     std::vector<INode*> inputs_;
     std::vector<INode*> outputs_;
@@ -73,8 +66,8 @@ protected:
 
 struct Port : public INode
 {
-	Port(const inference_engine_port_desc_t& desc, void* data_ptr)
-		: tensor_(desc.tensor, data_ptr)
+	Port(const inference_engine_port_desc_t& desc)
+		: tensor_(desc.tensor)
 	{
 		type_ = ModelNodeType::ePort;
 		outputs_.push_back(this);
@@ -91,13 +84,7 @@ private:
 
 struct MatMul : public INode
 {
-	MatMul(const inference_engine_matmul_desc_t& desc)
-	{
-		type_ = ModelNodeType::eMatmul;
-		inputs_.push_back(reinterpret_cast<Port*>(desc.tensor_a));
-		inputs_.push_back(reinterpret_cast<Port*>(desc.tensor_b));
-		outputs_.push_back(this);
-	}
+	MatMul(const inference_engine_matmul_desc_t& desc);
 
 	const Tensor& tensor_a() const
 	{
@@ -108,8 +95,6 @@ struct MatMul : public INode
 	{
 		return reinterpret_cast<Port*>(inputs_[1])->tensor();
 	}
-
-    bool check_inputs() const override;
 };
 
 struct Activation : public INode

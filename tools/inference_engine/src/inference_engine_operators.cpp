@@ -7,9 +7,7 @@
 INFERENCE_ENGINE_API inference_engine_node_t inferenceEngineCreatePort(inference_engine_port_desc_t desc)
 {
 	std::cout << "Created Port" << std::endl;
-
-	void* data_ptr = nullptr; // todo... pass from outside...
-	auto ret = new inference_engine::Port(desc, data_ptr);
+	auto ret = new inference_engine::Port(desc);
 	return reinterpret_cast<inference_engine_node_t>(ret);
 }
 
@@ -28,22 +26,17 @@ INFERENCE_ENGINE_API inference_engine_result_t inferenceEngineSetResource(infere
     return INFERENCE_ENGINE_RESULT_SUCCESS;
 }
 
-INFERENCE_ENGINE_API inference_engine_result_t inferenceEngineCheckNodeInputs(inference_engine_node_t node)
-{
-	std::cout << "inferenceEngineCheckNodeInputs" << std::endl;
-	auto typed_node = reinterpret_cast<inference_engine::INode*>(node);
-	if (typed_node->check_inputs())
-		return INFERENCE_ENGINE_RESULT_SUCCESS;
-	
-	return INFERENCE_ENGINE_RESULT_WRONG_INPUTS;
-}
-
 INFERENCE_ENGINE_API inference_engine_node_t inferenceEngineCreateMatMul(inference_engine_matmul_desc_t desc)
 {
 	std::cout << "Created MatMul" << std::endl;
+    try {
+        auto ret = new inference_engine::MatMul(desc);
+        return reinterpret_cast<inference_engine_node_t>(ret);
+    }
+    catch (...) { // support and set last error...
 
-	auto ret = new inference_engine::MatMul(desc);
-	return reinterpret_cast<inference_engine_node_t>(ret);
+    }
+    return nullptr;
 }
 
 INFERENCE_ENGINE_API inference_engine_node_t inferenceEngineCreateActivation(inference_engine_activation_desc_t desc)
