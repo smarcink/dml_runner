@@ -13,6 +13,7 @@ extern "C" {
 typedef struct _inference_engine_node_t* inference_engine_node_t;
 INFERENCE_ENGINE_API void inferenceEngineDestroyNode(inference_engine_node_t node);
 INFERENCE_ENGINE_API inference_engine_result_t inferenceEngineSetResource(inference_engine_node_t node, inference_engine_resource_t resource);
+INFERENCE_ENGINE_API inference_engine_result_t inferenceEngineCheckNodeInputs(inference_engine_node_t node);
 
 typedef struct _inference_engine_port_t* inference_engine_port_t;
 typedef struct _inference_engine_port_desc_t

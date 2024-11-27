@@ -54,8 +54,7 @@ typedef struct _inference_engine_callbacks_t
 typedef enum _inference_engine_result_t
 {
     INFERENCE_ENGINE_RESULT_SUCCESS = 0,
-
-
+    INFERENCE_ENGINE_RESULT_WRONG_INPUTS = 1,       // possibly extend to give more context...
     INFERENCE_ENGINE_RESULT_ERROR_UNKNOWN = -1000,
 } inference_engine_result_t;
 

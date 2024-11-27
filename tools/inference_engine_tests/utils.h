@@ -4,17 +4,10 @@
 
 #include <gtest/gtest.h>
 
-template <typename T, typename U>
-inline void set_array(T* array, U x)
+template <typename T, typename... Args>
+inline void set_array(T* array, Args&&... args)
 {
-    *array = x;
-}
-
-template <typename T, typename U, typename... V>
-inline void set_array(T* array, U x, V... y)
-{
-    *array = x;
-    set_array(array + 1, y...);
+	((*(array++) = std::forward<Args>(args)), ...);
 }
 
 static inference_engine_kernel_t gpu_device_create_kernel(inference_engine_device_t device, const char* kernel_name, const void* kernel_code, size_t kernel_code_size, const char* build_options)

@@ -1,5 +1,7 @@
 #pragma once
-#include "impl/gpu_context.h"
+#include "gpu_context.h"
+#include "inference_engine_tensor.h"
+#include "inference_engine_operators.h"
 
 #include <vector>
 #include <variant>
@@ -14,26 +16,25 @@ enum class ModelNodeType
     ePort,
     eMatmul,
     eActivation,
-
+    eConvolution,
     eUnknown
 };
-inline const char* model_node_type_to_string(ModelNodeType t)
-{
-    switch (t)
-    {
-    case ModelNodeType::ePort: return "Port";
-    case ModelNodeType::eMatmul: return "MatMul";
-    case ModelNodeType::eActivation: return "Activation";
-    }
-    return "Unknown";
-}
+const char* to_string(ModelNodeType t);
+const char* to_string(inference_engine_tensor_layout_t t);
+
 
 struct Tensor
 {
+    inference_engine_data_type_t data_type = XESS_DATA_TYPE_UNKNOWN;
+    inference_engine_tensor_layout_t layout = TENSOR_LAYOUT_UNDEFINED;
+    void* data = nullptr;   // non-owning pointer to data
     std::vector<std::uint64_t> dims;
+	std::vector<std::uint64_t> strides;
+
+	Tensor(const inference_engine_tensor_t& tensor_desc, void* data_ptr);
+
+	std::size_t size() const;
 };
-
-
 
 struct INode
 {
@@ -59,6 +60,10 @@ struct INode
         resource_ = r;
     }
 
+    virtual bool check_inputs() const {
+        return true;
+    }
+
 protected:
     std::vector<INode*> inputs_;
     std::vector<INode*> outputs_;
@@ -68,22 +73,43 @@ protected:
 
 struct Port : public INode
 {
-    Port(const inference_engine_port_desc_t& desc)
-    {
-        type_ = ModelNodeType::ePort;
-        outputs_.push_back(this);
-    }
+	Port(const inference_engine_port_desc_t& desc, void* data_ptr)
+		: tensor_(desc.tensor, data_ptr)
+	{
+		type_ = ModelNodeType::ePort;
+		outputs_.push_back(this);
+	}
+
+	const Tensor& tensor() const
+	{
+		return tensor_;
+	}
+
+private:
+	Tensor tensor_;
 };
 
 struct MatMul : public INode
 {
-    MatMul(const inference_engine_matmul_desc_t& desc)
-    {
-        type_ = ModelNodeType::eMatmul;
-        inputs_.push_back(reinterpret_cast<Port*>(desc.tensor_a));
-        inputs_.push_back(reinterpret_cast<Port*>(desc.tensor_b));
-        outputs_.push_back(this);
-    }
+	MatMul(const inference_engine_matmul_desc_t& desc)
+	{
+		type_ = ModelNodeType::eMatmul;
+		inputs_.push_back(reinterpret_cast<Port*>(desc.tensor_a));
+		inputs_.push_back(reinterpret_cast<Port*>(desc.tensor_b));
+		outputs_.push_back(this);
+	}
+
+	const Tensor& tensor_a() const
+	{
+		return reinterpret_cast<Port*>(inputs_[0])->tensor();
+	}
+
+	const Tensor& tensor_b() const
+	{
+		return reinterpret_cast<Port*>(inputs_[1])->tensor();
+	}
+
+    bool check_inputs() const override;
 };
 
 struct Activation : public INode
@@ -139,7 +165,7 @@ public:
         std::cout << "compile_for_gpu -- Nodes added to model desc:" << std::endl;
         for (const auto& n : nodes_)
         {
-            std::cout <<"\t" << model_node_type_to_string(n->type()) << std::endl;
+            std::cout <<"\t" << to_string(n->type()) << std::endl;
         }
         return ExecutableModel(nodes_);
     }
