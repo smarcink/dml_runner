@@ -15,7 +15,6 @@ set(TARGET_SOURCES
     ${SOURCES_DIR}/inference_engine_operators.cpp
     ${SOURCES_DIR}/inference_engine_model.cpp
     
-    ${SOURCES_DIR}/impl/context.h
     ${SOURCES_DIR}/impl/gpu_context.cpp
     ${SOURCES_DIR}/impl/gpu_context.h
     ${SOURCES_DIR}/impl/model.cpp
