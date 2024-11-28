@@ -3,7 +3,7 @@
 
 #include "inference_engine_export.h"
 #include "inference_engine_error.h"
-#include <cstdint>
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
