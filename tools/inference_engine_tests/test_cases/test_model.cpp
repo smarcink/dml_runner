@@ -7,6 +7,9 @@
 
 TEST(OperatorTest, Basic_0)
 {
+    auto device = reinterpret_cast<inference_engine_device_t>(G_DX12_ENGINE.d3d12_device.Get());
+    auto stream = reinterpret_cast<inference_engine_stream_t>(G_DX12_ENGINE.command_list.Get());
+    auto ctx = inferenceEngineCreateContext(device, fill_with_dx12_callbacks());
 
     inference_engine_port_desc_t input_desc{};
     input_desc.tensor.data_type = inference_engine_data_type_t::INFERENCE_ENGINE_DATA_TYPE_FP32;
@@ -41,18 +44,12 @@ TEST(OperatorTest, Basic_0)
     activation_desc.input = input_node;
     auto out_node = inferenceEngineCreateActivation(activation_desc);
 
-    // create model with empty config
-    auto model_desc = inferenceEngineCreateModelDescriptor(&out_node, 1);
-
-    auto device = reinterpret_cast<inference_engine_device_t>(G_DX12_ENGINE.d3d12_device.Get());
-    auto stream = reinterpret_cast<inference_engine_stream_t>(G_DX12_ENGINE.command_list.Get());
-    auto ctx = inferenceEngineCreateContext(device, fill_with_dx12_callbacks());
-
-
-    auto model = inferenceEngineCompileModelDescriptor(ctx, stream, model_desc);
-
     inferenceEngineSetResource(input_node, reinterpret_cast<inference_engine_resource_t>(input_buffer.Get()));
     inferenceEngineSetResource(out_node, reinterpret_cast<inference_engine_resource_t>(output_buffer.Get()));
+
+    // create model with empty config
+    auto model_desc = inferenceEngineCreateModelDescriptor(&out_node, 1);
+    auto model = inferenceEngineCompileModelDescriptor(ctx, stream, model_desc);
 
 
     auto exec_result = inferenceEngineExecuteModel(model, stream);
@@ -87,6 +84,10 @@ TEST(OperatorTest, Basic_0)
 
 TEST(ModelTest, MatMul_fused_activation)
 {
+    auto device = reinterpret_cast<inference_engine_device_t>(G_DX12_ENGINE.d3d12_device.Get());
+    auto stream = reinterpret_cast<inference_engine_stream_t>(G_DX12_ENGINE.command_list.Get());
+    auto ctx = inferenceEngineCreateContext(device, fill_with_dx12_callbacks());
+
     inference_engine_port_desc_t input_desc{};
     input_desc.tensor.data_type = inference_engine_data_type_t::INFERENCE_ENGINE_DATA_TYPE_FP16;
     set_array(input_desc.tensor.dims, 1, 1, 32, 32);
@@ -112,10 +113,6 @@ TEST(ModelTest, MatMul_fused_activation)
     EXPECT_TRUE(port_out != nullptr);
 
     // create model
-    auto device = reinterpret_cast<inference_engine_device_t>(G_DX12_ENGINE.d3d12_device.Get());
-    auto stream = reinterpret_cast<inference_engine_stream_t>(G_DX12_ENGINE.command_list.Get());
-    auto ctx = inferenceEngineCreateContext(device, fill_with_dx12_callbacks());
-
     auto model_desc = inferenceEngineCreateModelDescriptor(&port_out, 1);
     const auto model = inferenceEngineCompileModelDescriptor(ctx, stream, model_desc);
 

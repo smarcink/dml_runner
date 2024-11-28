@@ -15,7 +15,15 @@ typedef struct _inference_engine_stream_t* inference_engine_stream_t;
 typedef struct _inference_engine_kernel_t* inference_engine_kernel_t;
 typedef struct _inference_engine_resource_t* inference_engine_resource_t;
 
-typedef inference_engine_kernel_t(*FN_GPU_DEVICE_CREATE_KERNEL)(inference_engine_device_t device, const char* kernel_name, const void* kernel_code, size_t kernel_code_size, const char* build_options);
+typedef enum _inference_engine_kernel_language_t
+{
+    INFERENCE_ENGINE_KERNEL_LANGUAGE_CM = 0,
+
+
+    INFERENCE_ENGINE_KERNEL_LANGUAGE_UNKNOWN = -1000,
+} inference_engine_kernel_language_t;
+
+typedef inference_engine_kernel_t(*FN_GPU_DEVICE_CREATE_KERNEL)(inference_engine_device_t device, const char* kernel_name, const void* kernel_code, size_t kernel_code_size, const char* build_options, inference_engine_kernel_language_t language);
 typedef inference_engine_resource_t(*FN_GPU_DEVICE_ALLOCATE_RESOURCE)(inference_engine_device_t device, size_t size);
 typedef void(*FN_GPU_KERNEL_SET_ARG_RESOURCE)(inference_engine_kernel_t kernel, uint32_t index, inference_engine_resource_t resource);
 typedef void(*FN_GPU_KERNEL_SET_ARG_UINT32)(inference_engine_kernel_t kernel, uint32_t index, uint32_t value);

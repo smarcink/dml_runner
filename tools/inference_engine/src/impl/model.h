@@ -39,10 +39,28 @@ struct Tensor
             strides.push_back(tensor_desc.strides[i]);
         }
     }
-};
 
 class INode
-{
+    std::size_t bytes_width() const
+    {
+        std::size_t size = 1;
+        for (const auto& d : dims)
+        {
+            size *= d;
+        }
+        switch (data_type)
+        {
+        case inference_engine_data_type_t::INFERENCE_ENGINE_DATA_TYPE_FP32:
+            return size * sizeof(float);
+        case inference_engine_data_type_t::INFERENCE_ENGINE_DATA_TYPE_FP16:
+            return size * sizeof(std::uint16_t);
+        default:
+            assert(!"unsupported");
+        }
+        return 1;
+    }
+};
+
 public:
     INode(ModelNodeType type, const std::vector<INode*>& inputs)
         : type_(type), inputs_(inputs)
@@ -51,7 +69,6 @@ public:
         {
             i->add_output(this);
         }
-        compute_output_tensors();
     }
 
     virtual ~INode() = default;
@@ -60,39 +77,44 @@ public:
         return inputs_;
     }
 
-    virtual const std::vector<INode*>& output() const {
+    virtual const std::vector<INode*>& outputs() const {
         return outputs_;
-    }
-
-    virtual void add_output(INode* n)
-    {
-        outputs_.push_back(n);
     }
 
     virtual const ModelNodeType type() const {
         return type_;
     }
 
-    virtual void set_resource(std::shared_ptr<GpuResource> r) {
-        resources_.push_back(r);
+    virtual void set_resource(GpuResource::Ptr r) {
+        resource_ = r;
     }
 
-    virtual const std::vector<Tensor>& output_tensors() const
+    virtual GpuResource::Ptr get_resource() {
+        return resource_;
+    }
+
+    virtual const Tensor& output_tensor() const
     {
-        return output_tensors_;
+        return output_tensor_;
     }
 
-    virtual std::vector<GpuResource::Ptr> execute() = 0;
+    virtual void compute_output_tensor() = 0;
+    virtual void compile(GpuContext& ctx) = 0;
+    virtual void initalize(GpuStream& stream) = 0;
+    virtual GpuResource::Ptr execute(GpuStream& stream) = 0;
 
-protected:
-    virtual std::vector<Tensor> compute_output_tensors() { return {}; }  // Should be pure virtual =0?
+private:
+    void add_output(INode* n)
+    {
+        outputs_.push_back(n);
+    }
 
 protected:
     std::vector<INode*> inputs_;
     std::vector<INode*> outputs_;
     ModelNodeType type_ = ModelNodeType::eUnknown;
-    std::vector<GpuResource::Ptr> resources_;
-    std::vector<Tensor> output_tensors_;
+    GpuResource::Ptr resource_;
+    Tensor output_tensor_;
 };
 
 inline INode* to_node(inference_engine_node_t n)
@@ -109,18 +131,26 @@ public:
     {
     }
 
-    std::vector<GpuResource::Ptr> execute() override
+    void compile(GpuContext& ctx) override
     {
-        std::cout << "[Port] Execute." << std::endl;
-        return resources_;
+        std::cout << "[Port] Compile." << std::endl;
     }
 
-protected:
-    std::vector<Tensor> compute_output_tensors() override
+    void initalize(GpuStream& stream) override
+    {
+        std::cout << "[Port] Initialize." << std::endl;
+    }
+
+    GpuResource::Ptr execute(GpuStream& stream) override
+    {
+        std::cout << "[Port] Execute." << std::endl;
+        return resource_;
+    }
+
+    void compute_output_tensor() override
     {
         // just an example
-        const auto input = inputs()[0]->output_tensors()[0];
-        return { input };
+        output_tensor_ = Tensor(desc_.tensor);
     }
 
 private:
@@ -136,25 +166,33 @@ public:
     {
     }
 
-    std::vector<GpuResource::Ptr> execute() override
+    void compile(GpuContext& ctx) override
     {
-        std::cout << "[MatMul] Execute." << std::endl;
-        return resources_;
+        std::cout << "[MatMul] Compile." << std::endl;
     }
 
-protected:
-    std::vector<Tensor> compute_output_tensors() override
+    void initalize(GpuStream& stream) override
+    {
+        std::cout << "[MatMul] Initialize." << std::endl;
+    }
+
+    GpuResource::Ptr execute(GpuStream& stream) override
+    {
+        std::cout << "[MatMul] Execute." << std::endl;
+        return resource_;
+    }
+
+    void compute_output_tensor() override
     {
         // just an example
-        const auto input_a = inputs()[0]->output_tensors()[0];
-        const auto input_b = inputs()[1]->output_tensors()[0];
+        const auto input_a = inputs()[0]->output_tensor();
+        const auto input_b = inputs()[1]->output_tensor();
         
-        Tensor ret{};
-        ret.dims[0] = input_a.dims[0];
-        ret.dims[1] = input_a.dims[1];
-        ret.dims[2] = input_a.dims[2];
-        ret.dims[3] = input_b.dims[3];
-        return { ret };
+        output_tensor_.data_type = input_a.data_type;
+        output_tensor_.dims.push_back(input_a.dims[0]);
+        output_tensor_.dims.push_back(input_a.dims[1]);
+        output_tensor_.dims.push_back(input_a.dims[2]);
+        output_tensor_.dims.push_back(input_b.dims[3]);
     }
 
 private:
@@ -170,21 +208,45 @@ public:
     {
     }
 
-    std::vector<GpuResource::Ptr> execute() override
+    void compile(GpuContext& ctx) override
     {
-        std::cout << "[Activation] Execute." << std::endl;
-        return resources_;
+        std::cout << "[Activation] Compile." << std::endl;
+        assert(kernel_ == nullptr); // compile can happen only once
+        return;
+        const char* kernel_str =
+            ""
+            ""
+            "T"
+            ""
+            "";
+
+        const char* build_options = "";
+        kernel_ = ctx.create_kernel("activation_relu_ref", kernel_str, std::strlen(kernel_str), build_options, INFERENCE_ENGINE_KERNEL_LANGUAGE_CM);
     }
 
-protected:
-    std::vector<Tensor> compute_output_tensors() override
+    void initalize(GpuStream& stream) override
+    {
+        std::cout << "[Activation] Initialize." << std::endl;
+    }
+
+    GpuResource::Ptr execute(GpuStream& stream) override
+    {
+        std::cout << "[Activation] Execute." << std::endl;
+        //assert(kernel_);
+
+        //kernel_->set_arg(0, inputs()[0]->)
+
+        return resource_;
+    }
+
+    void compute_output_tensor() override
     {
         // just an example
-        const auto input = inputs()[0]->output_tensors()[0];
-        return { input };
+        output_tensor_ = inputs()[0]->output_tensor();
     }
 private:
     inference_engine_activation_desc_t desc_;
+    GpuKernel::Ptr kernel_;
 };
 
 
@@ -205,18 +267,20 @@ public:
     void execute(GpuStream& stream)
     {
         std::cout << "ExecutableModel execute()" << std::endl;
+
         // We should have topological order of nodes here, we know that model desc just reversed list. For now it should work.
-        std::vector<GpuResource::Ptr> resources_for_barrier{};
-        resources_for_barrier.reserve(100);
         for (auto& n : nodes_)
         {
             std::cout << "\t[Executing] " << model_node_type_to_string(n->type()) << std::endl;
-            auto out_resources = n->execute();
-            // aggregate resources
-            resources_for_barrier.assign(out_resources.begin(), out_resources.end());
-            // we should know dependency graph and when to put resource barriers, but for now always put barrier, after every primitive
-            stream.dispatch_resource_barrier(resources_for_barrier);
-            resources_for_barrier = {}; // clear list
+            auto out_resource = n->execute(stream);
+
+            // aggregate resources and dispatch barrier (sync point) - this is naive, as it will add sync point after each node
+            if (out_resource)
+            {
+                // we should know dependency graph and when to put resource barriers, but for now always put barrier, after every primitive
+                stream.dispatch_resource_barrier(*out_resource);
+            }
+
         }
     }
 
@@ -227,10 +291,23 @@ private:
 class ModelDescriptor
 {
 public:
-    ModelDescriptor(std::vector<INode*>&& nodes)
-        : nodes_(std::move(nodes))
+    ModelDescriptor(const std::vector<INode*>& nodes)
+        : graph_()
     {
         std::cout << "ModelDescriptor:" << std::endl;
+        std::cout << "[Compile][Info] -- Nodes added to model desc:" << std::endl;
+        for (const auto& n : nodes)
+        {
+            std::cout << "\t" << model_node_type_to_string(n->type()) << std::endl;
+        }
+        std::cout << "[Compile][Pre-process] -- Topological sort" << std::endl;
+        // hacky way so we can pass tests (reverse traversal of node, this will not work in more complex scenarios).
+        graph_.reserve(nodes.size());
+        for (auto it = nodes.rbegin(); it != nodes.rend(); ++it)
+        {
+            graph_.push_back((*it));
+        }
+
     }
 
     ~ModelDescriptor()
@@ -248,26 +325,40 @@ public:
         // 4) Uploading constant data to gpu
         // 5) compiling shaders (picking optimized implementations)
 
-        std::cout << "[Compile][Info] -- Nodes added to model desc:" << std::endl;
-        for (const auto& n : nodes_)
+
+        // pass example with current dummy code
+        std::cout << "[Compile][Pass-X] -- Shape prorogations" << std::endl;
+        for (auto& n : graph_)
         {
             std::cout <<"\t" << to_string(n->type()) << std::endl;
+            n->compute_output_tensor();
         }
-        // pass example with current dummy code
-        std::cout << "[Compile][Pass-0] -- Topological sort" << std::endl;
-        // hacky way so we can pass tests (reverse traversal of node, this will not work in more complex scenarios).
-        std::vector<INode*> sorted_nodes{};
-        sorted_nodes.reserve(nodes_.size());
-        for (auto it = nodes_.rbegin(); it != nodes_.rend(); ++it)
+        std::cout << "[Compile][Pass-Q] -- Memory allocations" << std::endl;
+        for (auto& n : graph_)
         {
-            sorted_nodes.push_back((*it));
+            const auto has_resource = n->get_resource();
+            const auto is_intermidate_node = !n->inputs().empty() && !n->outputs().empty();
+            if (!has_resource && is_intermidate_node)
+            {
+                n->set_resource(std::make_shared<GpuResource>(ctx.allocate_resource(n->output_tensor().bytes_width())));
+            }
+        }
+        std::cout << "[Compile][Pass-Y] -- Compile" << std::endl;
+        for (auto& n : graph_)
+        {
+            n->compile(ctx);
+        }
+        std::cout << "[Compile][Pass-Z] -- Initialize" << std::endl;
+        for (auto& n : graph_)
+        {
+            n->initalize(stream);
         }
         // more  passes...
-        return ExecutableModel(sorted_nodes);
+        return ExecutableModel(graph_);
     }
 
 private:
-    std::vector<INode*> nodes_;
+    std::vector<INode*> graph_;
 };
 
 
