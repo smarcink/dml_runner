@@ -23,8 +23,8 @@ INFERENCE_ENGINE_API inference_engine_node_t inferenceEngineCreatePort(inference
 
 typedef struct _inference_engine_matmul_desc_t
 {
-    inference_engine_node_t tensor_a;
-    inference_engine_node_t tensor_b;
+    inference_engine_node_t input_a;
+    inference_engine_node_t input_b;
     // params..
 } inference_engine_matmul_desc_t;
 INFERENCE_ENGINE_API inference_engine_node_t inferenceEngineCreateMatMul(inference_engine_matmul_desc_t desc);
@@ -39,7 +39,7 @@ typedef enum _inference_engine_activation_type_t
 
 typedef struct _inference_engine_activation_desc_t
 {
-    inference_engine_node_t tensor;
+    inference_engine_node_t input;
     inference_engine_activation_type_t type;
     // params...
 } inference_engine_activation_desc_t;

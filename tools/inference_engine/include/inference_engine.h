@@ -13,7 +13,6 @@ typedef struct _inference_engine_context_handle_t* inference_engine_context_hand
 typedef struct _inference_engine_device_t* inference_engine_device_t;
 typedef struct _inference_engine_stream_t* inference_engine_stream_t;
 typedef struct _inference_engine_kernel_t* inference_engine_kernel_t;
-typedef struct _inference_engine_event_t* inference_engine_event_t;
 typedef struct _inference_engine_resource_t* inference_engine_resource_t;
 
 typedef inference_engine_kernel_t(*FN_GPU_DEVICE_CREATE_KERNEL)(inference_engine_device_t device, const char* kernel_name, const void* kernel_code, size_t kernel_code_size, const char* build_options);
@@ -25,7 +24,8 @@ typedef void(*FN_GPU_KERNEL_DESTROY)(inference_engine_kernel_t kernel);
 
 
 typedef void(*FN_GPU_STREAM_EXECUTE_KERNEL)(inference_engine_stream_t stream, inference_engine_kernel_t kernel, uint32_t gws[3], uint32_t lws[3]);
-typedef void(*FN_GPU_STREAM_FILL_MEMORY)(inference_engine_stream_t stream, inference_engine_resource_t dst_resource, size_t size, inference_engine_event_t* out_event, inference_engine_event_t* dep_events, size_t dep_events_count);
+typedef void(*FN_GPU_STREAM_FILL_MEMORY)(inference_engine_stream_t stream, inference_engine_resource_t dst_resource, size_t size);
+typedef void(*FN_GPU_STREAM_RESOURCE_BARRIER)(inference_engine_stream_t stream, inference_engine_resource_t* rsc, size_t rsc_count);
 
 typedef struct _inference_engine_callbacks_t
 {
@@ -40,8 +40,9 @@ typedef struct _inference_engine_callbacks_t
     FN_GPU_KERNEL_DESTROY          fn_gpu_kernel_destroy;
 
     // stream
-    FN_GPU_STREAM_EXECUTE_KERNEL fn_gpu_stream_execute_kernel;
-    FN_GPU_STREAM_FILL_MEMORY    fn_gpu_stream_fill_memory;
+    FN_GPU_STREAM_EXECUTE_KERNEL   fn_gpu_stream_execute_kernel;
+    FN_GPU_STREAM_FILL_MEMORY      fn_gpu_stream_fill_memory;
+    FN_GPU_STREAM_RESOURCE_BARRIER fn_gpu_stream_resource_barrier;
 
 } inference_engine_context_callbacks_t;
 

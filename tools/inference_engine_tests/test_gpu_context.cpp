@@ -98,6 +98,11 @@ ComPtr<ID3D12Resource> create_buffer(ID3D12Device* d3d12_device, std::size_t byt
     return ret;
 }
 
+void dispatch_resource_barrier(ID3D12GraphicsCommandList* command_list, const std::vector<CD3DX12_RESOURCE_BARRIER>& barriers)
+{
+    command_list->ResourceBarrier(static_cast<std::uint32_t>(barriers.size()), barriers.data());
+}
+
 void close_execute_reset_wait(ID3D12Device* d3d12_device, ID3D12CommandQueue* command_queue,
     ID3D12CommandAllocator* command_allocator, ID3D12GraphicsCommandList* command_list)
 {

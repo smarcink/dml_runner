@@ -10,11 +10,11 @@ extern "C" {
 
     typedef enum _inference_engine_data_type_t
     {
-        XESS_DATA_TYPE_FP32 = 0,
-        XESS_DATA_TYPE_FP16,
+        INFERENCE_ENGINE_DATA_TYPE_FP32 = 0,
+        INFERENCE_ENGINE_DATA_TYPE_FP16,
 
 
-        XESS_DATA_TYPE_UNKNOWN = -1000,
+        INFERENCE_ENGINE_DATA_TYPE_UNKNOWN = -1000,
     } inference_engine_data_type_t;
 
 	typedef struct _inference_engine_tensor_t

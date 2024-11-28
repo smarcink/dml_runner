@@ -5,23 +5,27 @@
 #include <memory>
 #include <iostream>
 #include <cassert>
+#include <vector>
+#include <span>
 
 namespace inference_engine
 {
 
     inline inference_engine_context_callbacks_t G_GPU_CBCS = {};
 
-    struct GpuEvent
-    {
-    };
-
     class GpuResource
     {
     public:
-        using Ptr = std::unique_ptr<GpuResource>;
+        using Ptr = std::shared_ptr<GpuResource>;  // resources in general are shared, so we use shared_ptr
     public:
+        GpuResource() = default;
+        GpuResource(inference_engine_resource_t r) 
+            : handle_(r)
+            , is_owner_(true)
+        {}
         GpuResource(inference_engine_device_t device, std::size_t size)
             : handle_(G_GPU_CBCS.fn_gpu_device_allocate_resource(device, size))
+            , is_owner_(false)
         {
             std::cout << "GpuResource C-tor" << std::endl;
         }
@@ -43,20 +47,61 @@ namespace inference_engine
 
         ~GpuResource()
         {
-            std::cout << "~GpuResource(), ToDo: deallocate resource" << std::endl;
+            std::cout << "~GpuResource(), ToDo: deallocate resource if is_owner_ is true" << std::endl;
         }
         inference_engine_resource_t get() { return handle_; }
+        const inference_engine_resource_t get() const { return handle_; }
 
     protected:
-        inference_engine_resource_t handle_;
+        inference_engine_resource_t handle_ = nullptr;
+        bool is_owner_ = false;
     };
 
+
+    class GpuStream
+    {
+    public:
+        using Ptr = std::unique_ptr<GpuResource>;
+    public:
+        GpuStream(inference_engine_stream_t stream)
+            : handle_(stream)
+        {
+            std::cout << "GpuStream C-tor" << std::endl;
+        }
+
+        GpuStream(const GpuStream&& rhs) = delete;
+        GpuStream& operator=(const GpuStream&& rhs) = delete;
+        GpuStream(GpuStream&& rhs) noexcept
+        {
+            std::swap(handle_, rhs.handle_);
+        }
+        GpuStream& operator=(GpuStream&& rhs) noexcept
+        {
+            if (this != &rhs)
+            {
+                std::swap(this->handle_, rhs.handle_);
+            }
+            return *this;
+        }
+
+        ~GpuStream()
+        {
+            std::cout << "~GpuStream(), ToDo: deallocate stream if is owner" << std::endl;
+        }
+        inference_engine_stream_t get() { return handle_; }
+
+        void dispatch_resource_barrier(std::span<GpuResource::Ptr> resource);
+
+    protected:
+        inference_engine_stream_t handle_;
+    };
 
     class GpuKernel
     {
     public:
         using Ptr = std::unique_ptr<GpuKernel>;
     public:
+        GpuKernel() = default;
         GpuKernel(inference_engine_device_t device, const char* kernel_name, const void* kernel_code, std::size_t kernel_code_size, const char* build_options)
             : handle_(G_GPU_CBCS.fn_gpu_device_create_kernel(device, kernel_name, kernel_code, kernel_code_size, build_options))
         {
@@ -82,7 +127,10 @@ namespace inference_engine
         ~GpuKernel()
         {
             std::cout << "Deleted GpuKernel" << std::endl;
-            G_GPU_CBCS.fn_gpu_kernel_destroy(handle_);
+            if (handle_)
+            {
+                G_GPU_CBCS.fn_gpu_kernel_destroy(handle_);
+            }
         }
 
         void set_arg(std::uint32_t idx, GpuResource& rsc)

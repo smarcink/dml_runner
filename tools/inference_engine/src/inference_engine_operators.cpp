@@ -34,8 +34,7 @@ INFERENCE_ENGINE_API inference_engine_result_t inferenceEngineSetResource(infere
 {
     std::cout << "inferenceEngineSetResource" << std::endl;
     auto typed_node = reinterpret_cast<inference_engine::INode*>(node);
-    assert(typed_node != nullptr);
-    typed_node->set_resource(resource);
+    typed_node->set_resource(std::make_shared<inference_engine::GpuResource>(resource));
     return INFERENCE_ENGINE_RESULT_SUCCESS;
 }
 

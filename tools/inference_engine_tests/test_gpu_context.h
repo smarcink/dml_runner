@@ -40,6 +40,8 @@ ComPtr<ID3D12DescriptorHeap> create_descriptor_heap(ID3D12Device* d3d12_device, 
 
 ComPtr<ID3D12Resource> create_buffer(ID3D12Device* d3d12_device, std::size_t bytes_width, D3D12_HEAP_TYPE heap_type, D3D12_RESOURCE_STATES init_state, D3D12_RESOURCE_FLAGS resource_flag = D3D12_RESOURCE_FLAG_NONE);
 
+void dispatch_resource_barrier(ID3D12GraphicsCommandList* command_list, const std::vector<CD3DX12_RESOURCE_BARRIER>& barriers);
+
 class IntelExtension
 {
 public:
@@ -216,9 +218,24 @@ inline void gpu_stream_execute_kernel(inference_engine_stream_t stream, inferenc
     std::cout << "Dummy callback gpu_stream_execute_kernel" << std::endl;
 }
 
-inline void gpu_stream_fill_memory(inference_engine_stream_t stream, inference_engine_resource_t dst_resource, size_t size, inference_engine_event_t* out_event, inference_engine_event_t* dep_events, size_t dep_events_count)
+inline void gpu_stream_fill_memory(inference_engine_stream_t stream, inference_engine_resource_t dst_resource, size_t size)
 {
     std::cout << "Dummy callback gpu_stream_fill_memory" << std::endl;
+}
+
+inline void gpu_stream_resource_barrier(inference_engine_stream_t stream, inference_engine_resource_t* rsc_list, size_t rsc_list_size)
+{
+    std::cout << "[callback]  gpu_stream_resource_barrier" << std::endl;
+
+    auto cmd_list = reinterpret_cast<ID3D12GraphicsCommandList*>(stream);
+    std::vector<CD3DX12_RESOURCE_BARRIER> barriers;
+    std::vector<ID3D12Resource*> rscs(rsc_list_size);
+    for (auto i = 0; i < rsc_list_size; i++)
+    {
+        rscs[i] = reinterpret_cast<ID3D12Resource*>(rsc_list[i]);
+        barriers.push_back(CD3DX12_RESOURCE_BARRIER::UAV(rscs[i]));
+    }   
+    dispatch_resource_barrier(cmd_list, barriers);
 }
 
 } // namespace dx12 callbacks
@@ -236,6 +253,7 @@ inline inference_engine_context_callbacks_t fill_with_dx12_callbacks()
 
     callbacks.fn_gpu_stream_execute_kernel = &dx12_callbacks::gpu_stream_execute_kernel;
     callbacks.fn_gpu_stream_fill_memory = &dx12_callbacks::gpu_stream_fill_memory;
+    callbacks.fn_gpu_stream_resource_barrier = &dx12_callbacks::gpu_stream_resource_barrier;
 
     return callbacks;
 }
