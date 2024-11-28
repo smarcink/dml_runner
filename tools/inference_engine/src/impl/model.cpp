@@ -40,32 +40,17 @@ namespace inference_engine {
 		return false; // unknown format?
 	}
 
-	Tensor::Tensor(const inference_engine_tensor_t& tensor_desc) 
-		: data_type(tensor_desc.data_type)
-	{
-		for (int i = 0; i < INFERENCE_ENGINE_MAX_TENSOR_DIMS && tensor_desc.dims[i] != 0; ++i)
-		{
-			dims.push_back(tensor_desc.dims[i]);
-			strides.push_back(tensor_desc.strides[i]);
-		}
-	}
-
-	std::size_t Tensor::size() const
-	{
-		std::size_t total_size = 1;
-		for (const auto& dim : dims)
-			total_size *= dim;
-		return total_size;
-	}
-
 	MatMul::MatMul(const inference_engine_matmul_desc_t& desc)
-		: INode(ModelNodeType::eMatmul, { to_node(desc.tensor_a), to_node(desc.tensor_b) })
+		: INode(ModelNodeType::eMatmul, { to_node(desc.input_a), to_node(desc.input_b) })
+		, desc_(desc)
 	{
-		if (!are_tensors_compatible_for_matmul(tensor_a(), tensor_b()))
-		{
-			inference_engine::set_last_error(INFERENCE_ENGINE_RESULT_INVALID_ARGUMENT);
-			throw std::invalid_argument("tensors doesn't match");
-		}
+		/*if (inputs_.size() != 2 || 
+			inputs_[0]->output_tensors().empty() || 
+			inputs_[1]->output_tensors().empty() ||
+			!are_tensors_compatible_for_matmul(inputs_[0]->output_tensors()[0], inputs_[1]->output_tensors()[0]))
+			throw inference_engine_exception(INFERENCE_ENGINE_RESULT_INVALID_ARGUMENT);*/
+
+		// what if our inputs have more outputs... ?
 	}
 
 } // namespace inference_engine

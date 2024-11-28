@@ -40,27 +40,27 @@ struct Tensor
         }
     }
 
-class INode
-    std::size_t bytes_width() const
-    {
-        std::size_t size = 1;
-        for (const auto& d : dims)
-        {
-            size *= d;
-        }
-        switch (data_type)
-        {
-        case inference_engine_data_type_t::INFERENCE_ENGINE_DATA_TYPE_FP32:
-            return size * sizeof(float);
-        case inference_engine_data_type_t::INFERENCE_ENGINE_DATA_TYPE_FP16:
-            return size * sizeof(std::uint16_t);
-        default:
-            assert(!"unsupported");
-        }
-        return 1;
-    }
+	std::size_t bytes_width() const
+	{
+		std::size_t size = 1;
+		for (const auto& d : dims)
+		{
+			size *= d;
+		}
+		switch (data_type)
+		{
+		case inference_engine_data_type_t::INFERENCE_ENGINE_DATA_TYPE_FP32:
+			return size * sizeof(float);
+		case inference_engine_data_type_t::INFERENCE_ENGINE_DATA_TYPE_FP16:
+			return size * sizeof(std::uint16_t);
+		default:
+			assert(!"unsupported");
+		}
+		return 1;
+	}
 };
 
+class INode {
 public:
     INode(ModelNodeType type, const std::vector<INode*>& inputs)
         : type_(type), inputs_(inputs)
@@ -129,6 +129,7 @@ public:
         : INode(ModelNodeType::ePort, {})
         , desc_(desc)
     {
+        
     }
 
     void compile(GpuContext& ctx) override
@@ -160,11 +161,7 @@ private:
 class MatMul : public INode
 {
 public:
-    MatMul(const inference_engine_matmul_desc_t& desc) 
-        : INode(ModelNodeType::eMatmul, { to_node(desc.input_a), to_node(desc.input_b) })
-        , desc_(desc)
-    {
-    }
+    MatMul(const inference_engine_matmul_desc_t& desc);
 
     void compile(GpuContext& ctx) override
     {
@@ -271,7 +268,7 @@ public:
         // We should have topological order of nodes here, we know that model desc just reversed list. For now it should work.
         for (auto& n : nodes_)
         {
-            std::cout << "\t[Executing] " << model_node_type_to_string(n->type()) << std::endl;
+            std::cout << "\t[Executing] " << to_string(n->type()) << std::endl;
             auto out_resource = n->execute(stream);
 
             // aggregate resources and dispatch barrier (sync point) - this is naive, as it will add sync point after each node
@@ -292,13 +289,12 @@ class ModelDescriptor
 {
 public:
     ModelDescriptor(const std::vector<INode*>& nodes)
-        : graph_()
     {
         std::cout << "ModelDescriptor:" << std::endl;
         std::cout << "[Compile][Info] -- Nodes added to model desc:" << std::endl;
         for (const auto& n : nodes)
         {
-            std::cout << "\t" << model_node_type_to_string(n->type()) << std::endl;
+            std::cout << "\t" << to_string(n->type()) << std::endl;
         }
         std::cout << "[Compile][Pre-process] -- Topological sort" << std::endl;
         // hacky way so we can pass tests (reverse traversal of node, this will not work in more complex scenarios).
