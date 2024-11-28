@@ -334,7 +334,7 @@ TEST_P(DnnlPluginNext_GEMM_Activations, BigSizes)
     set_N(256);
     set_use_c_tensor();
     set_alpha_value(1.5f);
-    set_alpha_value(1.5f);
+    set_beta_value(1.5f);
     run();
 }
 
