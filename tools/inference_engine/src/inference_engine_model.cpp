@@ -44,18 +44,29 @@ INFERENCE_ENGINE_API void inferenceEngineDestroyModelDescriptor(inference_engine
     delete typed_md;
 }
 
-INFERENCE_ENGINE_API inference_engine_model_t inferenceEngineCompileModelDescriptor(inference_engine_context_handle_t context, inference_engine_model_descriptor_t model_desc)
+INFERENCE_ENGINE_API inference_engine_model_t inferenceEngineCompileModelDescriptor(inference_engine_context_handle_t context, inference_engine_stream_t stream, inference_engine_model_descriptor_t model_desc)
 {
     std::cout << "inferenceEngineCompileModelDescriptor" << std::endl;
     auto ctx = reinterpret_cast<inference_engine::GpuContext*>(context);
     auto md = reinterpret_cast<inference_engine::ModelDescriptor*>(model_desc);
-    auto* exec_model = new inference_engine::ExecutableModel(md->compile_for_gpu(*ctx));
+    auto str = reinterpret_cast<inference_engine::GpuStream*>(stream);
+    auto* exec_model = new inference_engine::ExecutableModel(md->compile(*ctx, *str));
     return reinterpret_cast<inference_engine_model_t>(exec_model);
 }
 
 INFERENCE_ENGINE_API inference_engine_result_t inferenceEngineExecuteModel(inference_engine_model_t model, inference_engine_stream_t stream)
 {
     std::cout << "inferenceEngineExecuteModel" << std::endl;
-    return INFERENCE_ENGINE_RESULT_ERROR_UNKNOWN;
+    try
+    {
+        auto md = reinterpret_cast<inference_engine::ExecutableModel*>(model);
+        auto str = inference_engine::GpuStream(stream);  // temporary object, handle passed by user, library do not own this.
+        md->execute(str);
+    }
+    catch (...)
+    {
+        return INFERENCE_ENGINE_RESULT_ERROR_UNKNOWN;
+    }
+    return INFERENCE_ENGINE_RESULT_SUCCESS;
 }
 
