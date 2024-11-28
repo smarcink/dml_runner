@@ -176,7 +176,7 @@ inline Dx12Engine G_DX12_ENGINE{};
 namespace dx12_callbacks
 {
 
-inline inference_engine_kernel_t gpu_device_create_kernel(inference_engine_device_t device, const char* kernel_name, const void* kernel_code, size_t kernel_code_size, const char* build_options)
+inline inference_engine_kernel_t gpu_device_create_kernel(inference_engine_device_t device, const char* kernel_name, const void* kernel_code, size_t kernel_code_size, const char* build_options, inference_engine_kernel_language_t language)
 {
     std::cout << "dummy gpu_device_create_kernel" << std::endl;
     return nullptr;
@@ -184,9 +184,9 @@ inline inference_engine_kernel_t gpu_device_create_kernel(inference_engine_devic
 
 inline inference_engine_resource_t gpu_device_allocate_resource(inference_engine_device_t device, size_t size)
 {
-    std::cout << "[callback] gpu_device_allocate_resource" << std::endl;
-    auto dx12 = reinterpret_cast<Dx12Engine*>(device);
-    auto dx_buffer = create_buffer(dx12->d3d12_device.Get(), size, D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    std::cout << "[callback] gpu_device_allocate_resource, size: " << size << std::endl;
+    auto dx12_device = reinterpret_cast<ID3D12Device*>(device);
+    auto dx_buffer = create_buffer(dx12_device, size, D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     auto handle = reinterpret_cast<inference_engine_resource_t>(dx_buffer.Detach());
     return handle;
 }

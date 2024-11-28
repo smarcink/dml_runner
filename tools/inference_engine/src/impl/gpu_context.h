@@ -21,13 +21,15 @@ namespace inference_engine
         GpuResource() = default;
         GpuResource(inference_engine_resource_t r) 
             : handle_(r)
-            , is_owner_(true)
-        {}
-        GpuResource(inference_engine_device_t device, std::size_t size)
-            : handle_(G_GPU_CBCS.fn_gpu_device_allocate_resource(device, size))
             , is_owner_(false)
         {
-            std::cout << "GpuResource C-tor" << std::endl;
+            std::cout << "GpuResource C-tor non-owning handle" << std::endl;
+        }
+        GpuResource(inference_engine_device_t device, std::size_t size)
+            : handle_(G_GPU_CBCS.fn_gpu_device_allocate_resource(device, size))
+            , is_owner_(true)
+        {
+            std::cout << "GpuResource C-tor owning handle, size: " << size << std::endl;
         }
 
         GpuResource(const GpuResource&& rhs) = delete;
@@ -90,7 +92,7 @@ namespace inference_engine
         }
         inference_engine_stream_t get() { return handle_; }
 
-        void dispatch_resource_barrier(std::span<GpuResource::Ptr> resource);
+        void dispatch_resource_barrier(GpuResource& resource);  //ToDo: this in future will need to support list of resources/events
 
     protected:
         inference_engine_stream_t handle_;
@@ -102,8 +104,8 @@ namespace inference_engine
         using Ptr = std::unique_ptr<GpuKernel>;
     public:
         GpuKernel() = default;
-        GpuKernel(inference_engine_device_t device, const char* kernel_name, const void* kernel_code, std::size_t kernel_code_size, const char* build_options)
-            : handle_(G_GPU_CBCS.fn_gpu_device_create_kernel(device, kernel_name, kernel_code, kernel_code_size, build_options))
+        GpuKernel(inference_engine_device_t device, const char* kernel_name, const void* kernel_code, std::size_t kernel_code_size, const char* build_options, inference_engine_kernel_language_t language)
+            : handle_(G_GPU_CBCS.fn_gpu_device_create_kernel(device, kernel_name, kernel_code, kernel_code_size, build_options, language))
         {
             std::cout << "Created GpuKernel" << std::endl;
             assert(handle_ != nullptr);
@@ -193,9 +195,9 @@ namespace inference_engine
         }
 
         GpuKernel::Ptr create_kernel(const char* kernel_name,
-            const void* kernel_code, std::size_t kernel_code_size, const char* build_options)
+            const void* kernel_code, std::size_t kernel_code_size, const char* build_options, inference_engine_kernel_language_t language)
         {
-            return std::make_unique<GpuKernel>(device_, kernel_name, kernel_code, kernel_code_size, build_options);
+            return std::make_unique<GpuKernel>(device_, kernel_name, kernel_code, kernel_code_size, build_options, language);
         }
 
         GpuResource allocate_resource(std::size_t size)
