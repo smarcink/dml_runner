@@ -138,6 +138,11 @@ namespace custom_metacommand
             return sku_.threads_per_eu * sku_.eu_per_dss * sku_.hw_simd_size;
         };
 
+        std::uint32_t get_l3_cache_size() const //override
+        {
+            return 16 * 1024 * 1024; // FixMe: 16MB is a plug
+        };
+
         UMD_IGFX get_umd_igfx() const override
         {
             return sku_.igfx;

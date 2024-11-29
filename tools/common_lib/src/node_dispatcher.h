@@ -19,6 +19,7 @@ enum class NodeType
     eMhaCm,
     eMemoryBandwidth,
     eQuantGemmDml,
+    eQuantGemmUmdD3d12,
     eCount
 };
 
