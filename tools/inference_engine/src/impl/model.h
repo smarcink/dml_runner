@@ -9,6 +9,9 @@
 #include <span>
 #include <iostream>
 #include <map>
+#include <unordered_set>
+#include <unordered_map>
+#include <stack>
 
 namespace inference_engine
 {
@@ -40,24 +43,24 @@ struct Tensor
         }
     }
 
-	std::size_t bytes_width() const
-	{
-		std::size_t size = 1;
-		for (const auto& d : dims)
-		{
-			size *= d;
-		}
-		switch (data_type)
-		{
-		case inference_engine_data_type_t::INFERENCE_ENGINE_DATA_TYPE_FP32:
-			return size * sizeof(float);
-		case inference_engine_data_type_t::INFERENCE_ENGINE_DATA_TYPE_FP16:
-			return size * sizeof(std::uint16_t);
-		default:
-			assert(!"unsupported");
-		}
-		return 1;
-	}
+    std::size_t bytes_width() const
+    {
+        std::size_t size = 1;
+        for (const auto& d : dims)
+        {
+            size *= d;
+        }
+        switch (data_type)
+        {
+        case inference_engine_data_type_t::INFERENCE_ENGINE_DATA_TYPE_FP32:
+            return size * sizeof(float);
+        case inference_engine_data_type_t::INFERENCE_ENGINE_DATA_TYPE_FP16:
+            return size * sizeof(std::uint16_t);
+        default:
+            assert(!"unsupported");
+        }
+        return 1;
+    }
 };
 
 class INode {
@@ -246,6 +249,47 @@ private:
     GpuKernel::Ptr kernel_;
 };
 
+class DAG {
+public:
+    void add_node(INode* node) {
+        nodes_.emplace(node);
+    }
+
+    void add_edge(INode* from, INode* to) {
+        adjacency_list_[from].push_back(to);
+    }
+
+    std::vector<INode*> topological_sort() {
+        std::unordered_set<INode*> visited;
+        std::stack<INode*> stack;
+        for (const auto& node : nodes_) {
+            if (!visited.contains(node)) {
+                topological_sort_util(node, visited, stack);
+            }
+        }
+
+        std::vector<INode*> sorted;
+        while (!stack.empty()) {
+            sorted.push_back(stack.top());
+            stack.pop();
+        }
+        return sorted;
+    }
+
+private:
+    void topological_sort_util(INode* node, std::unordered_set<INode*>& visited, std::stack<INode*>& stack) {
+        visited.insert(node);
+        for (INode* adjacent : adjacency_list_[node]) {
+            if (!visited.contains(adjacent)) {
+                topological_sort_util(adjacent, visited, stack);
+            }
+        }
+        stack.push(node);
+    }
+
+    std::unordered_set<INode*> nodes_;
+    std::unordered_map<INode*, std::vector<INode*>> adjacency_list_;
+};
 
 struct ExecutableModel
 {
@@ -295,15 +339,16 @@ public:
         for (const auto& n : nodes)
         {
             std::cout << "\t" << to_string(n->type()) << std::endl;
+            dag_.add_node(n);
         }
-        std::cout << "[Compile][Pre-process] -- Topological sort" << std::endl;
-        // hacky way so we can pass tests (reverse traversal of node, this will not work in more complex scenarios).
-        graph_.reserve(nodes.size());
-        for (auto it = nodes.rbegin(); it != nodes.rend(); ++it)
+        std::cout << "[Compile][Pre-process] -- Building graph" << std::endl;
+        for (const auto& n : nodes)
         {
-            graph_.push_back((*it));
+            for (const auto& input : n->inputs())
+            {
+                dag_.add_edge(input, n);
+            }
         }
-
     }
 
     ~ModelDescriptor()
@@ -311,7 +356,7 @@ public:
         std::cout << "~ModelDescriptor:" << std::endl;
     }
 
-    ExecutableModel compile(GpuContext& ctx, GpuStream& stream) const
+    ExecutableModel compile(GpuContext& ctx, GpuStream& stream)
     {
         //ToDo: we need some data structure to represent graph (random order of example features below)
         // 1) Sorting graph
@@ -321,16 +366,17 @@ public:
         // 4) Uploading constant data to gpu
         // 5) compiling shaders (picking optimized implementations)
 
+        std::cout << "[Compile][Pass-X] -- Topological sort\n";
+        auto sorted_nodes = dag_.topological_sort();
 
-        // pass example with current dummy code
-        std::cout << "[Compile][Pass-X] -- Shape prorogations" << std::endl;
-        for (auto& n : graph_)
+        std::cout << "[Compile][Pass-Y] -- Shape prorogations" << std::endl;
+        for (auto& n : sorted_nodes)
         {
-            std::cout <<"\t" << to_string(n->type()) << std::endl;
+            std::cout << "\t" << to_string(n->type()) << std::endl;
             n->compute_output_tensor();
         }
         std::cout << "[Compile][Pass-Q] -- Memory allocations" << std::endl;
-        for (auto& n : graph_)
+        for (auto& n : sorted_nodes)
         {
             const auto has_resource = n->get_resource();
             const auto is_intermidate_node = !n->inputs().empty() && !n->outputs().empty();
@@ -339,23 +385,22 @@ public:
                 n->set_resource(std::make_shared<GpuResource>(ctx.allocate_resource(n->output_tensor().bytes_width())));
             }
         }
-        std::cout << "[Compile][Pass-Y] -- Compile" << std::endl;
-        for (auto& n : graph_)
+        std::cout << "[Compile][Pass-Z] -- Compile" << std::endl;
+        for (auto& n : sorted_nodes)
         {
             n->compile(ctx);
         }
-        std::cout << "[Compile][Pass-Z] -- Initialize" << std::endl;
-        for (auto& n : graph_)
+        std::cout << "[Compile][Pass-W] -- Initialize" << std::endl;
+        for (auto& n : sorted_nodes)
         {
             n->initalize(stream);
         }
-        // more  passes...
-        return ExecutableModel(graph_);
+        return ExecutableModel(sorted_nodes);
     }
 
 private:
-    std::vector<INode*> graph_;
+    DAG dag_;
 };
 
 
-}
+} // namespace inference_engine
