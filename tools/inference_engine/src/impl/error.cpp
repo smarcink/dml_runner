@@ -6,7 +6,7 @@
 #include <iostream>
 #endif
 
-static inference_engine_result_t g_last_error = INFERENCE_ENGINE_RESULT_ERROR_UNKNOWN;
+static inference_engine_result_t g_last_error = INFERENCE_ENGINE_RESULT_SUCCESS;
 
 namespace inference_engine
 {
