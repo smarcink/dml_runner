@@ -2,20 +2,12 @@
 #include <inference_engine.h>
 #include <inference_engine_operators.h>
 #include <gtest/gtest.h>
-
 #include <random>
 
-template <typename T, typename U>
-inline void set_array(T* array, U x)
+template <typename T, typename... Args>
+inline void set_array(T* array, Args&&... args)
 {
-    *array = x;
-}
-
-template <typename T, typename U, typename... V>
-inline void set_array(T* array, U x, V... y)
-{
-    *array = x;
-    set_array(array + 1, y...);
+	((*(array++) = std::forward<Args>(args)), ...);
 }
 
 inline void destroy_node_if_valid(inference_engine_node_t n)

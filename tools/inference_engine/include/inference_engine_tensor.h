@@ -17,12 +17,12 @@ extern "C" {
         INFERENCE_ENGINE_DATA_TYPE_UNKNOWN = -1000,
     } inference_engine_data_type_t;
 
-typedef struct _inference_engine_tensor_t
-{
-    inference_engine_data_type_t data_type;
-    uint64_t dims[INFERENCE_ENGINE_MAX_TENSOR_DIMS];
-    uint64_t strides[INFERENCE_ENGINE_MAX_TENSOR_DIMS];
-} inference_engine_tensor_t;
+	typedef struct _inference_engine_tensor_t
+	{
+		inference_engine_data_type_t data_type;
+		uint64_t dims[INFERENCE_ENGINE_MAX_TENSOR_DIMS];
+		uint64_t strides[INFERENCE_ENGINE_MAX_TENSOR_DIMS];
+	} inference_engine_tensor_t;
 
 #ifdef __cplusplus
 }
