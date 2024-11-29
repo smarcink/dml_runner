@@ -160,20 +160,20 @@ TEST(ModelTest, MatMul_6_nodes)
     inference_engine_matmul_desc_t matmul_desc{};
     matmul_desc.input_a = input_a;
     matmul_desc.input_b = input_b;
-    auto port_matmul_out = inferenceEngineCreateMatMul(matmul_desc);
-    EXPECT_TRUE(port_matmul_out != nullptr);
+    auto port_matmul_a = inferenceEngineCreateMatMul(matmul_desc);
+    EXPECT_TRUE(port_matmul_a != nullptr);
 
     // activation
     inference_engine_activation_desc_t activation_desc{};
     activation_desc.input = input_c;
     activation_desc.type = INFERENCE_ENGINE_ACTIVATION_TYPE_RELU;
-    auto port_out = inferenceEngineCreateActivation(activation_desc);
-    EXPECT_TRUE(port_out != nullptr);
+    auto port_activation = inferenceEngineCreateActivation(activation_desc);
+    EXPECT_TRUE(port_activation != nullptr);
 
     // MatMul final
     inference_engine_matmul_desc_t matmul_desc_final{};
-    matmul_desc_final.input_a = port_matmul_out;
-    matmul_desc_final.input_b = port_out;
+    matmul_desc_final.input_a = port_matmul_a;
+    matmul_desc_final.input_b = port_activation;
     auto port_matmul_out_final = inferenceEngineCreateMatMul(matmul_desc_final);
     EXPECT_TRUE(port_matmul_out_final != nullptr);
 
@@ -193,8 +193,8 @@ TEST(ModelTest, MatMul_6_nodes)
     destroy_node_if_valid(input_a);
     destroy_node_if_valid(input_b);
     destroy_node_if_valid(input_c);
-    destroy_node_if_valid(port_out);
+    destroy_node_if_valid(port_activation);
     destroy_node_if_valid(port_matmul_out_final);
-    destroy_node_if_valid(port_matmul_out);
+    destroy_node_if_valid(port_matmul_a);
     inferenceEngineDestroyContext(ctx);
 }
