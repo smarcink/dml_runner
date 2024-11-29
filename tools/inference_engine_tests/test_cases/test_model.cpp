@@ -128,5 +128,73 @@ TEST(ModelTest, MatMul_fused_activation)
     destroy_node_if_valid(input_a);
     destroy_node_if_valid(input_b);
     destroy_node_if_valid(port_out);
+    destroy_node_if_valid(port_matmul_out);
+    inferenceEngineDestroyContext(ctx);
+}
+
+TEST(ModelTest, MatMul_6_nodes)
+{
+    // *   *  *
+    //  \ /  /
+    //   *  *  // matmul, activation
+    //    \/
+    //     * // mat mul
+
+    auto device = reinterpret_cast<inference_engine_device_t>(G_DX12_ENGINE.d3d12_device.Get());
+    auto stream = reinterpret_cast<inference_engine_stream_t>(G_DX12_ENGINE.command_list.Get());
+    auto ctx = inferenceEngineCreateContext(device, fill_with_dx12_callbacks());
+
+    inference_engine_port_desc_t input_desc{};
+    input_desc.tensor.data_type = inference_engine_data_type_t::INFERENCE_ENGINE_DATA_TYPE_FP16;
+    set_array(input_desc.tensor.dims, 1, 1, 16, 16);
+    // create 2 port with the same description
+    // M = 32, K = 16, N = 16
+    auto input_a = inferenceEngineCreatePort(input_desc);
+    EXPECT_TRUE(input_a != nullptr);
+    auto input_b = inferenceEngineCreatePort(input_desc);
+    EXPECT_TRUE(input_b != nullptr);
+    auto input_c = inferenceEngineCreatePort(input_desc);
+    EXPECT_TRUE(input_c != nullptr);
+
+    // MatMul
+    inference_engine_matmul_desc_t matmul_desc{};
+    matmul_desc.input_a = input_a;
+    matmul_desc.input_b = input_b;
+    auto port_matmul_a = inferenceEngineCreateMatMul(matmul_desc);
+    EXPECT_TRUE(port_matmul_a != nullptr);
+
+    // activation
+    inference_engine_activation_desc_t activation_desc{};
+    activation_desc.input = input_c;
+    activation_desc.type = INFERENCE_ENGINE_ACTIVATION_TYPE_RELU;
+    auto port_activation = inferenceEngineCreateActivation(activation_desc);
+    EXPECT_TRUE(port_activation != nullptr);
+
+    // MatMul final
+    inference_engine_matmul_desc_t matmul_desc_final{};
+    matmul_desc_final.input_a = port_matmul_a;
+    matmul_desc_final.input_b = port_activation;
+    auto port_matmul_out_final = inferenceEngineCreateMatMul(matmul_desc_final);
+    EXPECT_TRUE(port_matmul_out_final != nullptr);
+
+    // create model
+    auto model_desc = inferenceEngineCreateModelDescriptor(&port_matmul_out_final, 1);
+    const auto model = inferenceEngineCompileModelDescriptor(ctx, stream, model_desc);
+
+    // can execute here (assign resources call execute)
+    inferenceEngineExecuteModel(model, stream);
+    // do conformance check etc ..
+    // ...
+    // delete model
+    if (model_desc)
+    {
+        inferenceEngineDestroyModelDescriptor(model_desc);
+    }
+    destroy_node_if_valid(input_a);
+    destroy_node_if_valid(input_b);
+    destroy_node_if_valid(input_c);
+    destroy_node_if_valid(port_activation);
+    destroy_node_if_valid(port_matmul_out_final);
+    destroy_node_if_valid(port_matmul_a);
     inferenceEngineDestroyContext(ctx);
 }

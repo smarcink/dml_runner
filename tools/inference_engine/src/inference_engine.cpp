@@ -13,9 +13,11 @@ INFERENCE_ENGINE_API inference_engine_context_handle_t inferenceEngineCreateCont
     {
         inference_engine::set_last_error(INFERENCE_ENGINE_RESULT_BAD_ALLOC);
     }
-    catch (...)
-    {
-        // don't set the error, as it, hopefully, should be handled already...
+    catch (const inference_engine::inference_engine_exception& ex) {
+        inference_engine::set_last_error(ex.val_);
+    }
+    catch (...) {
+        inference_engine::set_last_error(INFERENCE_ENGINE_RESULT_OTHER);
     }
     return nullptr;
 }
