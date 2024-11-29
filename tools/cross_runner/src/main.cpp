@@ -73,6 +73,7 @@ struct CliOptions
     ConvolutionUmdD3d12Dispatcher::conv_umdd3d12_params_t conv_umdd3d12_params{};
     MvnCmDispatcher::mvn_cm_params_t mvn_cm_params{};
     SoftmaxCmDispatcher::softmax_cm_params_t softmax_cm_params{};
+    QuantGemmUmdD3d12Dispatcher::qgemm_umdd3d12_params_t quant_gemm_umdd3d12_opts{};
     GemmCmDispatcher::cm_params_t gemm_cm_params{};
     GemmUmdD3d12Dispatcher::gemm_umdd3d12_params_t gemm_umdd3d12_params{};
     MhaCmDispatcher::cm_params_t mha_cm_opts{};
@@ -93,7 +94,8 @@ int main(int argc, const char*argv[])
         NodeType::eSoftmaxDml, NodeType::eSoftmaxCm,
         NodeType::eMvnDml, NodeType::eMvnCm,
         NodeType::eMhaDml, NodeType::eMhaCm,
-        NodeType::eMemoryBandwidth, NodeType::eQuantGemmDml
+        NodeType::eMemoryBandwidth, NodeType::eQuantGemmDml,
+        NodeType::eQuantGemmUmdD3d12
         }))->
         transform(CLI::Transformer(std::map<std::string, NodeType>{
             { "conv_dml", NodeType::eConvDml },
@@ -110,6 +112,7 @@ int main(int argc, const char*argv[])
             { "mha_cm", NodeType::eMhaCm},
             { "mem_bw", NodeType::eMemoryBandwidth },
             { "quant_gemm_dml", NodeType::eQuantGemmDml },
+            { "quant_gemm_umd_d3d12", NodeType::eQuantGemmUmdD3d12 },
     }, CLI::ignore_case, CLI::ignore_underscore));
     dml_runner_app.add_option("--iters", opts.dispatch_iterations, "How many iterations to run.")->check(CLI::Range(1u, MAX_ITERATIONS));
     dml_runner_app.add_flag("--no_conform", opts.no_conformance_check);
@@ -144,6 +147,8 @@ int main(int argc, const char*argv[])
     GemmCmDispatcher::cm_params_t::add_cli_options(gemm_cm_option_groups, opts.gemm_cm_params);
     auto gemm_umdd3d12_option_groups = dml_runner_app.add_subcommand("gemm_umdd3d12_opts", "Options for gemm layer with CM implementation.");
     GemmUmdD3d12Dispatcher::gemm_umdd3d12_params_t::add_cli_options(gemm_umdd3d12_option_groups, opts.gemm_umdd3d12_params);
+    auto quant_gemm_umdd3d12_option_groups = dml_runner_app.add_subcommand("quant_gemm_umdd3d12_opts", "Options for Quantized Gemm layer with oneDNN implementation.");
+    QuantGemmUmdD3d12Dispatcher::qgemm_umdd3d12_params_t::add_cli_options(quant_gemm_umdd3d12_option_groups, opts.quant_gemm_umdd3d12_opts);
     auto mem_bw_option_group = dml_runner_app.add_subcommand("mem_bw_opts", "Options for memory bandwidths measurements");
     gpu_op::MemoryBandwidthDispatcher::MemoryBandwidthDispatcher::create_params_t::add_cli_options(mem_bw_option_group, opts.memory_bw_params);
     auto mha_cm_option_groups = dml_runner_app.add_subcommand("mha_cm_opts", "Options for mha layer with CM implementation.");
@@ -173,7 +178,7 @@ int main(int argc, const char*argv[])
         std::cout << "Gemm options not set.\n";
         return -1;
     }
-    else if (opts.node_type == NodeType::eQuantGemmDml && !quant_gemm_option_groups->parsed())
+    else if ((opts.node_type == NodeType::eQuantGemmDml || opts.node_type == NodeType::eQuantGemmUmdD3d12) && !quant_gemm_option_groups->parsed())
     {
         std::cout << "Quant Gemm options not set.\n";
         return -1;
@@ -280,6 +285,11 @@ int main(int argc, const char*argv[])
         {
             node = std::make_unique<QuantGemmDmlDispatcher>(std::move(opts.quant_gemm_opts), true,
                 d3d12_device.Get(), dml_device.Get(), dml_command_recorder.Get(), command_list.Get());
+        }
+        else if (opts.node_type == NodeType::eQuantGemmUmdD3d12)
+        {
+            node = std::make_unique<QuantGemmUmdD3d12Dispatcher>(std::move(opts.quant_gemm_opts), std::move(opts.quant_gemm_umdd3d12_opts),
+                intel_extension_d3d12, d3d12_device.Get(), dml_device.Get(), dml_command_recorder.Get(), command_list.Get());
         }
         else
         {

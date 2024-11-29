@@ -69,6 +69,7 @@ inline dnnl::memory::data_type to_dnnl_data_type(const DataType l)
     {
     case DataType::eFp32: return dnnl::memory::data_type::f32;
     case DataType::eFp16: return dnnl::memory::data_type::f16;
+    case DataType::eUint4: return dnnl::memory::data_type::u4;
     default:
         return dnnl::memory::data_type::undef;
     }
