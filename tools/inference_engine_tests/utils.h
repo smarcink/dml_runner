@@ -10,13 +10,6 @@ inline void set_array(T* array, Args&&... args)
 	((*(array++) = std::forward<Args>(args)), ...);
 }
 
-inline void destroy_node_if_valid(inference_engine_node_t n)
-{
-    if (n)
-    {
-        inferenceEngineDestroyNode(n);
-    }
-}
 
 inline std::size_t accumulate_tensor_dims(const inference_engine_tensor_t& tensor)
 {

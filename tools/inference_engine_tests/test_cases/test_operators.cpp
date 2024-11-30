@@ -1,78 +1,120 @@
 #include "utils.h"
 #include "test_gpu_context.h"
+#include "inference_engine_model.h"
+
+#include <array>
 
 TEST(OperatorTest, Port_basic_0)
 {
+    auto md = inferenceEngineCreateModelDescriptor();
     inference_engine_port_desc_t desc{};
-    desc.tensor.data_type = inference_engine_data_type_t::INFERENCE_ENGINE_DATA_TYPE_FP16;
-    set_array(desc.tensor.dims, 1, 16, 32, 32);
-    auto port = inferenceEngineCreatePort(desc);
-    EXPECT_TRUE(port != nullptr);
-    destroy_node_if_valid(port);
+    desc.data_type = inference_engine_data_type_t::INFERENCE_ENGINE_DATA_TYPE_FP16;
+    auto node_id = inferenceEngineModelDescriptorAddPort(md, desc);
+    ASSERT_NE(node_id, INFERENCE_ENGINE_INVALID_NODE_ID);
+    EXPECT_EQ(inferenceEngineGetLastError(), INFERENCE_ENGINE_RESULT_SUCCESS);
+    inferenceEngineDestroyModelDescriptor(md);
+}
+
+
+TEST(OperatorTest, Activation_basic_0)
+{
+    auto md = inferenceEngineCreateModelDescriptor();
+    inference_engine_port_desc_t input_desc{};
+    input_desc.data_type = inference_engine_data_type_t::INFERENCE_ENGINE_DATA_TYPE_FP16;
+    auto port_id = inferenceEngineModelDescriptorAddPort(md, input_desc);
+    ASSERT_NE(port_id, INFERENCE_ENGINE_INVALID_NODE_ID);
+
+
+    inference_engine_activation_desc_t desc{};
+    desc.input = port_id;
+    desc.type = INFERENCE_ENGINE_ACTIVATION_TYPE_RELU;
+    auto node_id = inferenceEngineModelDescriptorAddActivation(md, desc);
+    ASSERT_NE(port_id, INFERENCE_ENGINE_INVALID_NODE_ID);
+    EXPECT_EQ(inferenceEngineGetLastError(), INFERENCE_ENGINE_RESULT_SUCCESS);
+    inferenceEngineDestroyModelDescriptor(md);
 }
 
 TEST(OperatorTest, Matmul_basic_0)
 {
+    auto device = reinterpret_cast<inference_engine_device_t>(G_DX12_ENGINE.d3d12_device.Get());
+    auto stream = reinterpret_cast<inference_engine_stream_t>(G_DX12_ENGINE.command_list.Get());
+    auto ctx = inferenceEngineCreateContext(device, fill_with_dx12_callbacks());
+
+    auto md = inferenceEngineCreateModelDescriptor();
+
     inference_engine_port_desc_t input_desc{};
-    input_desc.tensor.data_type = inference_engine_data_type_t::INFERENCE_ENGINE_DATA_TYPE_FP16;
-    set_array(input_desc.tensor.dims, 1, 1, 32, 32);
-    // create 2 port with the same description
-    // M = 32, K = 32, N = 32
-    auto port_a = inferenceEngineCreatePort(input_desc);
-    EXPECT_TRUE(port_a != nullptr);
-    auto port_b = inferenceEngineCreatePort(input_desc);
-    EXPECT_TRUE(port_b != nullptr);
+    input_desc.data_type = inference_engine_data_type_t::INFERENCE_ENGINE_DATA_TYPE_FP16;
+
+    auto port_a = inferenceEngineModelDescriptorAddPort(md, input_desc);
+    ASSERT_NE(port_a, INFERENCE_ENGINE_INVALID_NODE_ID);
+    auto port_b = inferenceEngineModelDescriptorAddPort(md, input_desc);
+    ASSERT_NE(port_b, INFERENCE_ENGINE_INVALID_NODE_ID);
 
     inference_engine_matmul_desc_t desc{};
     desc.input_a = port_a;
     desc.input_b = port_b;
 
-    auto port_out = inferenceEngineCreateMatMul(desc);
-    EXPECT_TRUE(port_out != nullptr);
-    destroy_node_if_valid(port_a);
-    destroy_node_if_valid(port_b);
-    destroy_node_if_valid(port_out);
+    auto port_out = inferenceEngineModelDescriptorAddMatMul(md, desc);
+    ASSERT_NE(port_out, INFERENCE_ENGINE_INVALID_NODE_ID);
+
+    std::array<inference_engine_tensor_mapping_t, 2> inputs{};
+    // input a
+    {
+        inputs[0].id = port_a;
+        inputs[0].tensor.data_type = input_desc.data_type;
+        set_array(inputs[0].tensor.dims, 1, 1, 16, 32);
+    }
+    // input b
+    {
+        inputs[1].id = port_b;
+        inputs[1].tensor.data_type = input_desc.data_type;
+        set_array(inputs[1].tensor.dims, 1, 1, 32, 64);
+    }
+    auto model = inferenceEngineCompileModelDescriptor(ctx, stream, md, inputs.data(), inputs.size());
+    ASSERT_NE(model, nullptr);
+    EXPECT_EQ(inferenceEngineGetLastError(), INFERENCE_ENGINE_RESULT_SUCCESS);
+    inferenceEngineDestroyModelDescriptor(md);
+    inferenceEngineDestroyContext(ctx);
 }
 
 TEST(OperatorTest, Matmul_basic_wrong_2d_sizes)
 {
-	inference_engine_port_desc_t input_desc{};
-	input_desc.tensor.data_type = inference_engine_data_type_t::INFERENCE_ENGINE_DATA_TYPE_FP16;
-	set_array(input_desc.tensor.dims, 16, 32);
+    auto device = reinterpret_cast<inference_engine_device_t>(G_DX12_ENGINE.d3d12_device.Get());
+    auto stream = reinterpret_cast<inference_engine_stream_t>(G_DX12_ENGINE.command_list.Get());
+    auto ctx = inferenceEngineCreateContext(device, fill_with_dx12_callbacks());
 
-	inference_engine_port_desc_t input_desc2{};
-	input_desc2.tensor.data_type = inference_engine_data_type_t::INFERENCE_ENGINE_DATA_TYPE_FP16;
-	set_array(input_desc2.tensor.dims, 3333, 11);
-
-	auto tensor_a = inferenceEngineCreatePort(input_desc);
-	EXPECT_TRUE(tensor_a != nullptr);
-	auto tensor_b = inferenceEngineCreatePort(input_desc2);
-	EXPECT_TRUE(tensor_b != nullptr);
-
-	inference_engine_matmul_desc_t desc{};
-	desc.input_a = tensor_a;
-	desc.input_b = tensor_b;
-
-	auto port_out = inferenceEngineCreateMatMul(desc);
-	EXPECT_TRUE(port_out == nullptr);
-    EXPECT_EQ(inferenceEngineGetLastError(), INFERENCE_ENGINE_RESULT_INVALID_ARGUMENT);
-	destroy_node_if_valid(tensor_a);
-	destroy_node_if_valid(tensor_b);
-}
-
-TEST(OperatorTest, Activation_basic_0)
-{
+    auto md = inferenceEngineCreateModelDescriptor();
     inference_engine_port_desc_t input_desc{};
-    input_desc.tensor.data_type = inference_engine_data_type_t::INFERENCE_ENGINE_DATA_TYPE_FP16;
-    set_array(input_desc.tensor.dims, 1, 1, 32, 32);
-    auto input_port = inferenceEngineCreatePort(input_desc);
-    EXPECT_TRUE(input_port != nullptr);
+    input_desc.data_type = inference_engine_data_type_t::INFERENCE_ENGINE_DATA_TYPE_FP16;
 
-    inference_engine_activation_desc_t desc{};
-    desc.input = input_port;
-    desc.type = INFERENCE_ENGINE_ACTIVATION_TYPE_RELU;
-    auto port_out = inferenceEngineCreateActivation(desc);
-    EXPECT_TRUE(port_out != nullptr);
-    destroy_node_if_valid(input_port);
-    destroy_node_if_valid(port_out);
+    auto port_a = inferenceEngineModelDescriptorAddPort(md, input_desc);
+    ASSERT_NE(port_a, INFERENCE_ENGINE_INVALID_NODE_ID);
+    auto port_b = inferenceEngineModelDescriptorAddPort(md, input_desc);
+    ASSERT_NE(port_b, INFERENCE_ENGINE_INVALID_NODE_ID);
+
+    inference_engine_matmul_desc_t desc{};
+    desc.input_a = port_a;
+    desc.input_b = port_b;
+
+    auto port_out = inferenceEngineModelDescriptorAddMatMul(md, desc);
+    ASSERT_NE(port_out, INFERENCE_ENGINE_INVALID_NODE_ID);
+
+    std::array<inference_engine_tensor_mapping_t, 2> inputs{};
+    // input a
+    {
+        inputs[0].id = port_a;
+        inputs[0].tensor.data_type = input_desc.data_type;
+        set_array(inputs[0].tensor.dims, 1, 1, 16, 32);
+    }
+    // input b
+    {
+        inputs[1].id = port_b;
+        inputs[1].tensor.data_type = input_desc.data_type;
+        set_array(inputs[1].tensor.dims, 1, 1, 3333, 11);
+    }
+    auto model = inferenceEngineCompileModelDescriptor(ctx, stream, md, inputs.data(), inputs.size());
+    EXPECT_EQ(inferenceEngineGetLastError(), INFERENCE_ENGINE_RESULT_INVALID_ARGUMENT);
+    ASSERT_EQ(model, nullptr);
+    inferenceEngineDestroyModelDescriptor(md);
+    inferenceEngineDestroyContext(ctx);
 }
