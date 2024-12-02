@@ -827,8 +827,8 @@ public:
         , d3d12_device_(d3d12_device)
     {
         
-        uint32_t quant_param_h = params_.b_transposed ? params_.shape_b.h : params_.shape_b.w;
-        uint32_t quant_param_w = params_.b_transposed ? params_.shape_b.w / params_.block_size : params_.shape_b.h / params_.block_size;
+        uint32_t quant_param_h = params_.shape_b.w;
+        uint32_t quant_param_w = params_.shape_b.h / params_.block_size;
 
         params_.shape_scale = TensorShape(params_.shape_b.n, params_.shape_b.c, quant_param_h, quant_param_w);
         params_.shape_zeropoint = TensorShape(params_.shape_b.n, params_.shape_b.c, quant_param_h, quant_param_w);
@@ -1141,8 +1141,8 @@ protected:
         TensorShape ret{};
         ret.n = get_batch();
         ret.c = get_channels();
-        ret.h = params_.b_transposed ? params_.shape_b.h : params_.shape_b.w;
-        ret.w = params_.b_transposed ? params_.shape_b.w / params_.block_size : params_.shape_b.h / params_.block_size;
+        ret.h = params_.shape_b.w;
+        ret.w = params_.shape_b.h / params_.block_size;
         return ret;
     }
         
@@ -1158,17 +1158,17 @@ protected:
 
     std::uint32_t get_M() const
     {
-        return params_.a_transposed ? params_.shape_a.w : params_.shape_a.h;
+        return params_.shape_a.h;
     }
 
     std::uint32_t get_K() const
     {
-        return params_.a_transposed ? params_.shape_a.h : params_.shape_a.w;
+        return params_.shape_a.w;
     }
 
     std::uint32_t get_N() const
     {
-        return params_.b_transposed ? params_.shape_b.h : params_.shape_b.w;
+        return params_.shape_b.w;
     }
 
 protected:
@@ -1644,7 +1644,7 @@ protected:
     {
         if (params_.type == GemmType::GemmType_AB || params_.type == GemmType::GemmType_SV_S_QKV || params_.type == GemmType::GemmType_SV_S_KV)
         {
-            return params_.b_transposed ? params_.shape_b.h : params_.shape_b.w;
+            return params_.shape_b.w;
         }
         else if (params_.type == GemmType::GemmType_QK_QKV)
         {
