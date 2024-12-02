@@ -37,6 +37,7 @@ INFERENCE_ENGINE_API inference_engine_model_t inferenceEngineCompileModelDescrip
         if (!input_mapping_list || input_mapping_size == 0)
         {
             std::cout << "Wrong param input_mapping_list is nullptr or input_mapping_size is 0 " << std::endl;
+            inference_engine::set_last_error(INFERENCE_ENGINE_RESULT_INVALID_ARGUMENT);
             return nullptr;
         }
         std::vector<inference_engine::TensorMapping> im{};

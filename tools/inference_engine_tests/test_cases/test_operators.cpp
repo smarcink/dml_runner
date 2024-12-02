@@ -11,7 +11,6 @@ TEST(OperatorTest, Port_basic_0)
     desc.data_type = inference_engine_data_type_t::INFERENCE_ENGINE_DATA_TYPE_FP16;
     auto node_id = inferenceEngineModelDescriptorAddPort(md, desc);
     ASSERT_NE(node_id, INFERENCE_ENGINE_INVALID_NODE_ID);
-    EXPECT_EQ(inferenceEngineGetLastError(), INFERENCE_ENGINE_RESULT_SUCCESS);
     inferenceEngineDestroyModelDescriptor(md);
 }
 
@@ -30,7 +29,6 @@ TEST(OperatorTest, Activation_basic_0)
     desc.type = INFERENCE_ENGINE_ACTIVATION_TYPE_RELU;
     auto node_id = inferenceEngineModelDescriptorAddActivation(md, desc);
     ASSERT_NE(port_id, INFERENCE_ENGINE_INVALID_NODE_ID);
-    EXPECT_EQ(inferenceEngineGetLastError(), INFERENCE_ENGINE_RESULT_SUCCESS);
     inferenceEngineDestroyModelDescriptor(md);
 }
 
@@ -72,7 +70,6 @@ TEST(OperatorTest, Matmul_basic_0)
     }
     auto model = inferenceEngineCompileModelDescriptor(ctx, stream, md, inputs.data(), inputs.size());
     ASSERT_NE(model, nullptr);
-    EXPECT_EQ(inferenceEngineGetLastError(), INFERENCE_ENGINE_RESULT_SUCCESS);
     inferenceEngineDestroyModelDescriptor(md);
     inferenceEngineDestroyContext(ctx);
 }

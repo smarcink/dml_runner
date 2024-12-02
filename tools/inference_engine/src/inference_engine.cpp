@@ -33,3 +33,8 @@ INFERENCE_ENGINE_API inference_engine_result_t inferenceEngineGetLastError()
     return inference_engine::get_last_error();
 }
 
+INFERENCE_ENGINE_API void inferenceEngineSetLastError(inference_engine_result_t val)
+{
+    inference_engine::set_last_error(val);
+}
+
