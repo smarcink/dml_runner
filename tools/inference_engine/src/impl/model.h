@@ -2,7 +2,6 @@
 #include "gpu_context.h"
 #include "inference_engine_tensor.h"
 #include "inference_engine_operators.h"
-#include "error.h"
 #include "tensor.h"
 #include "node.h"
 

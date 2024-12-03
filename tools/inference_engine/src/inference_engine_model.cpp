@@ -37,7 +37,6 @@ INFERENCE_ENGINE_API inference_engine_model_t inferenceEngineCompileModelDescrip
         if (!input_mapping_list || input_mapping_size == 0)
         {
             std::cout << "Wrong param input_mapping_list is nullptr or input_mapping_size is 0 " << std::endl;
-            inference_engine::set_last_error(INFERENCE_ENGINE_RESULT_INVALID_ARGUMENT);
             return nullptr;
         }
         std::vector<inference_engine::TensorMapping> im{};
@@ -48,18 +47,18 @@ INFERENCE_ENGINE_API inference_engine_model_t inferenceEngineCompileModelDescrip
         auto* exec_model = new inference_engine::ExecutableModel(md->compile(*ctx, *str, im));
         return reinterpret_cast<inference_engine_model_t>(exec_model);
     }
-    catch (const inference_engine::inference_engine_exception& ex) 
+    catch (const std::exception& ex)
     {
-        inference_engine::set_last_error(ex.val_);
+        std::cerr << "exception: " << ex.what() << '\n';
     }
     catch (...)
     {
-        inference_engine::set_last_error(INFERENCE_ENGINE_RESULT_OTHER);
+        std::cerr << "unknown exception!\n";
     }
     return nullptr;
 }
 
-INFERENCE_ENGINE_API inference_engine_result_t inferenceEngineModelSetResource(inference_engine_model_t model, inference_engine_node_id_t id, inference_engine_resource_t resource)
+INFERENCE_ENGINE_API bool inferenceEngineModelSetResource(inference_engine_model_t model, inference_engine_node_id_t id, inference_engine_resource_t resource)
 {
     std::cout << "inferenceEngineModelSetResource" << std::endl;
     try
@@ -69,12 +68,12 @@ INFERENCE_ENGINE_API inference_engine_result_t inferenceEngineModelSetResource(i
     }
     catch (...)
     {
-        return INFERENCE_ENGINE_RESULT_ERROR_UNKNOWN;
+        return false;
     }
-    return INFERENCE_ENGINE_RESULT_SUCCESS;
+    return true;
 }
 
-INFERENCE_ENGINE_API inference_engine_result_t inferenceEngineModelGetOutputs(inference_engine_model_t model, inference_engine_tensor_mapping_t* list, size_t* size)
+INFERENCE_ENGINE_API bool inferenceEngineModelGetOutputs(inference_engine_model_t model, inference_engine_tensor_mapping_t* list, size_t* size)
 {
     std::cout << "inferenceEngineModelGetOutputs" << std::endl;
     try
@@ -94,17 +93,19 @@ INFERENCE_ENGINE_API inference_engine_result_t inferenceEngineModelGetOutputs(in
         }
         else
         {
-            return INFERENCE_ENGINE_RESULT_INVALID_ARGUMENT;
+            std::cerr << "invalid argument\n";
+            return false;
         }
     }
     catch (...)
     {
-        return INFERENCE_ENGINE_RESULT_ERROR_UNKNOWN;
+        std::cerr << "unknown exception!\n";
+        return false;
     }
-    return INFERENCE_ENGINE_RESULT_SUCCESS;
+    return true;
 }
 
-INFERENCE_ENGINE_API inference_engine_result_t inferenceEngineExecuteModel(inference_engine_model_t model, inference_engine_stream_t stream)
+INFERENCE_ENGINE_API bool inferenceEngineExecuteModel(inference_engine_model_t model, inference_engine_stream_t stream)
 {
     std::cout << "inferenceEngineExecuteModel" << std::endl;
     try
@@ -115,8 +116,9 @@ INFERENCE_ENGINE_API inference_engine_result_t inferenceEngineExecuteModel(infer
     }
     catch (...)
     {
-        return INFERENCE_ENGINE_RESULT_ERROR_UNKNOWN;
+        std::cerr << "unknown exception!\n";
+        return false;
     }
-    return INFERENCE_ENGINE_RESULT_SUCCESS;
+    return true;
 }
 

@@ -1,7 +1,6 @@
 #include "inference_engine_operators.h"
 #include "inference_engine_model.h"
 #include "impl/model.h"
-#include "impl/error.h"
 
 #include "impl/nodes/port.h"
 #include "impl/nodes/activation.h"
@@ -17,14 +16,12 @@ inference_engine_node_id_t handle_exceptions(Func func) {
 	try {
 		return func();
 	}
-	catch (const std::bad_alloc&) {
-		inference_engine::set_last_error(INFERENCE_ENGINE_RESULT_BAD_ALLOC);
-	}
-	catch (const inference_engine::inference_engine_exception& ex) {
-		inference_engine::set_last_error(ex.val_);
-	}
+    catch (const std::exception& ex)
+    {
+        std::cerr << "exception: " << ex.what() << '\n';
+    }
 	catch (...) {
-		inference_engine::set_last_error(INFERENCE_ENGINE_RESULT_OTHER);
+		std::cerr << "unknown exception!\n";
 	}
 	return ReturnType(-1);
 }

@@ -2,7 +2,6 @@
 #define INFERENCE_ENGINE_H
 
 #include "inference_engine_export.h"
-#include "inference_engine_error.h"
 #include <stdint.h>
 
 #ifdef __cplusplus
@@ -56,11 +55,6 @@ typedef struct _inference_engine_callbacks_t
 
 INFERENCE_ENGINE_API inference_engine_context_handle_t inferenceEngineCreateContext(inference_engine_device_t device, inference_engine_context_callbacks_t callbacks);
 INFERENCE_ENGINE_API void inferenceEngineDestroyContext(inference_engine_context_handle_t ctx);
-INFERENCE_ENGINE_API inference_engine_result_t inferenceEngineGetLastError();
-INFERENCE_ENGINE_API void inferenceEngineSetLastError(inference_engine_result_t val);
-
-
-
 
 #ifdef __cplusplus
 }

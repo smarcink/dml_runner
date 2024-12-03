@@ -73,14 +73,14 @@ namespace inference_engine
                 };
             if (inputs.size() != 2)
             {
-                throw inference_engine_exception(INFERENCE_ENGINE_RESULT_INVALID_ARGUMENT);
+                throw std::invalid_argument("there must be exactly two inputs for this operation!");
             }
 
             const auto tensor_a = inputs[0]->get_output_tensor();
             const auto tensor_b = inputs[1]->get_output_tensor();
             if (!are_tensors_compatible_for_matmul(tensor_a, tensor_b))
             {
-                throw inference_engine_exception(INFERENCE_ENGINE_RESULT_INVALID_ARGUMENT);
+                throw std::invalid_argument("tensors don't match!");
             }
             return std::make_unique<GpuMatMul>(id_, compute_output_tensor(tensor_a, tensor_b), inputs, desc_);
         }
