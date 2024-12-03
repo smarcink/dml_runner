@@ -1,9 +1,8 @@
 #include "model.h"
 #include "inference_engine_model.h"
 #include "inference_engine_tensor.h"
-#include "error.h"
-
 #include "nodes/port.h"
+#include <exception>
 
 namespace inference_engine
 {
@@ -160,7 +159,7 @@ void ExecutableModel::set_resource(inference_engine_node_id_t id, GpuResource::P
     else
     {
         std::cout << "Trying to set resource for node: " << id << " but it does not exist in executable model" << std::endl;
-        throw inference_engine_exception(INFERENCE_ENGINE_RESULT_INVALID_ARGUMENT);
+        throw std::invalid_argument("");
     }
     }
 
