@@ -47,9 +47,13 @@ INFERENCE_ENGINE_API inference_engine_model_t inferenceEngineCompileModelDescrip
         auto* exec_model = new inference_engine::ExecutableModel(md->compile(*ctx, *str, im));
         return reinterpret_cast<inference_engine_model_t>(exec_model);
     }
+    catch (const std::exception& ex)
+    {
+        std::cerr << "exception: " << ex.what() << '\n';
+    }
     catch (...)
     {
-        std::cerr << "other exception!\n";
+        std::cerr << "unknown exception!\n";
     }
     return nullptr;
 }

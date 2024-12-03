@@ -16,9 +16,10 @@ inference_engine_node_id_t handle_exceptions(Func func) {
 	try {
 		return func();
 	}
-	catch (const std::bad_alloc&) {
-		std::cerr << "bad_alloc exception!\n";
-	}
+    catch (const std::exception& ex)
+    {
+        std::cerr << "exception: " << ex.what() << '\n';
+    }
 	catch (...) {
 		std::cerr << "unknown exception!\n";
 	}

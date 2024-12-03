@@ -8,12 +8,12 @@ INFERENCE_ENGINE_API inference_engine_context_handle_t inferenceEngineCreateCont
         auto ctx = new inference_engine::GpuContext(device, callbacks);
         return reinterpret_cast<inference_engine_context_handle_t>(ctx);
     }
-    catch (const std::bad_alloc&)
+    catch (const std::exception& ex)
     {
-        std::cerr << "bad_alloc exception!\n";
+        std::cerr << "exception: " << ex.what() << '\n';
     }
     catch (...) {
-        std::cerr << "other exception!\n";
+        std::cerr << "unknown exception!\n";
     }
     return nullptr;
 }
