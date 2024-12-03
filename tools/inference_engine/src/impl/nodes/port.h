@@ -40,6 +40,8 @@ namespace inference_engine
             // more details about the node here
             return "GpuPort";
         }
+
+        void accept(class GpuVisitor*) override;
     private:
         inference_engine_port_desc_t desc_{};
     };

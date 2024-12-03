@@ -151,7 +151,7 @@ TEST(ModelTest, MatMul_fused_activation)
     // ask model for output size (we know that there has to be 1 output in this test case)
     inference_engine_tensor_mapping_t output_mapping{};
     ASSERT_EQ(inferenceEngineModelGetOutputs(model, &output_mapping, nullptr), true);
-    ASSERT_EQ(output_mapping.id, port_out);
+    ASSERT_EQ(output_mapping.id, port_matmul_out);
     ASSERT_EQ(output_mapping.tensor.data_type, input_desc.data_type);
     ASSERT_EQ(output_mapping.tensor.dims[0], 1);
     ASSERT_EQ(output_mapping.tensor.dims[1], 1);

@@ -34,6 +34,10 @@ namespace inference_engine
             // more details about the node here
             return "GpuMatMul";
         }
+
+        void fuse_with(const class GpuActivation* activation);
+
+        void accept(class GpuVisitor*) override;
     private:
         inference_engine_matmul_desc_t desc_{};
     };
@@ -76,8 +80,8 @@ namespace inference_engine
                 throw std::invalid_argument("there must be exactly two inputs for this operation!");
             }
 
-            const auto tensor_a = inputs[0]->get_output_tensor();
-            const auto tensor_b = inputs[1]->get_output_tensor();
+            const auto& tensor_a = inputs[0]->get_output_tensor();
+            const auto& tensor_b = inputs[1]->get_output_tensor();
             if (!are_tensors_compatible_for_matmul(tensor_a, tensor_b))
             {
                 throw std::invalid_argument("tensors don't match!");

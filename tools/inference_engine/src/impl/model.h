@@ -34,7 +34,11 @@ public:
 public:
     std::vector<std::unique_ptr<GpuNode>> compile(std::span<TensorMapping> input_mappings);
 
+
+
 private:
+    void create_adjacency_list();
+    void set_input_tensors(std::vector<std::unique_ptr<inference_engine::GpuNode>>& ret, std::span<TensorMapping> input_mappings);
     std::vector<INode*> topological_sort();
     void topological_sort_util(INode* node, std::unordered_set<INode*>& visited, std::stack<INode*>& stack);
 

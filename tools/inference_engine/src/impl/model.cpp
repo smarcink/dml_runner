@@ -3,6 +3,9 @@
 #include "inference_engine_tensor.h"
 #include "nodes/port.h"
 #include <exception>
+#include "nodes/matmul.h"
+#include "nodes/activation.h"
+#include "gpu_visitor.h"
 
 namespace inference_engine
 {
@@ -28,42 +31,33 @@ namespace inference_engine
         nodes_.reserve(1024);
     }
 
-
     std::vector<std::unique_ptr<inference_engine::GpuNode>> DAG::compile(std::span<TensorMapping> input_mappings)
     {
-        // create adjacency list
-        for (auto& n : nodes_)
-        {
-            for (auto& in : n->inputs())
-            {
-                auto input = nodes_.at(in).get();
-                adjacency_list_[input].push_back(n.get());
-            }
-        }
-        // sort topologically
+        create_adjacency_list();
+
         auto topological_sorted = topological_sort();
+        
         // construct return list of GpuNodes
         std::vector<std::unique_ptr<GpuNode>> ret(topological_sorted.size());
+        std::unordered_map<size_t, inference_engine::GpuNode*> id_to_node_map;
         for (auto i = 0; i < topological_sorted.size(); i++)
         {
             auto& ts = topological_sorted[i];
             std::vector<GpuNode*> inputs;
-            // find inputs of the node
-            for (auto& in : ts->inputs())
-            {
-                // iterate over nodes to find the one with correct id
-                for (auto& input_candidate : ret)
-                {
-                    if (input_candidate && input_candidate->get_id() == in)
-                    {
-                        inputs.push_back(input_candidate.get());
-                        input_candidate->add_output(ret[i].get());
-                    }
-                }
-            }
-            // finally create GPU node
-            ret[i] = ts->create_gpu_node(inputs);
 
+            // gpu version of inputs should be already created, so match them based on INode id...
+            for (auto& input_id : ts->inputs()) {                
+                if (auto iter = id_to_node_map.find(input_id); iter != id_to_node_map.end())
+                    inputs.push_back(iter->second);
+            }
+
+            ret[i] = ts->create_gpu_node(inputs);
+            id_to_node_map[ret[i]->get_id()] = ret[i].get();
+            
+            for (auto& in : inputs)
+                in->add_output(ret[i].get());
+
+            // maybe we can move it to a separate function?
             // set input tensor if this is port (important: we have topological sorted, so we assume here that all inputs are traversed first)!
             auto it = std::find_if(std::begin(input_mappings), std::end(input_mappings), [&](const TensorMapping& im)
                 {
@@ -83,6 +77,18 @@ namespace inference_engine
             }
         }
         return ret;
+    }
+
+    void DAG::create_adjacency_list()
+    {
+        for (auto& n : nodes_)
+        {
+            for (auto& in : n->inputs())
+            {
+                auto input = nodes_.at(in).get();
+                adjacency_list_[input].push_back(n.get());
+            }
+        }
     }
 
     std::vector<INode*> DAG::topological_sort()
@@ -178,6 +184,46 @@ ModelDescriptor::~ModelDescriptor()
     std::cout << "D-TOR ~ModelDescriptor()" << std::endl;
 }
 
+class FusionVisitor : public GpuVisitor {
+
+    std::unordered_set<GpuNode*> to_delete_;
+public:
+    void processSortedNodes(std::vector<std::unique_ptr<GpuNode>>& sortedNodes) override {
+        to_delete_.clear();
+
+        for (auto&& node : sortedNodes) {
+            node->accept(this);
+        }
+
+        if (!to_delete_.empty()) {
+            std::cout << "FusionVisitor: removing nodes...\n";
+
+            std::erase_if(sortedNodes, [&](auto& el) {return to_delete_.contains(el.get()); });
+        }
+    }
+
+    virtual void visit(GpuPort* pn) override {
+        std::cout << "visiting port...\n";
+    }
+    virtual void visit(GpuActivation* pn) override {
+        std::cout << "visiting activation...\n";
+
+        // check matmul + activation and fuse?
+        auto& inputs = pn->get_inputs();
+        if (inputs.size() == 1) {
+            auto possibleMatMul = dynamic_cast<GpuMatMul*>(inputs[0]);
+            if (possibleMatMul && possibleMatMul->get_outputs().size() == 1) {
+                std::cout << "possible matmul + activation fusion...\n";
+                possibleMatMul->fuse_with(pn);
+                to_delete_.insert(pn);
+            }
+        }
+    }
+    virtual void visit(GpuMatMul* pn) override {
+        std::cout << "visiting matmul...\n";        
+    }
+};
+
 inference_engine::ExecutableModel ModelDescriptor::compile(GpuContext& ctx, GpuStream& stream, std::span<TensorMapping> input_mappings)
 {
     //ToDo: we need some data structure to represent graph (random order of example features below)
@@ -190,6 +236,9 @@ inference_engine::ExecutableModel ModelDescriptor::compile(GpuContext& ctx, GpuS
 
     std::cout << "[Compile][Pass-X] -- Topological sort\n";
     auto sorted_nodes = dag_.compile(input_mappings);
+
+    FusionVisitor v;
+    v.processSortedNodes(sorted_nodes);
 
     std::cout << "[Compile][Pass-Q] -- Memory allocations" << std::endl;
     for (auto& n : sorted_nodes)

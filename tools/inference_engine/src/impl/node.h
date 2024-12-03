@@ -116,6 +116,8 @@ namespace inference_engine
             return output_tensor_;
         }
 
+        virtual void accept(class GpuVisitor*) = 0;
+
     protected:
         std::size_t id_ = INFERENCE_ENGINE_INVALID_NODE_ID; // init with invalid id
         std::vector<GpuNode*> inputs_;

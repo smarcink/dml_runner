@@ -67,6 +67,8 @@ namespace inference_engine
             return "GpuActivation";
         }
 
+        void accept(GpuVisitor* visitor) override;
+
     private:
         inference_engine_activation_desc_t desc_{};
         GpuKernel::Ptr kernel_;
