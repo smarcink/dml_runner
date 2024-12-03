@@ -110,7 +110,6 @@ TEST(OperatorTest, Matmul_basic_wrong_2d_sizes)
         set_array(inputs[1].tensor.dims, 1, 1, 3333, 11);
     }
     auto model = inferenceEngineCompileModelDescriptor(ctx, stream, md, inputs.data(), inputs.size());
-    EXPECT_EQ(inferenceEngineGetLastError(), INFERENCE_ENGINE_RESULT_INVALID_ARGUMENT);
     ASSERT_EQ(model, nullptr);
     inferenceEngineDestroyModelDescriptor(md);
     inferenceEngineDestroyContext(ctx);

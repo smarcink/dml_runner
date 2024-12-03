@@ -55,12 +55,12 @@ TEST(OperatorTest, Basic_0)
     auto output_buffer = create_buffer(G_DX12_ENGINE.d3d12_device.Get(), tensor_size_bytes, D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
 
     // set resources
-    ASSERT_EQ(inferenceEngineModelSetResource(model, port_id, reinterpret_cast<inference_engine_resource_t>(input_buffer.Get())), INFERENCE_ENGINE_RESULT_SUCCESS);
-    ASSERT_EQ(inferenceEngineModelSetResource(model, out_node, reinterpret_cast<inference_engine_resource_t>(output_buffer.Get())), INFERENCE_ENGINE_RESULT_SUCCESS);
+    ASSERT_EQ(inferenceEngineModelSetResource(model, port_id, reinterpret_cast<inference_engine_resource_t>(input_buffer.Get())), true);
+    ASSERT_EQ(inferenceEngineModelSetResource(model, out_node, reinterpret_cast<inference_engine_resource_t>(output_buffer.Get())), true);
 
     // ask model for output size (we know that there has to be 1 output in this test case)
     inference_engine_tensor_mapping_t output_mapping{};
-    ASSERT_EQ(inferenceEngineModelGetOutputs(model, &output_mapping, nullptr), INFERENCE_ENGINE_RESULT_SUCCESS);
+    ASSERT_EQ(inferenceEngineModelGetOutputs(model, &output_mapping, nullptr), true);
     ASSERT_EQ(output_mapping.id, out_node);
     ASSERT_EQ(output_mapping.tensor.data_type, input.tensor.data_type);
     for (auto i = 0; i < 4; i++)
@@ -69,7 +69,7 @@ TEST(OperatorTest, Basic_0)
     }
    
     // finally execute model
-    ASSERT_EQ(inferenceEngineExecuteModel(model, stream), INFERENCE_ENGINE_RESULT_SUCCESS);
+    ASSERT_EQ(inferenceEngineExecuteModel(model, stream), true);
 
     // readback data and wait for execution
     auto readback_buffer = create_buffer(G_DX12_ENGINE.d3d12_device.Get(), tensor_size_bytes, D3D12_HEAP_TYPE_READBACK, D3D12_RESOURCE_STATE_COPY_DEST);
@@ -150,7 +150,7 @@ TEST(ModelTest, MatMul_fused_activation)
 
     // ask model for output size (we know that there has to be 1 output in this test case)
     inference_engine_tensor_mapping_t output_mapping{};
-    ASSERT_EQ(inferenceEngineModelGetOutputs(model, &output_mapping, nullptr), INFERENCE_ENGINE_RESULT_SUCCESS);
+    ASSERT_EQ(inferenceEngineModelGetOutputs(model, &output_mapping, nullptr), true);
     ASSERT_EQ(output_mapping.id, port_out);
     ASSERT_EQ(output_mapping.tensor.data_type, input_desc.data_type);
     ASSERT_EQ(output_mapping.tensor.dims[0], 1);
@@ -239,7 +239,7 @@ TEST(ModelTest, MatMul_6_nodes)
 
     // ask model for output size (we know that there has to be 1 output in this test case)
     inference_engine_tensor_mapping_t output_mapping{};
-    ASSERT_EQ(inferenceEngineModelGetOutputs(model, &output_mapping, nullptr), INFERENCE_ENGINE_RESULT_SUCCESS);
+    ASSERT_EQ(inferenceEngineModelGetOutputs(model, &output_mapping, nullptr), true);
     ASSERT_EQ(output_mapping.id, port_matmul_out_final);
     ASSERT_EQ(output_mapping.tensor.data_type, input_desc.data_type);
     ASSERT_EQ(output_mapping.tensor.dims[0], 1);
