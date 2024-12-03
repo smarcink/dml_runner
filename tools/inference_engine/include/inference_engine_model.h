@@ -5,6 +5,7 @@
 #include "inference_engine_operators.h"
 #include "inference_engine_export.h"
 #include "inference_engine_tensor.h"
+#include <stdbool.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -30,10 +31,10 @@ INFERENCE_ENGINE_API void inferenceEngineDestroyModelDescriptor(inference_engine
 INFERENCE_ENGINE_API void inferenceEngineDestroyModel(inference_engine_model_t model);
 INFERENCE_ENGINE_API inference_engine_model_t inferenceEngineCompileModelDescriptor(inference_engine_context_handle_t context, inference_engine_stream_t stream, inference_engine_model_descriptor_t model_desc, inference_engine_tensor_mapping_t* input_mapping_list, size_t input_mapping_size);
 //set resource for inputs and outputs
-INFERENCE_ENGINE_API inference_engine_result_t inferenceEngineModelSetResource(inference_engine_model_t model, inference_engine_node_id_t id, inference_engine_resource_t resource);
+INFERENCE_ENGINE_API bool inferenceEngineModelSetResource(inference_engine_model_t model, inference_engine_node_id_t id, inference_engine_resource_t resource);
 // call with empty list to get size
-INFERENCE_ENGINE_API inference_engine_result_t inferenceEngineModelGetOutputs(inference_engine_model_t model, inference_engine_tensor_mapping_t* list, size_t* size);
-INFERENCE_ENGINE_API inference_engine_result_t inferenceEngineExecuteModel(inference_engine_model_t model, inference_engine_stream_t stream);
+INFERENCE_ENGINE_API bool inferenceEngineModelGetOutputs(inference_engine_model_t model, inference_engine_tensor_mapping_t* list, size_t* size);
+INFERENCE_ENGINE_API bool inferenceEngineExecuteModel(inference_engine_model_t model, inference_engine_stream_t stream);
 
 #ifdef __cplusplus
 }
