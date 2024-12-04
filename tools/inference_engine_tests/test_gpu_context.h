@@ -5,6 +5,8 @@
 #include <iostream>
 #include <cassert>
 #include <vector>
+#include <unordered_map>
+#include <variant>
 
 #include <dxgi1_4.h>
 #include <d3d12.h>
@@ -17,6 +19,69 @@ using Microsoft::WRL::ComPtr;
 
 #define INTC_IGDEXT_D3D12
 #include <igdext.h>
+
+//////////////////////////////////////////////////////////////////////////
+// Custom Metacommand
+// {9C365CB6-AF13-49B6-BA9C-4B74E10FCDE1}
+static constexpr GUID GUID_CUSTOM =
+{ 0x9c365cb6, 0xaf13, 0x49b6,{ 0xba, 0x9c, 0x4b, 0x74, 0xe1, 0xf, 0xcd, 0xe1 } };
+
+//////////////////////////////////////////////////////////////////////////
+enum META_COMMAND_CUSTOM_SHADER_LANGUAGE : UINT64
+{
+    META_COMMAND_CUSTOM_SHADER_LANGUAGE_NONE = 0,
+    META_COMMAND_CUSTOM_SHADER_LANGUAGE_OCL,
+    META_COMMAND_CUSTOM_SHADER_LANGUAGE_OCL_STATELESS,
+    META_COMMAND_CUSTOM_SHADER_LANGUAGE_ZEBIN_ELF,
+    META_COMMAND_CUSTOM_SHADER_LANGUAGE_CM,
+};
+
+//////////////////////////////////////////////////////////////////////////
+enum META_COMMAND_CUSTOM_RESOURCE_BIND_TYPE : UINT64
+{
+    META_COMMAND_CUSTOM_RESOURCE_BIND_TYPE_NONE = 0,
+    META_COMMAND_CUSTOM_RESOURCE_BIND_TYPE_HANDLE,
+    META_COMMAND_CUSTOM_RESOURCE_BIND_TYPE_ADDRESS
+};
+
+//////////////////////////////////////////////////////////////////////////
+struct META_COMMAND_CREATE_CUSTOM_DESC
+{
+    UINT64 ShaderSourceCode;
+    UINT64 ShaderSourceCodeSize;
+    UINT64 BuildOptionString;
+    UINT64 BuildOptionStringSize;
+    META_COMMAND_CUSTOM_SHADER_LANGUAGE ShaderLanguage;
+};
+
+//////////////////////////////////////////////////////////////////////////
+struct META_COMMAND_INITIALIZE_CUSTOM_DESC
+{
+    D3D12_GPU_DESCRIPTOR_HANDLE Resources[10];
+};
+
+//////////////////////////////////////////////////////////////////////////
+    //////////////////////////////////////////////////////////////////////////
+struct META_COMMAND_EXECUTE_CUSTOM_DESC
+{
+    UINT64                      ResourceCount;
+    META_COMMAND_CUSTOM_RESOURCE_BIND_TYPE ResourceBindType[50];
+    UINT64                      ResourceBindOffset[50];
+    D3D12_GPU_DESCRIPTOR_HANDLE Resources[50];            // use address or handles
+    D3D12_GPU_VIRTUAL_ADDRESS   ResourcesAddress[50];     // use address or handles
+    UINT64                      ResourcesByteOffset[50];  // works only in stateless mode
+
+    UINT64 RuntimeConstants;      // buffer with constants
+    UINT64 RuntimeConstantsCount; // how many runtime constants in total
+    UINT64 RuntimeConstantsBindOffsets[40];  // offsets in bindings
+    UINT64 RuntimeConstantsMemorySizes[40];   // how much bytes to copy
+    UINT64 RuntimeConstantsMemoryOffsets[40]; // bytes offset into "RuntimeConstants" buffer
+
+    UINT64 DispatchGlobalWorkSize[3];
+    UINT64 DispatchLocalWorkSize[3];
+    UINT64 SharedLocalMemorySize;
+};
+
 
 inline void throw_with_msg(std::string_view msg)
 {
@@ -173,20 +238,71 @@ struct Dx12Engine
 };
 inline Dx12Engine G_DX12_ENGINE{};
 
+struct MetaCommandWrapper
+{
+    ID3D12MetaCommand* mc;
+    std::unordered_map<std::size_t, std::pair<inference_engine_resource_t, std::size_t>> resources;
+    std::unordered_map<std::size_t, std::variant<float, std::uint32_t>> scalars;
+    std::unordered_map<std::size_t, std::size_t> locals;
+    std::string name;
+};
+
 namespace dx12_callbacks
 {
 
 inline inference_engine_kernel_t gpu_device_create_kernel(inference_engine_device_t device, const char* kernel_name, const void* kernel_code, size_t kernel_code_size, const char* build_options, inference_engine_kernel_language_t language)
 {
-    std::cout << "dummy gpu_device_create_kernel" << std::endl;
-    return nullptr;
+    std::cout << "[callback]  gpu_device_create_kernel" << std::endl;
+
+    auto d3d12_dev = reinterpret_cast<ID3D12Device*>(device);
+    ID3D12Device5* dev5 = nullptr;
+    throw_if_failed(d3d12_dev->QueryInterface(&dev5), "cant cast d3d12 device to ID3D12Device5");
+
+    if (kernel_code == nullptr || kernel_code_size == 0)
+    {
+        throw std::runtime_error("Code string is empty. Please provide valid kernel/binary data.\n");
+    }
+
+    META_COMMAND_CREATE_CUSTOM_DESC create_desc{};
+    create_desc.ShaderSourceCode = reinterpret_cast<UINT64>(kernel_code);
+    create_desc.ShaderSourceCodeSize = kernel_code_size;
+    create_desc.BuildOptionString = reinterpret_cast<UINT64>(build_options);
+    create_desc.BuildOptionStringSize = build_options ? std::strlen(build_options) : 0ull;
+
+    switch (language)
+    {
+    case inference_engine_kernel_language_t::INFERENCE_ENGINE_KERNEL_LANGUAGE_OCL:
+        create_desc.ShaderLanguage = META_COMMAND_CUSTOM_SHADER_LANGUAGE_OCL_STATELESS;
+        break;
+    default:
+        create_desc.ShaderLanguage = META_COMMAND_CUSTOM_SHADER_LANGUAGE_NONE;
+    }
+    assert(create_desc.ShaderLanguage != META_COMMAND_CUSTOM_SHADER_LANGUAGE_NONE);
+    auto mcw = new MetaCommandWrapper{};
+    throw_if_failed(dev5->CreateMetaCommand(GUID_CUSTOM, 0, &create_desc, sizeof(create_desc),
+        IID_PPV_ARGS(&mcw->mc)), "Cant create custom metacommand");
+    if (!mcw->mc)
+    {
+        delete mcw;
+        assert(!"Creation of custom MC failed.");
+    }
+
+    return reinterpret_cast<inference_engine_kernel_t>(mcw);
+}
+
+inline void gpu_device_destroy_kernel(inference_engine_kernel_t handle)
+{
+    std::cout << "[callback] gpu_device_destroy_kernel" << std::endl;
+    auto mcw = reinterpret_cast<MetaCommandWrapper*>(handle);
+    mcw->mc->Release();
+    delete mcw;
 }
 
 inline inference_engine_resource_t gpu_device_allocate_resource(inference_engine_device_t device, size_t size)
 {
     std::cout << "[callback] gpu_device_allocate_resource, size: " << size << std::endl;
     auto dx12_device = reinterpret_cast<ID3D12Device*>(device);
-    auto dx_buffer = create_buffer(dx12_device, size, D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    auto dx_buffer = create_buffer(dx12_device, size, D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
     auto handle = reinterpret_cast<inference_engine_resource_t>(dx_buffer.Detach());
     return handle;
 }
@@ -198,24 +314,101 @@ inline void gpu_device_destroy_resource(inference_engine_resource_t handle)
     rsc->Release();
 }
 
-inline void gpu_kernel_set_arg_resource(inference_engine_kernel_t kernel, uint32_t index, inference_engine_resource_t resource)
+inline void gpu_kernel_set_arg_resource(inference_engine_kernel_t kernel, uint32_t index, inference_engine_resource_t resource, std::size_t offset)
 {
-    std::cout << "Dummy callback gpu_kernel_set_arg_resource" << std::endl;
+    std::cout << "[callback]  callback gpu_kernel_set_arg_resource" << std::endl;
+    auto mcw = reinterpret_cast<MetaCommandWrapper*>(kernel);
+    mcw->resources[index] = { resource, offset };
 }
 
 inline void gpu_kernel_set_arg_uint32(inference_engine_kernel_t kernel, uint32_t index, uint32_t value)
 {
-    std::cout << "Dummy callback gpu_kernel_set_arg_uint32" << std::endl;
+    std::cout << "[callback]  callback gpu_kernel_set_arg_uint32" << std::endl;
+    auto mcw = reinterpret_cast<MetaCommandWrapper*>(kernel);
+    mcw->scalars[index] = value;
 }
 
 inline void gpu_kernel_set_arg_float(inference_engine_kernel_t kernel, uint32_t index, float value)
 {
-    std::cout << "Dummy callback gpu_kernel_set_arg_float" << std::endl;
+    std::cout << "[callback]  callback gpu_kernel_set_arg_float" << std::endl;
+    auto mcw = reinterpret_cast<MetaCommandWrapper*>(kernel);
+    mcw->scalars[index] = value;
 }
 
 inline void gpu_stream_execute_kernel(inference_engine_stream_t stream, inference_engine_kernel_t kernel, uint32_t gws[3], uint32_t lws[3])
 {
-    std::cout << "Dummy callback gpu_stream_execute_kernel" << std::endl;
+    std::cout << "[callback] callback gpu_stream_execute_kernel" << std::endl;
+    std::cout << "\t gws: " << gws[0] << ", " << gws[1] << ", " << gws[2] << std::endl;
+    auto cmd_list = reinterpret_cast<ID3D12GraphicsCommandList4*>(stream);
+
+    auto mcw = reinterpret_cast<MetaCommandWrapper*>(kernel);
+
+    // [0] Calculate dispatch thread size
+    META_COMMAND_EXECUTE_CUSTOM_DESC exec_desc{};
+    for (std::size_t i = 0; i < 3; i++)
+    {
+        if (gws[i] == 0 || lws[i] == 0)
+        {
+            assert(!"Unexpected gws and/or lws sizes");
+        }
+        exec_desc.DispatchGlobalWorkSize[i] = gws[i];
+        exec_desc.DispatchLocalWorkSize[i] = lws[i];
+    }
+
+    exec_desc.ResourceCount = mcw->resources.size();
+    if (exec_desc.ResourceCount >= std::size(exec_desc.Resources))
+    {
+        assert(!"Please extend number of supported resources for custom metacommand!");
+    }
+
+    // [1] Prepare resources pointer handles 
+    for (std::size_t idx = 0; const auto & [bind_indx, rsc] : mcw->resources)
+    {
+        exec_desc.ResourceBindOffset[idx] = bind_indx;
+
+        const auto [rsc_handle, base_offset] = rsc;
+        if (rsc_handle)
+        {
+            // set offset no matter what type of resource
+            auto mem_ptr = reinterpret_cast<ID3D12Resource*>(rsc_handle);
+            exec_desc.ResourcesByteOffset[idx] = base_offset;
+            exec_desc.ResourceBindType[idx] = META_COMMAND_CUSTOM_RESOURCE_BIND_TYPE_ADDRESS;
+            exec_desc.ResourcesAddress[idx] = mem_ptr->GetGPUVirtualAddress();
+        }
+        idx++;
+    }
+
+    // [2] Build execution time constants 
+    std::vector<std::byte> execution_time_constants;
+    for (std::size_t i = 0; const auto & [idx, scalar] : mcw->scalars)
+    {
+        //exec_desc.RuntimeConstantsBindOffsets[i] = idx;
+        //exec_desc.RuntimeConstantsMemorySizes[i] = scalar.size;
+        //exec_desc.RuntimeConstantsMemoryOffsets[i] = execution_time_constants.size();;
+        //execution_time_constants.resize(execution_time_constants.size() + scalar.size);
+        i++;
+    }
+    auto* ptr_to_copy_data = execution_time_constants.data();
+    for (const auto& [idx, scalar] : mcw->scalars)
+    {
+        //std::memcpy(ptr_to_copy_data, scalar.data, scalar.size);
+        //ptr_to_copy_data += scalar.size;
+    }
+    exec_desc.RuntimeConstantsCount = mcw->scalars.size();
+    exec_desc.RuntimeConstants = reinterpret_cast<UINT64>(execution_time_constants.data());
+
+    // [3] Build slm
+    if (mcw->locals.size() > 1)
+    {
+        assert("!Unsupported case. Please remove this check and test - if it fails most probably driver need changes!");
+    }
+
+    for (const auto& [idx, slm_size] : mcw->locals)
+    {
+        exec_desc.SharedLocalMemorySize += slm_size;
+    }
+
+    cmd_list->ExecuteMetaCommand(mcw->mc, &exec_desc, sizeof(exec_desc));
 }
 
 inline void gpu_stream_fill_memory(inference_engine_stream_t stream, inference_engine_resource_t dst_resource, size_t size)
@@ -245,6 +438,7 @@ inline inference_engine_context_callbacks_t fill_with_dx12_callbacks()
     inference_engine_context_callbacks_t callbacks{};
 
     callbacks.fn_gpu_device_create_kernel = &dx12_callbacks::gpu_device_create_kernel;
+    callbacks.fn_gpu_kernel_destroy = &dx12_callbacks::gpu_device_destroy_kernel;
     callbacks.fn_gpu_device_allocate_resource = &dx12_callbacks::gpu_device_allocate_resource;
 
     callbacks.fn_gpu_kernel_set_arg_resource = &dx12_callbacks::gpu_kernel_set_arg_resource;

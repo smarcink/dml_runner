@@ -12,22 +12,14 @@ namespace inference_engine
         {
         }
 
-        void compile(GpuContext& ctx) override
-        {
-            std::cout << "[MatMul] Compile." << std::endl;
-        }
+        void compile(GpuContext& ctx) override;
 
         void initalize(GpuStream& stream) override
         {
             std::cout << "[MatMul] Initialize." << std::endl;
         }
 
-        GpuResource::Ptr execute(GpuStream& stream) override
-        {
-            std::cout << "[MatMul] Execute." << std::endl;
-            //return resource_;
-            return {};
-        }
+        GpuResource::Ptr execute(GpuStream& stream) override;
 
         std::string to_str() const override
         {
@@ -35,7 +27,13 @@ namespace inference_engine
             return "GpuMatMul";
         }
     private:
+        std::uint32_t get_M() const;
+        std::uint32_t get_N() const;
+        std::uint32_t get_K() const;
+
+    private:
         inference_engine_matmul_desc_t desc_{};
+        GpuKernel::Ptr kernel_ = nullptr;
     };
 
     class MatMul : public INode
@@ -47,60 +45,11 @@ namespace inference_engine
         {
         }
 
-        std::unique_ptr<GpuNode> create_gpu_node(const std::vector<GpuNode*>& inputs) override
-        {
-            auto are_tensors_compatible_for_matmul = [](const Tensor& tensor_a, const Tensor& tensor_b) {
-                // Check if both tensors have at least 2 dimensions
-                if (tensor_a.dims.size() < 2 || tensor_b.dims.size() < 2) {
-                    return false;
-                }
-
-                // For 4D tensors, ensure the batch size and channels match, and the inner dimensions are compatible
-                if (tensor_a.dims.size() == 4 && tensor_b.dims.size() == 4) {
-                    std::size_t cols_a = tensor_a.dims[tensor_a.dims.size() - 1];
-                    std::size_t rows_b = tensor_b.dims[tensor_b.dims.size() - 2];
-                    return cols_a == rows_b;
-                }
-
-                // For 2D tensors, check if the number of columns in tensor_a matches the number of rows in tensor_b
-                if (tensor_a.dims.size() == 2 && tensor_b.dims.size() == 2)
-                {
-                    std::size_t cols_a = tensor_a.dims[tensor_a.dims.size() - 1];
-                    std::size_t rows_b = tensor_b.dims[tensor_b.dims.size() - 2];
-                    return cols_a == rows_b;
-                }
-                return false; // unknown format?
-                };
-            if (inputs.size() != 2)
-            {
-                throw std::invalid_argument("there must be exactly two inputs for this operation!");
-            }
-
-            const auto tensor_a = inputs[0]->get_output_tensor();
-            const auto tensor_b = inputs[1]->get_output_tensor();
-            if (!are_tensors_compatible_for_matmul(tensor_a, tensor_b))
-            {
-                throw std::invalid_argument("tensors don't match!");
-            }
-            return std::make_unique<GpuMatMul>(id_, compute_output_tensor(tensor_a, tensor_b), inputs, desc_);
-        }
+        std::unique_ptr<GpuNode> create_gpu_node(const std::vector<GpuNode*>& inputs) override;
 
     private:
-        Tensor compute_output_tensor(const Tensor& input_a, const Tensor& input_b)
-        {
-            // just an example
-            assert(input_a.data_type == input_b.data_type);
-            assert(input_a.dims.size() == input_b.dims.size());
-            assert(input_a.dims.size() == 4);
-            Tensor ret{};
-            ret.data_type = input_a.data_type;
-            ret.dims.push_back(input_a.dims[0]);
-            ret.dims.push_back(input_a.dims[1]);
-            ret.dims.push_back(input_a.dims[2]);
-            ret.dims.push_back(input_b.dims[3]);
-            ret.strides.assign({ 0,0,0,0 });
-            return ret;
-        }
+        Tensor compute_output_tensor(const Tensor& input_a, const Tensor& input_b);
+
     private:
         inference_engine_matmul_desc_t desc_{};
     };
