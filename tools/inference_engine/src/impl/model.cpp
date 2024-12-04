@@ -185,20 +185,28 @@ ModelDescriptor::~ModelDescriptor()
 }
 
 class FusionVisitor : public GpuVisitor {
-
     std::unordered_set<GpuNode*> to_delete_;
 public:
-    void processSortedNodes(std::vector<std::unique_ptr<GpuNode>>& sortedNodes) override {
-        to_delete_.clear();
+    void processSortedNodes(std::vector<std::unique_ptr<GpuNode>>& sorted_nodes) override {
+        for (auto it = std::begin(sorted_nodes); it != std::end(sorted_nodes);) {
+            to_delete_.clear();
+            (*it)->accept(this);
+            if (!to_delete_.empty())
+            {
+                // walk through to_delete_ and find the range of iterators and call erase on the vector
+                // walk from this node till previous nodes, the rule is that the node can delete itself and previous nodes only
+                auto start_to_delete = it;
+                auto end_to_delete = std::next(it);
+                while (start_to_delete != std::begin(sorted_nodes) && to_delete_.contains((*std::prev(start_to_delete)).get()))
+                    --start_to_delete;
 
-        for (auto&& node : sortedNodes) {
-            node->accept(this);
-        }
-
-        if (!to_delete_.empty()) {
-            std::cout << "FusionVisitor: removing nodes...\n";
-
-            std::erase_if(sortedNodes, [&](auto& el) {return to_delete_.contains(el.get()); });
+                auto num_to_delete = std::distance(start_to_delete, end_to_delete);
+                assert(num_to_delete == to_delete_.size()); // we should have contiguous range of nodes to delete...
+                std::cout << "Erasing nodes: " << num_to_delete << '\n';
+                it = sorted_nodes.erase(start_to_delete, end_to_delete);
+            }                
+            else
+                ++it;
         }
     }
 
@@ -209,13 +217,30 @@ public:
         std::cout << "visiting activation...\n";
 
         // check matmul + activation and fuse?
+        // rules:
+        // 1) the last activation in the chain of activations can perform the fusion (remove nodes if needed)
         auto& inputs = pn->get_inputs();
         if (inputs.size() == 1) {
-            auto possibleMatMul = dynamic_cast<GpuMatMul*>(inputs[0]);
-            if (possibleMatMul && possibleMatMul->get_outputs().size() == 1) {
-                std::cout << "possible matmul + activation fusion...\n";
-                possibleMatMul->fuse_with(pn);
-                to_delete_.insert(pn);
+            // is this the last activation in the chain?
+            auto nextActivation = pn->get_outputs().empty() ? nullptr : dynamic_cast<GpuActivation*>(pn->get_outputs()[0]);
+            if (nextActivation == nullptr) {
+                // walk through inputs and check if it's an activation, until we find some node to fuse with
+                std::vector<GpuActivation*> activations;
+                auto curr_node = pn;
+                GpuMatMul* prev_to_fuse_with = nullptr;
+                while (curr_node) {
+                    activations.push_back(curr_node);
+                    auto temp = curr_node->get_inputs()[0];
+                    curr_node = dynamic_cast<GpuActivation*>(temp);
+                    if (!curr_node)
+                        prev_to_fuse_with = dynamic_cast<GpuMatMul*>(temp);
+                }
+                if (prev_to_fuse_with && prev_to_fuse_with->get_outputs().size() == 1) {
+                    std::cout << "possible matmul + activation fusion...\n";
+                    prev_to_fuse_with->fuse_with(activations);
+                    for (auto& elem : activations)
+                        to_delete_.insert(elem);
+                }
             }
         }
     }

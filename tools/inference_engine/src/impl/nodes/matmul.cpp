@@ -4,10 +4,11 @@
 #include <iostream>
 
 
-void inference_engine::GpuMatMul::fuse_with(const GpuActivation* activation)
+void inference_engine::GpuMatMul::fuse_with(const std::vector<GpuActivation*>& activations)
 {
-    std::cout << "matmul fuse with...\n";
-    outputs_ = activation->get_outputs();
+    assert(!activations.empty());
+    std::cout << "matmul fuse with... " << activations.size() << " activations\n";
+    outputs_ = activations[0]->get_outputs();
 }
 
 void inference_engine::GpuMatMul::accept(GpuVisitor* visitor)

@@ -3,6 +3,8 @@
 
 namespace inference_engine
 {
+    class GpuActivation;
+
     class GpuMatMul : public GpuNode
     {
     public:
@@ -35,7 +37,7 @@ namespace inference_engine
             return "GpuMatMul";
         }
 
-        void fuse_with(const class GpuActivation* activation);
+        void fuse_with(const std::vector<GpuActivation*>&);
 
         void accept(class GpuVisitor*) override;
     private:
