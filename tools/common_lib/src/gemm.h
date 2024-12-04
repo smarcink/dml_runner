@@ -534,8 +534,8 @@ public:
         dml::TensorDesc::Dimensions dimensions_1;
         dimensions_1.push_back(shape_b.n);
         dimensions_1.push_back(shape_b.c);
-        dimensions_1.push_back(shape_b.h);
-        dimensions_1.push_back(shape_b.w);
+        dimensions_1.push_back(b_transposed ? shape_b.w : shape_b.h); // to make cmd arguments have normal matrix with transpose internal to each dispatcher
+        dimensions_1.push_back(b_transposed ? shape_b.h : shape_b.w); // to make cmd arguments have normal matrix with transpose internal to each dispatcher
         dml::TensorDesc desc_input_1 = { quantized_data_type, b_managed ? DML_TENSOR_FLAG_OWNED_BY_DML : DML_TENSOR_FLAG_NONE, dimensions_1 };
         input_1_ = dml::InputTensor(graph_, 1, desc_input_1);
 
