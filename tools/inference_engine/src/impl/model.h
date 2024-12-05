@@ -26,8 +26,20 @@ public:
     template<typename T, typename TDesc>
     std::size_t add_node(const TDesc& desc)
     {  
+        // add node
         auto id = nodes_.size();
         nodes_.push_back(std::make_unique<T>(desc, id));
+        
+        // Early validation: valid it's inputs
+        const auto& inputs = nodes_.back()->inputs();
+        for (const auto& in : inputs)
+        {
+            // We know that inputs have to be already added to graph, so their ID has to be lower.
+            if (in >= nodes_.size())
+            {
+                throw std::runtime_error("Invalid input for node. Can't add node to the model.");
+            }
+        }
         return id;
     }
 
@@ -40,10 +52,9 @@ public:
     std::vector<std::unique_ptr<GpuNode>> compile(std::span<TensorMapping> input_mappings);
 
 
-
 private:
     void create_adjacency_list();
-    void set_input_tensors(std::vector<std::unique_ptr<inference_engine::GpuNode>>& ret, std::span<TensorMapping> input_mappings);
+
     std::vector<INode*> topological_sort();
     void topological_sort_util(INode* node, std::unordered_set<INode*>& visited, std::stack<INode*>& stack);
 

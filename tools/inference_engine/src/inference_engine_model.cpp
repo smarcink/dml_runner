@@ -11,10 +11,23 @@ INFERENCE_ENGINE_API inference_engine_model_descriptor_t inferenceEngineCreateMo
     return reinterpret_cast<inference_engine_model_descriptor_t>(md);
 }
 
-INFERENCE_ENGINE_API void inferenceEngineSetNodeName(inference_engine_model_descriptor_t md, inference_engine_node_id_t node_id, const char* name)
+INFERENCE_ENGINE_API bool inferenceEngineSetNodeName(inference_engine_model_descriptor_t md, inference_engine_node_id_t node_id, const char* name)
 {
-    auto typed_md = reinterpret_cast<inference_engine::ModelDescriptor*>(md);
-    typed_md->set_name(node_id, name);
+    try
+    {
+        auto typed_md = reinterpret_cast<inference_engine::ModelDescriptor*>(md);
+        typed_md->set_name(node_id, name);
+        return true;
+    }
+    catch (const std::exception& ex)
+    {
+        std::cerr << "exception: " << ex.what() << '\n';
+    }
+    catch (...)
+    {
+        std::cerr << "unknown exception!\n";
+    }
+    return false;
 }
 
 INFERENCE_ENGINE_API void inferenceEngineDestroyModelDescriptor(inference_engine_model_descriptor_t md)

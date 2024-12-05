@@ -4,7 +4,7 @@
 namespace inference_engine
 {
     class GpuActivation;
-    class GpuElementwiseAdd;
+    class GpuElementwise;
 
     class GpuConvolution : public GpuNode
     {
@@ -24,7 +24,7 @@ namespace inference_engine
         std::string to_str() const override;
 
         bool fuse_with(const GpuActivation*) override;      
-        bool fuse_with(const GpuElementwiseAdd*) override;      
+        bool fuse_with(const GpuElementwise*) override;      
 
     private:
         inference_engine_convolution_desc_t desc_{};

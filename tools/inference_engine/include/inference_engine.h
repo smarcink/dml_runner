@@ -48,7 +48,7 @@ typedef struct _inference_engine_callbacks_t
 
     // stream
     FN_GPU_STREAM_EXECUTE_KERNEL   fn_gpu_stream_execute_kernel;
-    FN_GPU_STREAM_FILL_MEMORY      fn_gpu_stream_fill_memory;
+    //FN_GPU_STREAM_FILL_MEMORY      fn_gpu_stream_fill_memory;
     FN_GPU_STREAM_RESOURCE_BARRIER fn_gpu_stream_resource_barrier;
 
 } inference_engine_context_callbacks_t;
