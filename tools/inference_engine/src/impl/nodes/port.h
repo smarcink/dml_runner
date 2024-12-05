@@ -25,8 +25,7 @@ namespace inference_engine
         GpuResource::Ptr execute(GpuStream& stream) override
         {
             std::cout << "[Port] Execute." << std::endl;
-            //return resource_;
-            return {};
+            return resource_;
         }
 
         void set_tensor(const Tensor& tensor)

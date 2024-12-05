@@ -29,37 +29,14 @@ namespace inference_engine
             return *this;
         }
 
-        void compile(GpuContext& ctx) override
-        {
-            std::cout << "[Activation] Compile." << std::endl;
-            assert(kernel_ == nullptr); // compile can happen only once
-            return;
-            const char* kernel_str =
-                ""
-                ""
-                "T"
-                ""
-                "";
-
-            const char* build_options = "";
-            kernel_ = ctx.create_kernel("activation_relu_ref", kernel_str, std::strlen(kernel_str), build_options, INFERENCE_ENGINE_KERNEL_LANGUAGE_CM);
-        }
+        void compile(GpuContext& ctx) override;
 
         void initalize(GpuStream& stream) override
         {
             std::cout << "[Activation] Initialize." << std::endl;
         }
 
-        GpuResource::Ptr execute(GpuStream& stream) override
-        {
-            std::cout << "[Activation] Execute." << std::endl;
-            //assert(kernel_);
-
-            //kernel_->set_arg(0, inputs()[0]->)
-
-            //return resource_;
-            return {};
-        }
+        GpuResource::Ptr execute(GpuStream& stream) override;
 
         std::string to_str() const override
         {

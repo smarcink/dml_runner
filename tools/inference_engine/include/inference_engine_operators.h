@@ -29,16 +29,27 @@ typedef struct _inference_engine_matmul_desc_t
 typedef enum _inference_engine_activation_type_t
 {
     INFERENCE_ENGINE_ACTIVATION_TYPE_RELU = 0,
-
+    INFERENCE_ENGINE_ACTIVATION_TYPE_LINEAR,
 
     INFERENCE_ENGINE_ACTIVATION_TYPE_UNKNOWN = -1000,
 } inference_engine_activation_type_t;
+
+typedef struct _inference_engine_activation_linear_params_t
+{
+    float a;
+    float b;
+} inference_engine_activation_linear_params_t;
 
 typedef struct _inference_engine_activation_desc_t
 {
     inference_engine_node_id_t input;
     inference_engine_activation_type_t type;
-    // params...
+    
+    union
+    {
+        inference_engine_activation_linear_params_t linear;
+    } params;
+
 } inference_engine_activation_desc_t;
 
 typedef struct _inference_engine_elementwise_add_desc_t
