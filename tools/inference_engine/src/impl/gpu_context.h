@@ -8,6 +8,7 @@
 #include <vector>
 #include <array>
 #include <span>
+#include <format>
 
 namespace inference_engine
 {
@@ -175,6 +176,18 @@ namespace inference_engine
                 assert(!"Error! For now single callback per device supported.");
             }
             G_GPU_CBCS = callbacks;
+            throw_no_set_callback(G_GPU_CBCS.fn_gpu_device_create_kernel, "fn_gpu_device_create_kernel");
+            throw_no_set_callback(G_GPU_CBCS.fn_gpu_device_allocate_resource, "fn_gpu_device_allocate_resource");
+
+            throw_no_set_callback(G_GPU_CBCS.fn_gpu_kernel_set_arg_resource, "fn_gpu_kernel_set_arg_resource");
+            throw_no_set_callback(G_GPU_CBCS.fn_gpu_kernel_set_arg_uint32, "fn_gpu_kernel_set_arg_uint32");
+            throw_no_set_callback(G_GPU_CBCS.fn_gpu_kernel_set_arg_float, "fn_gpu_kernel_set_arg_float");
+            throw_no_set_callback(G_GPU_CBCS.fn_gpu_kernel_destroy, "fn_gpu_kernel_destroy");
+
+            throw_no_set_callback(G_GPU_CBCS.fn_gpu_stream_execute_kernel, "fn_gpu_stream_execute_kernel");
+            throw_no_set_callback(G_GPU_CBCS.fn_gpu_stream_resource_barrier, "fn_gpu_stream_resource_barrier");
+
+
             std::cout << "Created GpuContext" << std::endl;
         }
 
@@ -208,6 +221,16 @@ namespace inference_engine
         GpuResource allocate_resource(std::size_t size)
         {
             return GpuResource(device_, size);
+        }
+
+    private:
+        template<typename T>
+        void throw_no_set_callback(T& cbc, std::string_view msg)
+        {
+            if (!cbc)
+            {
+                throw std::runtime_error(std::format("No {} callback set!", msg));
+            }         
         }
 
     private:

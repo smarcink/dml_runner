@@ -1,5 +1,6 @@
 #pragma once
 #include <inference_engine.h>
+#include <inference_engine.hpp>
 
 #include <utility>
 #include <iostream>
@@ -446,8 +447,213 @@ inline inference_engine_context_callbacks_t fill_with_dx12_callbacks()
     callbacks.fn_gpu_kernel_set_arg_float = &dx12_callbacks::gpu_kernel_set_arg_float;
 
     callbacks.fn_gpu_stream_execute_kernel = &dx12_callbacks::gpu_stream_execute_kernel;
-    callbacks.fn_gpu_stream_fill_memory = &dx12_callbacks::gpu_stream_fill_memory;
+    //callbacks.fn_gpu_stream_fill_memory = &dx12_callbacks::gpu_stream_fill_memory;
     callbacks.fn_gpu_stream_resource_barrier = &dx12_callbacks::gpu_stream_resource_barrier;
 
     return callbacks;
 }
+
+class ResourceDX12 : public inference_engine::Resource
+{
+public:
+    ResourceDX12(ComPtr<ID3D12Resource> resource)
+        : rsc_(resource)
+    {
+    }
+
+    ID3D12Resource* get() { return rsc_.Get(); }
+
+private:
+    ComPtr<ID3D12Resource> rsc_;
+};
+
+
+class KernelDX12 : public inference_engine::Resource
+{
+public:
+    KernelDX12(ID3D12Device* d3d12_dev, const char* kernel_name, const void* kernel_code, size_t kernel_code_size, const char* build_options, inference_engine_kernel_language_t language)
+        : name_(kernel_name)
+    {
+        ID3D12Device5* dev5 = nullptr;
+        throw_if_failed(d3d12_dev->QueryInterface(&dev5), "cant cast d3d12 device to ID3D12Device5");
+
+        if (kernel_code == nullptr || kernel_code_size == 0)
+        {
+            throw std::runtime_error("Code string is empty. Please provide valid kernel/binary data.\n");
+        }
+
+        META_COMMAND_CREATE_CUSTOM_DESC create_desc{};
+        create_desc.ShaderSourceCode = reinterpret_cast<UINT64>(kernel_code);
+        create_desc.ShaderSourceCodeSize = kernel_code_size;
+        create_desc.BuildOptionString = reinterpret_cast<UINT64>(build_options);
+        create_desc.BuildOptionStringSize = build_options ? std::strlen(build_options) : 0ull;
+
+        switch (language)
+        {
+        case inference_engine_kernel_language_t::INFERENCE_ENGINE_KERNEL_LANGUAGE_OCL:
+            create_desc.ShaderLanguage = META_COMMAND_CUSTOM_SHADER_LANGUAGE_OCL_STATELESS;
+            break;
+        default:
+            create_desc.ShaderLanguage = META_COMMAND_CUSTOM_SHADER_LANGUAGE_NONE;
+        }
+        assert(create_desc.ShaderLanguage != META_COMMAND_CUSTOM_SHADER_LANGUAGE_NONE);
+        auto mcw = new MetaCommandWrapper{};
+        throw_if_failed(dev5->CreateMetaCommand(GUID_CUSTOM, 0, &create_desc, sizeof(create_desc),
+            IID_PPV_ARGS(&mcw->mc)), "Cant create custom metacommand");
+        if (!mcw->mc)
+        {
+            delete mcw;
+            assert(!"Creation of custom MC failed.");
+        }
+    }
+
+    ID3D12MetaCommand* get() { return mc_.Get(); }
+
+    void set_arg(std::uint32_t idx, ResourceDX12* rsc, std::size_t offset = 0)
+    {
+        resources_[idx] = { rsc, offset };
+    }
+
+    void set_arg(std::uint32_t idx, std::uint32_t u32)
+    {
+        scalars_[idx] = u32;
+    }
+
+    void set_arg(std::uint32_t idx, float f32)
+    {
+        scalars_[idx] = f32;
+    }
+
+    void execute(ID3D12GraphicsCommandList4* cmd_list, std::uint32_t gws[3], std::uint32_t lws[3])
+    {
+        std::cout << "[callback] callback gpu_stream_execute_kernel" << std::endl;
+        std::cout << "\t gws: " << gws[0] << ", " << gws[1] << ", " << gws[2] << std::endl;;
+
+        // [0] Calculate dispatch thread size
+        META_COMMAND_EXECUTE_CUSTOM_DESC exec_desc{};
+        for (std::size_t i = 0; i < 3; i++)
+        {
+            if (gws[i] == 0 || lws[i] == 0)
+            {
+                assert(!"Unexpected gws and/or lws sizes");
+            }
+            exec_desc.DispatchGlobalWorkSize[i] = static_cast<std::uint64_t>(gws[i]);
+            exec_desc.DispatchLocalWorkSize[i] = static_cast<std::uint64_t>(lws[i]);
+        }
+
+        exec_desc.ResourceCount = resources_.size();
+        if (exec_desc.ResourceCount >= std::size(exec_desc.Resources))
+        {
+            assert(!"Please extend number of supported resources for custom metacommand!");
+        }
+
+        // [1] Prepare resources pointer handles 
+        for (std::size_t idx = 0; const auto & [bind_indx, rsc] : resources_)
+        {
+            exec_desc.ResourceBindOffset[idx] = bind_indx;
+
+            const auto [rsc_handle, base_offset] = rsc;
+            if (rsc_handle)
+            {
+                // set offset no matter what type of resource
+                auto mem_ptr = reinterpret_cast<ID3D12Resource*>(rsc_handle);
+                exec_desc.ResourcesByteOffset[idx] = base_offset;
+                exec_desc.ResourceBindType[idx] = META_COMMAND_CUSTOM_RESOURCE_BIND_TYPE_ADDRESS;
+                exec_desc.ResourcesAddress[idx] = mem_ptr->GetGPUVirtualAddress();
+            }
+            idx++;
+        }
+
+        // [2] Build execution time constants 
+        std::vector<std::byte> execution_time_constants;
+        for (std::size_t i = 0; const auto & [idx, scalar] : scalars_)
+        {
+            //exec_desc.RuntimeConstantsBindOffsets[i] = idx;
+            //exec_desc.RuntimeConstantsMemorySizes[i] = scalar.size;
+            //exec_desc.RuntimeConstantsMemoryOffsets[i] = execution_time_constants.size();;
+            //execution_time_constants.resize(execution_time_constants.size() + scalar.size);
+            i++;
+        }
+        auto* ptr_to_copy_data = execution_time_constants.data();
+        for (const auto& [idx, scalar] : scalars_)
+        {
+            //std::memcpy(ptr_to_copy_data, scalar.data, scalar.size);
+            //ptr_to_copy_data += scalar.size;
+        }
+        exec_desc.RuntimeConstantsCount = scalars_.size();
+        exec_desc.RuntimeConstants = reinterpret_cast<UINT64>(execution_time_constants.data());
+
+        // [3] Build slm
+        if (locals_.size() > 1)
+        {
+            assert("!Unsupported case. Please remove this check and test - if it fails most probably driver need changes!");
+        }
+
+        for (const auto& [idx, slm_size] : locals_)
+        {
+            exec_desc.SharedLocalMemorySize += slm_size;
+        }
+
+        cmd_list->ExecuteMetaCommand(mc_.Get(), &exec_desc, sizeof(exec_desc));
+    }
+
+private:
+    ComPtr<ID3D12MetaCommand> mc_;
+    std::unordered_map<std::size_t, std::pair<ResourceDX12*, std::size_t>> resources_;
+    std::unordered_map<std::size_t, std::variant<float, std::uint32_t>> scalars_;
+    std::unordered_map<std::size_t, std::size_t> locals_;
+    std::string name_;
+};
+
+
+class StreamDX12 : public inference_engine::Stream<StreamDX12>
+{
+public:
+    StreamDX12(ComPtr<ID3D12GraphicsCommandList> cmd_list)
+        : cmd_list_(cmd_list)
+    {}
+
+    void disaptch_resource_barrier(std::vector<ResourceDX12*> rscs_list)
+    {
+        std::vector<CD3DX12_RESOURCE_BARRIER> barriers(rscs_list.size());
+        for (auto i = 0; i < barriers.size(); i++)
+        {
+            barriers.push_back(CD3DX12_RESOURCE_BARRIER::UAV(rscs_list[i]->get()));
+        }
+        cmd_list_->ResourceBarrier(static_cast<std::uint32_t>(barriers.size()), barriers.data());
+    }
+
+    void dispatch_kernel(KernelDX12& kernel, std::uint32_t gws[3], std::uint32_t lws[3])
+    {
+        ID3D12GraphicsCommandList4* cmd4 = nullptr;
+        throw_if_failed(cmd_list_->QueryInterface(&cmd4), "cant cast cmd_list_ to ID3D12GraphicsCommandList");
+        kernel.execute(cmd4, gws, lws);
+    }
+
+private:
+    ComPtr<ID3D12GraphicsCommandList> cmd_list_ = nullptr;
+};
+
+class DeviceDX12 : public inference_engine::Device<DeviceDX12>
+{
+public:
+    DeviceDX12(ComPtr<ID3D12Device> device)
+        : device_(device)
+    {}
+
+    KernelDX12 create_kernel(const char* kernel_name, const void* kernel_code, size_t kernel_code_size, const char* build_options, inference_engine_kernel_language_t language)
+    {
+        return KernelDX12(device_.Get(), kernel_name, kernel_code, kernel_code_size, build_options, language);
+    }
+
+    ResourceDX12 allocate_resource(std::size_t size)
+    {
+        return ResourceDX12(create_buffer(device_.Get(), size, D3D12_HEAP_TYPE_DEFAULT,
+            D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS));
+    }
+
+private:
+    ComPtr<ID3D12Device> device_ = nullptr;
+};
+
+using ContextDX12 = inference_engine::Context<DeviceDX12, StreamDX12, ResourceDX12, KernelDX12>;
