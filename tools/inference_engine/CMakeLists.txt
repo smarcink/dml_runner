@@ -6,6 +6,7 @@ set(SOURCES_DIR "src")
 
 set(TARGET_SOURCES
     ${HEADERS_DIR}/inference_engine.h
+    ${HEADERS_DIR}/inference_engine.hpp
     ${HEADERS_DIR}/inference_engine_export.h
     ${HEADERS_DIR}/inference_engine_operators.h
     ${HEADERS_DIR}/inference_engine_tensor.h
