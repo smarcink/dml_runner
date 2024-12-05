@@ -10,3 +10,10 @@ void inference_engine::GpuStream::dispatch_resource_barrier(GpuResource& resourc
     G_GPU_CBCS.fn_gpu_stream_resource_barrier(handle_, rscs.data(), rscs.size());
 }
 
+void inference_engine::GpuStream::dispatch_kernel(const GpuKernel& kernel, uint32_t gws[3], uint32_t lws[3])
+{
+    assert(G_GPU_CBCS.fn_gpu_stream_execute_kernel != nullptr);
+    std::cout << "GpuStream::dispatch_kernel" << std::endl;
+    G_GPU_CBCS.fn_gpu_stream_execute_kernel(handle_, kernel.get(), gws, lws);
+}
+

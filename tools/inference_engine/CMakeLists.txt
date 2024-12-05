@@ -23,7 +23,9 @@ set(TARGET_SOURCES
 	${SOURCES_DIR}/impl/node.h
     
 	${SOURCES_DIR}/impl/nodes/activation.h
+	${SOURCES_DIR}/impl/nodes/activation.cpp
 	${SOURCES_DIR}/impl/nodes/matmul.h
+	${SOURCES_DIR}/impl/nodes/matmul.cpp
 	${SOURCES_DIR}/impl/nodes/port.h
 )
 

@@ -6,12 +6,14 @@
 #include <iostream>
 #include <cassert>
 #include <vector>
+#include <array>
 #include <span>
 
 namespace inference_engine
 {
 
     inline inference_engine_context_callbacks_t G_GPU_CBCS = {};
+    class GpuKernel;
 
     class GpuResource
     {
@@ -93,7 +95,7 @@ namespace inference_engine
         inference_engine_stream_t get() { return handle_; }
 
         void dispatch_resource_barrier(GpuResource& resource);  //ToDo: this in future will need to support list of resources/events
-
+        void dispatch_kernel(const GpuKernel& kernel, uint32_t gws[3], uint32_t lws[3]);
     protected:
         inference_engine_stream_t handle_;
     };
@@ -135,12 +137,15 @@ namespace inference_engine
             }
         }
 
-        void set_arg(std::uint32_t idx, GpuResource& rsc)
+        inference_engine_kernel_t get() { return handle_; }
+        inference_engine_kernel_t get() const { return handle_; }
+
+        void set_arg(std::uint32_t idx, const GpuResource& rsc, std::size_t offset = 0)
         {
             assert(handle_ != nullptr);
             auto rsc_handle = rsc.get();
             assert(rsc_handle != nullptr);
-            G_GPU_CBCS.fn_gpu_kernel_set_arg_resource(handle_, idx, rsc_handle);
+            G_GPU_CBCS.fn_gpu_kernel_set_arg_resource(handle_, idx, rsc_handle, offset);
         }
 
         void set_arg(std::uint32_t idx, std::uint32_t u32)
