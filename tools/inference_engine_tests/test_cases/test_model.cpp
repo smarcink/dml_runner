@@ -268,3 +268,98 @@ TEST(ModelTest, MatMul_6_nodes)
     inferenceEngineDestroyModel(model);
     inferenceEngineDestroyContext(ctx);
 }
+
+TEST(ModelTest, ConvPlusAddFusion)
+{
+    // *           * port, port
+    //  \         /
+    //   *       *   conv, conv
+    //    \     /
+    //     \   *     activation
+    //      \ /
+    //       *       elementwise_add
+
+    // we'll fuse nodes on the right side of the graph
+    // *        * port, port
+    //  \      /
+    //   *    /   conv
+    //    \  /
+    //     * conv fused with activation fused with elementwise_add 
+
+
+    auto device = reinterpret_cast<inference_engine_device_t>(G_DX12_ENGINE.d3d12_device.Get());
+    auto stream = reinterpret_cast<inference_engine_stream_t>(G_DX12_ENGINE.command_list.Get());
+    auto ctx = inferenceEngineCreateContext(device, fill_with_dx12_callbacks());
+
+    auto md = inferenceEngineCreateModelDescriptor();
+
+    inference_engine_port_desc_t input_desc{};
+    input_desc.data_type = inference_engine_data_type_t::INFERENCE_ENGINE_DATA_TYPE_FP16;
+    auto input_a = inferenceEngineModelDescriptorAddPort(md, input_desc);
+    ASSERT_NE(input_a, INFERENCE_ENGINE_INVALID_NODE_ID);
+    auto input_b = inferenceEngineModelDescriptorAddPort(md, input_desc);
+    ASSERT_NE(input_b, INFERENCE_ENGINE_INVALID_NODE_ID);
+
+    // Conv left
+    inference_engine_convolution_desc_t conv_desc{.input = input_a};
+    auto port_conv_a = inferenceEngineModelDescriptorAddConvolution(md, conv_desc);
+    ASSERT_NE(port_conv_a, INFERENCE_ENGINE_INVALID_NODE_ID);
+
+    // Conv right
+    inference_engine_convolution_desc_t conv_desc1{ .input = input_b };
+    auto port_conv_b = inferenceEngineModelDescriptorAddConvolution(md, conv_desc1);
+    ASSERT_NE(port_conv_b, INFERENCE_ENGINE_INVALID_NODE_ID);
+
+    // activation
+    inference_engine_activation_desc_t activation_desc{};
+    activation_desc.input = port_conv_b;
+    activation_desc.type = INFERENCE_ENGINE_ACTIVATION_TYPE_RELU;
+    auto activation = inferenceEngineModelDescriptorAddActivation(md, activation_desc);
+    ASSERT_NE(activation, INFERENCE_ENGINE_INVALID_NODE_ID);
+
+    // elementwise_add
+    inference_engine_elementwise_add_desc_t add_desc_final{};
+    add_desc_final.input_a = port_conv_a;
+    add_desc_final.input_b = activation;
+    auto port_add_final = inferenceEngineModelDescriptorAddElementwiseAdd(md, add_desc_final);
+    ASSERT_NE(port_add_final, INFERENCE_ENGINE_INVALID_NODE_ID);
+
+    // define input mappings
+    std::array<inference_engine_tensor_mapping_t, 3> inputs{};
+    // input a
+    {
+        inputs[0].id = input_a;
+        inputs[0].tensor.data_type = input_desc.data_type;
+        set_array(inputs[0].tensor.dims, 1, 1, 4, 4);
+    }
+    // input b
+    {
+        inputs[1].id = input_b;
+        inputs[1].tensor.data_type = input_desc.data_type;
+        set_array(inputs[1].tensor.dims, 1, 1, 4, 4);
+    }
+
+    // create model
+    auto model = inferenceEngineCompileModelDescriptor(ctx, stream, md, inputs.data(), inputs.size());
+    ASSERT_NE(model, nullptr);
+
+    // ask model for output size (we know that there has to be 1 output in this test case)
+    inference_engine_tensor_mapping_t output_mapping{};
+    ASSERT_EQ(inferenceEngineModelGetOutputs(model, &output_mapping, nullptr), true);
+    ASSERT_EQ(output_mapping.id, port_add_final);
+    ASSERT_EQ(output_mapping.tensor.data_type, input_desc.data_type);
+    ASSERT_EQ(output_mapping.tensor.dims[0], 1);
+    ASSERT_EQ(output_mapping.tensor.dims[1], 1);
+    ASSERT_EQ(output_mapping.tensor.dims[2], 4);
+    ASSERT_EQ(output_mapping.tensor.dims[3], 4);
+
+    // can execute here (assign resources call execute)
+    inferenceEngineExecuteModel(model, stream);
+    // do conformance check etc ..
+    // ...
+    // delete model
+
+    inferenceEngineDestroyModelDescriptor(md);
+    inferenceEngineDestroyModel(model);
+    inferenceEngineDestroyContext(ctx);
+}

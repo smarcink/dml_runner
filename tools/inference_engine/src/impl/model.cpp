@@ -3,8 +3,11 @@
 #include "inference_engine_tensor.h"
 #include "nodes/port.h"
 #include <exception>
+#include <algorithm>
 #include "nodes/matmul.h"
 #include "nodes/activation.h"
+#include "nodes/convolution.h"
+#include "nodes/elementwise_add.h"
 #include "gpu_visitor.h"
 
 namespace inference_engine
@@ -184,68 +187,87 @@ ModelDescriptor::~ModelDescriptor()
     std::cout << "D-TOR ~ModelDescriptor()" << std::endl;
 }
 
-class FusionVisitor : public GpuVisitor {
+class FusionVisitor : public GpuVisitor 
+{
     std::unordered_set<GpuNode*> to_delete_;
+    std::unordered_map<GpuNode*, size_t> node_to_index_;
+
+    void mark_node_for_deletion(GpuNode* node) 
+    {
+        to_delete_.insert(node);
+    }
+    void update_indices(std::vector<std::unique_ptr<GpuNode>>& sorted_nodes) 
+    {
+        for (size_t i = 0; i < sorted_nodes.size(); ++i)
+            node_to_index_[sorted_nodes[i].get()] = i;
+    }
 public:
-    void processSortedNodes(std::vector<std::unique_ptr<GpuNode>>& sorted_nodes) override {
-        for (auto it = std::begin(sorted_nodes); it != std::end(sorted_nodes);) {
+    void process_sorted_nodes(std::vector<std::unique_ptr<GpuNode>>& sorted_nodes) override 
+    {
+        update_indices(sorted_nodes);
+        for (auto it = std::begin(sorted_nodes); it != std::end(sorted_nodes);) 
+        {
             to_delete_.clear();
             (*it)->accept(this);
-            if (!to_delete_.empty())
+            if (!to_delete_.empty()) 
             {
-                // walk through to_delete_ and find the range of iterators and call erase on the vector
-                // walk from this node till previous nodes, the rule is that the node can delete itself and previous nodes only
-                auto start_to_delete = it;
-                auto end_to_delete = std::next(it);
-                while (start_to_delete != std::begin(sorted_nodes) && to_delete_.contains((*std::prev(start_to_delete)).get()))
-                    --start_to_delete;
-
-                auto num_to_delete = std::distance(start_to_delete, end_to_delete);
-                assert(num_to_delete == to_delete_.size()); // we should have contiguous range of nodes to delete...
-                std::cout << "Erasing nodes: " << num_to_delete << '\n';
-                it = sorted_nodes.erase(start_to_delete, end_to_delete);
-            }                
+                if (to_delete_.size() == 1) 
+                {
+                    auto index = node_to_index_[*to_delete_.begin()];
+                    it = sorted_nodes.erase(std::begin(sorted_nodes) + index); // continue the iteration from node after deleted one
+                }
+                else 
+                {
+                    std::vector<size_t> ids_to_delete;
+                    ids_to_delete.reserve(to_delete_.size());
+                    for (auto& elem : to_delete_)
+                        ids_to_delete.push_back(node_to_index_[elem]);
+                    std::sort(std::begin(ids_to_delete), std::end(ids_to_delete));
+                    // remove nodes from sorted list
+                    for (auto& index : ids_to_delete)
+                        it = sorted_nodes.erase(std::begin(sorted_nodes) + index);  // continue the iteration from node after the last deleted node
+                }
+                update_indices(sorted_nodes);
+            }
             else
                 ++it;
         }
     }
 
-    virtual void visit(GpuPort* pn) override {
+    void visit(GpuPort* pn) override 
+    {
         std::cout << "visiting port...\n";
     }
-    virtual void visit(GpuActivation* pn) override {
+    void visit(GpuActivation* pn) override 
+    {
         std::cout << "visiting activation...\n";
 
-        // check matmul + activation and fuse?
-        // rules:
-        // 1) the last activation in the chain of activations can perform the fusion (remove nodes if needed)
+        // check matmul/conv + activation and fuse?
+        // if we have multiple activations in a row, we do it one by one
+
         auto& inputs = pn->get_inputs();
         if (inputs.size() == 1) {
-            // is this the last activation in the chain?
-            auto nextActivation = pn->get_outputs().empty() ? nullptr : dynamic_cast<GpuActivation*>(pn->get_outputs()[0]);
-            if (nextActivation == nullptr) {
-                // walk through inputs and check if it's an activation, until we find some node to fuse with
-                std::vector<GpuActivation*> activations;
-                auto curr_node = pn;
-                GpuMatMul* prev_to_fuse_with = nullptr;
-                while (curr_node) {
-                    activations.push_back(curr_node);
-                    auto temp = curr_node->get_inputs()[0];
-                    curr_node = dynamic_cast<GpuActivation*>(temp);
-                    if (!curr_node)
-                        prev_to_fuse_with = dynamic_cast<GpuMatMul*>(temp);
-                }
-                if (prev_to_fuse_with && prev_to_fuse_with->get_outputs().size() == 1) {
-                    std::cout << "possible matmul + activation fusion...\n";
-                    prev_to_fuse_with->fuse_with(activations);
-                    for (auto& elem : activations)
-                        to_delete_.insert(elem);
-                }
+            if (auto matmul = dynamic_cast<GpuMatMul*>(inputs[0])) {
+                mark_node_for_deletion(pn);
+                matmul->fuse_with(pn);
+            }
+            else if (auto conv = dynamic_cast<GpuConvolution*>(inputs[0])) {
+                mark_node_for_deletion(pn);
+                conv->fuse_with(pn);
             }
         }
     }
-    virtual void visit(GpuMatMul* pn) override {
+    void visit(GpuMatMul* pn) override 
+    {
         std::cout << "visiting matmul...\n";        
+    }
+    void visit(class GpuElementwiseAdd*) override
+    {
+        std::cout << "visiting elementwise add...\n";
+    }
+    void visit(class GpuConvolution*) override
+    {
+        std::cout << "visiting convolution...\n";
     }
 };
 
@@ -263,7 +285,7 @@ inference_engine::ExecutableModel ModelDescriptor::compile(GpuContext& ctx, GpuS
     auto sorted_nodes = dag_.compile(input_mappings);
 
     FusionVisitor v;
-    v.processSortedNodes(sorted_nodes);
+    v.process_sorted_nodes(sorted_nodes);
 
     std::cout << "[Compile][Pass-Q] -- Memory allocations" << std::endl;
     for (auto& n : sorted_nodes)

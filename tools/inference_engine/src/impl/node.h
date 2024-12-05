@@ -73,6 +73,14 @@ namespace inference_engine
             outputs_.push_back(node);
         }
 
+        virtual void replace_input(const GpuNode* old_node, GpuNode* new_node)
+        {
+            for (auto&& input : inputs_) {
+                if (input == old_node)
+                    input = new_node;
+            }
+        }
+
         virtual const std::vector<GpuNode*>& get_inputs() const
         {
             return inputs_;

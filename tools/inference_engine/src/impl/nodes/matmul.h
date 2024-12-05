@@ -37,7 +37,7 @@ namespace inference_engine
             return "GpuMatMul";
         }
 
-        void fuse_with(const std::vector<GpuActivation*>&);
+        void fuse_with(const GpuActivation*);
 
         void accept(class GpuVisitor*) override;
     private:
