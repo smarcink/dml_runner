@@ -41,10 +41,22 @@ namespace inference_engine
             return inputs_;
         }
 
+        void set_name(std::string_view name)
+        {
+            name_ = name;
+        }
+
         virtual std::unique_ptr<GpuNode> create_gpu_node(const std::vector<GpuNode*>& inputs) = 0;
     protected:
         std::size_t id_ = INFERENCE_ENGINE_INVALID_NODE_ID;
         std::vector<inference_engine_node_id_t> inputs_{};
+        std::string name_;
+    };
+
+    struct PostOp
+    {
+        // for now assume only activation can be fused, we can later extend this into some std::variant of other operators...
+        inference_engine_activation_desc_t activation_params_;
     };
 
     /*
@@ -54,12 +66,17 @@ namespace inference_engine
     {
     public:
         GpuNode(std::size_t user_id)
-            : GpuNode(user_id, {}, {})
+            : GpuNode(user_id, {}, {}, {})
         {}
-        GpuNode(std::size_t user_id, const Tensor& output_tensor, const std::vector<GpuNode*>& inputs)
+        GpuNode(std::size_t user_id, const std::string& name)
+            : GpuNode(user_id, {}, {}, name)
+        {
+        }
+        GpuNode(std::size_t user_id, const Tensor& output_tensor, const std::vector<GpuNode*>& inputs, const std::string& name)
             : id_(user_id)
             , inputs_(inputs)
             , output_tensor_(output_tensor)
+            , name_(name)
         {}
         virtual ~GpuNode() = default;
 
@@ -81,6 +98,15 @@ namespace inference_engine
         virtual const std::vector<GpuNode*>& get_outputs() const
         {
             return outputs_;
+        }
+
+        static void replace_input(GpuNode* node, const GpuNode* old_node, GpuNode* new_node)
+        {
+            for (auto&& input : node->inputs_)
+            {
+                if (input == old_node)
+                    input = new_node;
+            }
         }
 
         virtual void set_id(std::size_t id)
@@ -116,11 +142,22 @@ namespace inference_engine
             return output_tensor_;
         }
 
+        virtual bool fuse_with(const class GpuActivation*) { return false; }     // false if no fusion happened
+        virtual bool fuse_with(const class GpuElementwiseAdd*) { return false; } // false if no fusion happened
+
     protected:
         std::size_t id_ = INFERENCE_ENGINE_INVALID_NODE_ID; // init with invalid id
         std::vector<GpuNode*> inputs_;
         std::vector<GpuNode*> outputs_;
         GpuResource::Ptr resource_;
         Tensor output_tensor_;
+        std::vector<PostOp> post_ops_;
+        std::string name_;
     };
+
+    namespace node_utils
+    {
+        // if name is empty, return node_type_name, otherwise return node_type_name + "name"
+        std::string create_name(std::string_view node_type_name, const std::string& name);
+    }
 }  // namespace inference_engine

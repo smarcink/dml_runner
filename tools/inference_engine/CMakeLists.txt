@@ -17,16 +17,23 @@ set(TARGET_SOURCES
     
     ${SOURCES_DIR}/impl/gpu_context.cpp
     ${SOURCES_DIR}/impl/gpu_context.h
+    ${SOURCES_DIR}/impl/gpu_visitor.h
     ${SOURCES_DIR}/impl/model.cpp
     ${SOURCES_DIR}/impl/model.h
 	${SOURCES_DIR}/impl/tensor.h
 	${SOURCES_DIR}/impl/node.h
+	${SOURCES_DIR}/impl/node.cpp
     
 	${SOURCES_DIR}/impl/nodes/activation.h
 	${SOURCES_DIR}/impl/nodes/activation.cpp
 	${SOURCES_DIR}/impl/nodes/matmul.h
 	${SOURCES_DIR}/impl/nodes/matmul.cpp
 	${SOURCES_DIR}/impl/nodes/port.h
+	${SOURCES_DIR}/impl/nodes/port.cpp
+	${SOURCES_DIR}/impl/nodes/elementwise_add.h
+	${SOURCES_DIR}/impl/nodes/elementwise_add.cpp
+	${SOURCES_DIR}/impl/nodes/convolution.h
+	${SOURCES_DIR}/impl/nodes/convolution.cpp
 )
 
 add_library(${TARGET_NAME} SHARED ${TARGET_SOURCES})

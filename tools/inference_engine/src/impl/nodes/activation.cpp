@@ -1,11 +1,11 @@
 #include "activation.h"
-
 #include <sstream>
 #include <iomanip>
+#include <format>
 
 void inference_engine::GpuActivation::compile(GpuContext& ctx)
 {
-    std::cout << "[Activation] Compile." << std::endl;
+    std::cout << std::format("[{}] Compile.\n", to_str());
     assert(kernel_ == nullptr); // compile can happen only once
 
     const char* code_string
@@ -58,9 +58,14 @@ void inference_engine::GpuActivation::compile(GpuContext& ctx)
     kernel_ = ctx.create_kernel("activation_ref", code_string, std::strlen(code_string), build_options.c_str(), INFERENCE_ENGINE_KERNEL_LANGUAGE_OCL);
 }
 
+void inference_engine::GpuActivation::initalize(GpuStream& stream)
+{
+    std::cout << std::format("[{}] Initialize.\n", to_str());
+}
+
 inference_engine::GpuResource::Ptr inference_engine::GpuActivation::execute(GpuStream& stream)
 {
-    std::cout << "[Activation] Execute." << std::endl;
+    std::cout << std::format("[{}] Execute.\n", to_str());
     assert(kernel_);
 
     auto input_rsc = get_inputs().at(0)->get_resource().get();
@@ -86,4 +91,10 @@ inference_engine::GpuResource::Ptr inference_engine::GpuActivation::execute(GpuS
     stream.dispatch_kernel(*kernel_.get(), gws, lws);
 
     return resource_;
+}
+
+std::string inference_engine::GpuActivation::to_str() const
+{
+    // more details about the node here
+    return node_utils::create_name("GpuActivation", name_);
 }

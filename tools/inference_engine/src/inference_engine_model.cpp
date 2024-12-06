@@ -11,6 +11,12 @@ INFERENCE_ENGINE_API inference_engine_model_descriptor_t inferenceEngineCreateMo
     return reinterpret_cast<inference_engine_model_descriptor_t>(md);
 }
 
+INFERENCE_ENGINE_API void inferenceEngineSetNodeName(inference_engine_model_descriptor_t md, inference_engine_node_id_t node_id, const char* name)
+{
+    auto typed_md = reinterpret_cast<inference_engine::ModelDescriptor*>(md);
+    typed_md->set_name(node_id, name);
+}
+
 INFERENCE_ENGINE_API void inferenceEngineDestroyModelDescriptor(inference_engine_model_descriptor_t md)
 {
     std::cout << "Destroyed Model Descriptor" << std::endl;
