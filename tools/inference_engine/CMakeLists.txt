@@ -22,6 +22,7 @@ set(TARGET_SOURCES
     ${SOURCES_DIR}/impl/model.h
 	${SOURCES_DIR}/impl/tensor.h
 	${SOURCES_DIR}/impl/node.h
+	${SOURCES_DIR}/impl/node.cpp
     
 	${SOURCES_DIR}/impl/nodes/activation.h
 	${SOURCES_DIR}/impl/nodes/activation.cpp

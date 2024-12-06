@@ -375,18 +375,22 @@ TEST(ModelTest, ConvPlusAddFusion)
     input_desc.data_type = inference_engine_data_type_t::INFERENCE_ENGINE_DATA_TYPE_FP16;
     auto input_a = inferenceEngineModelDescriptorAddPort(md, input_desc);
     ASSERT_NE(input_a, INFERENCE_ENGINE_INVALID_NODE_ID);
+    inferenceEngineSetNodeName(md, input_a, "input_a");
     auto input_b = inferenceEngineModelDescriptorAddPort(md, input_desc);
     ASSERT_NE(input_b, INFERENCE_ENGINE_INVALID_NODE_ID);
+    inferenceEngineSetNodeName(md, input_b, "input_b");
 
     // Conv left
     inference_engine_convolution_desc_t conv_desc{.input = input_a};
     auto port_conv_a = inferenceEngineModelDescriptorAddConvolution(md, conv_desc);
     ASSERT_NE(port_conv_a, INFERENCE_ENGINE_INVALID_NODE_ID);
+    inferenceEngineSetNodeName(md, port_conv_a, "conv_a");
 
     // Conv right
     inference_engine_convolution_desc_t conv_desc1{ .input = input_b };
     auto port_conv_b = inferenceEngineModelDescriptorAddConvolution(md, conv_desc1);
     ASSERT_NE(port_conv_b, INFERENCE_ENGINE_INVALID_NODE_ID);
+    inferenceEngineSetNodeName(md, port_conv_b, "conv_b");
 
     // activation
     inference_engine_activation_desc_t activation_desc{};

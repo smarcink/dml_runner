@@ -198,6 +198,7 @@ class FusionVisitor : public GpuVisitor
     }
     void update_indices(std::vector<std::unique_ptr<GpuNode>>& sorted_nodes) 
     {
+        node_to_index_.clear();
         for (size_t i = 0; i < sorted_nodes.size(); ++i)
             node_to_index_[sorted_nodes[i].get()] = i;
     }

@@ -6,33 +6,19 @@ namespace inference_engine
     class GpuElementwiseAdd : public GpuNode
     {
     public:
-        GpuElementwiseAdd(std::size_t user_id, Tensor output_tensor, const std::vector<GpuNode*>& inputs, const inference_engine_elementwise_add_desc_t& desc)
-            : GpuNode(user_id, output_tensor, inputs)
+        GpuElementwiseAdd(std::size_t user_id, Tensor output_tensor, const std::vector<GpuNode*>& inputs, const inference_engine_elementwise_add_desc_t& desc, const std::string& name)
+            : GpuNode(user_id, output_tensor, inputs, name)
             , desc_(desc)
         {
         }
 
-        void compile(GpuContext& ctx) override
-        {
-            std::cout << "[GpuElementwiseAdd] Compile." << std::endl;
-        }
+        void compile(GpuContext& ctx) override;
 
-        void initalize(GpuStream& stream) override
-        {
-            std::cout << "[GpuElementwiseAdd] Initialize." << std::endl;
-        }
+        void initalize(GpuStream& stream) override;
 
-        GpuResource::Ptr execute(GpuStream& stream) override
-        {
-            std::cout << "[GpuElementwiseAdd] Execute." << std::endl;
-            return {};
-        }
+        GpuResource::Ptr execute(GpuStream& stream) override;
 
-        std::string to_str() const override
-        {
-            // more details about the node here
-            return "GpuElementwiseAdd";
-        }
+        std::string to_str() const override;
 
         void accept(GpuVisitor* visitor) override;
 
@@ -60,7 +46,7 @@ namespace inference_engine
                 throw std::invalid_argument("tensors don't match!");
             }
 
-            return std::make_unique<GpuElementwiseAdd>(id_, compute_output_tensor(tensor_a, tensor_b), inputs, desc_);
+            return std::make_unique<GpuElementwiseAdd>(id_, compute_output_tensor(tensor_a, tensor_b), inputs, desc_, name_);
         }
     private:
         Tensor compute_output_tensor(const Tensor& input_a, const Tensor& input_b)

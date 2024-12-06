@@ -24,7 +24,7 @@ namespace inference_engine
 
 void inference_engine::GpuMatMul::compile(GpuContext& ctx)
 {
-    std::cout << "[MatMul] Compile." << std::endl;
+    std::cout << std::format("[{}] Compile.\n", to_str());
     assert(kernel_ == nullptr); // compile can happen only once
 
     std::string code_string
@@ -71,22 +71,14 @@ void inference_engine::GpuMatMul::compile(GpuContext& ctx)
         assert(pos != std::string::npos);
         for (auto& op : post_ops_)
         {
-            std::string op_code;
-            switch (op.activation_params_.type)
-            {
-            case INFERENCE_ENGINE_ACTIVATION_TYPE_RELU:
-            {
-                op_code = "\naccu = fmax(accu, (DT)0.0f);";
-            }
-            break;
-            case INFERENCE_ENGINE_ACTIVATION_TYPE_LINEAR:
-            {
-                op_code = std::format("\naccu = ({} * accu + {});", op.activation_params_.params.linear.a, op.activation_params_.params.linear.b);
-            }
-            break;
-            default:
-                assert(!"Unknown activation type. Cant create reference activation kernel.");
-            }
+            const std::string op_code = [](inference_engine_activation_desc_t params) {
+                if (params.type == INFERENCE_ENGINE_ACTIVATION_TYPE_RELU)
+                    return std::string("\naccu = fmax(accu, (DT)0.0f);");
+                if (params.type == INFERENCE_ENGINE_ACTIVATION_TYPE_LINEAR)
+                    return std::format("\naccu = ({} * accu + {});", params.params.linear.a, params.params.linear.b); 
+                assert(!"Unknown activation type. Cant create activation post ops..");
+                return std::string();
+                }(op.activation_params_);
             code_string.insert(pos, op_code);
             pos += op_code.length();
         }        
@@ -94,9 +86,14 @@ void inference_engine::GpuMatMul::compile(GpuContext& ctx)
     kernel_ = ctx.create_kernel("matmul_ref", code_string.c_str(), code_string.length(), build_options.c_str(), INFERENCE_ENGINE_KERNEL_LANGUAGE_OCL);
 }
 
+void inference_engine::GpuMatMul::initalize(GpuStream& stream)
+{
+    std::cout << std::format("[{}] Initialize.\n", to_str());
+}
+
 inference_engine::GpuResource::Ptr inference_engine::GpuMatMul::execute(GpuStream& stream)
 {
-    std::cout << "[MatMul] Execute." << std::endl;
+    std::cout << std::format("[{}] Execute.\n", to_str());
     auto input_rsc_a = get_inputs().at(0)->get_resource().get();
     auto input_rsc_b = get_inputs().at(1)->get_resource().get();
     assert(input_rsc_a);
@@ -113,6 +110,11 @@ inference_engine::GpuResource::Ptr inference_engine::GpuMatMul::execute(GpuStrea
     stream.dispatch_kernel(*kernel_.get(), gws, lws);
 
     return resource_;
+}
+
+std::string inference_engine::GpuMatMul::to_str() const
+{
+    return node_utils::create_name("GpuMatMul", name_);
 }
 
 std::uint32_t inference_engine::GpuMatMul::get_M() const
@@ -177,7 +179,7 @@ std::unique_ptr<inference_engine::GpuNode> inference_engine::MatMul::create_gpu_
         throw std::invalid_argument("Not supported path in MatMul yet. ToDo: add batch support.");
     }
 
-    return std::make_unique<GpuMatMul>(id_, compute_output_tensor(tensor_a, tensor_b), inputs, desc_);
+    return std::make_unique<GpuMatMul>(id_, compute_output_tensor(tensor_a, tensor_b), inputs, desc_, name_);
 }
 
 inference_engine::Tensor inference_engine::MatMul::compute_output_tensor(const Tensor& input_a, const Tensor& input_b)
