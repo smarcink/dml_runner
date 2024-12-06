@@ -101,12 +101,8 @@ TEST(ModelTest, Activation_0)
     inferenceEngineDestroyContext(ctx);
 }
 
-class ModelTestWithParams : public ::testing::TestWithParam<int> {};
-
-TEST_P(ModelTestWithParams, MatMul_fused_variable_activations)
+void test_fusion_activation_impl(int num_activations)
 {
-    const int num_ports = GetParam();
-
     auto device = reinterpret_cast<inference_engine_device_t>(G_DX12_ENGINE.d3d12_device.Get());
     auto stream = reinterpret_cast<inference_engine_stream_t>(G_DX12_ENGINE.command_list.Get());
     auto ctx = inferenceEngineCreateContext(device, fill_with_dx12_callbacks());
@@ -129,16 +125,16 @@ TEST_P(ModelTestWithParams, MatMul_fused_variable_activations)
 
     // activation nodes
     std::vector<inference_engine_node_id_t> activation_nodes;
-    for (int i = 0; i < num_ports; ++i)
+    inference_engine_activation_desc_t activation_desc{};    
+    activation_desc.type = INFERENCE_ENGINE_ACTIVATION_TYPE_LINEAR;
+    activation_desc.params.linear.a = 2.0f;
+    activation_desc.params.linear.b = 0.5f;
+    for (int i = 0; i < num_activations; ++i)
     {
-        inference_engine_activation_desc_t activation_desc{};
         activation_desc.input = i == 0 ? port_matmul_out : activation_nodes.back();
-        activation_desc.type = INFERENCE_ENGINE_ACTIVATION_TYPE_LINEAR;
-        activation_desc.params.linear.a = 2.0f;
-        activation_desc.params.linear.b = 0.5f;
         auto port_out = inferenceEngineModelDescriptorAddActivation(md, activation_desc);
         ASSERT_NE(port_out, INFERENCE_ENGINE_INVALID_NODE_ID);
-        activation_nodes.push_back(port_out);
+        activation_nodes.push_back(port_out);        
     }
 
     // define input mappings
@@ -223,7 +219,10 @@ TEST_P(ModelTestWithParams, MatMul_fused_variable_activations)
     {
         // relu activation reference
         const auto matmul_result = 32.0f;
-        const auto reference = activation_desc.params.linear.a * matmul_result + activation_desc.params.linear.b;
+        auto reference = matmul_result;
+        for (int j = 0; j < num_activations; ++j)
+            reference = activation_desc.params.linear.a * reference + activation_desc.params.linear.b;
+
         const auto& real_data = data_out[i];
         // for now switch it off so we have the test passing and result is not polluted with fake fail
         ASSERT_FLOAT_EQ(real_data, reference) << "idx: " << i;
@@ -234,7 +233,17 @@ TEST_P(ModelTestWithParams, MatMul_fused_variable_activations)
     inferenceEngineDestroyContext(ctx);
 }
 
-INSTANTIATE_TEST_SUITE_P(VariablePorts, ModelTestWithParams, ::testing::Values(1, 5));
+// we tried INSTANTIATE_TEST_SUITE_P(VariablePorts, ModelTestWithParams, ::testing::Values(1, 5));, but DX objectes caused the app to crash for some reason...
+
+TEST(ModelTest, MatMul_fused_activation_single)
+{
+    test_fusion_activation_impl(1);
+}
+
+TEST(ModelTest, MatMul_fused_activation_five)
+{
+    test_fusion_activation_impl(5);
+}
 
 TEST(ModelTest, MatMul_6_nodes)
 {

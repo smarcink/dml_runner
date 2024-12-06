@@ -2,6 +2,7 @@
 #include "..\gpu_visitor.h"
 #include "activation.h"
 #include <iostream>
+#include <format>
 
 namespace inference_engine
 {
@@ -11,6 +12,8 @@ namespace inference_engine
         outputs_ = activation->get_outputs();
         for (auto& out : outputs_)
             out->replace_input(activation, this);
+
+        post_ops_.push_back(activation->create_post_op());
     }
 
     void GpuMatMul::accept(GpuVisitor* visitor)
@@ -24,7 +27,7 @@ void inference_engine::GpuMatMul::compile(GpuContext& ctx)
     std::cout << "[MatMul] Compile." << std::endl;
     assert(kernel_ == nullptr); // compile can happen only once
 
-    const char* code_string
+    std::string code_string
         =
         "#if defined(cl_khr_fp16)\n"
         "#pragma OPENCL EXTENSION cl_khr_fp16 : enable)\n "
@@ -60,7 +63,35 @@ void inference_engine::GpuMatMul::compile(GpuContext& ctx)
     build_options += " -DM=" + std::to_string(get_M());
     build_options += " -DK=" + std::to_string(get_K());
     build_options += " -DN=" + std::to_string(get_N());
-    kernel_ = ctx.create_kernel("matmul_ref", code_string, std::strlen(code_string), build_options.c_str(), INFERENCE_ENGINE_KERNEL_LANGUAGE_OCL);
+
+    if (!post_ops_.empty())
+    {
+        // insert post ops just before "\noutput[id_m" in the code_string
+        std::size_t pos = code_string.find("\noutput[id_m");
+        assert(pos != std::string::npos);
+        for (auto& op : post_ops_)
+        {
+            std::string op_code;
+            switch (op.activation_params_.type)
+            {
+            case INFERENCE_ENGINE_ACTIVATION_TYPE_RELU:
+            {
+                op_code = "\naccu = fmax(accu, (DT)0.0f);";
+            }
+            break;
+            case INFERENCE_ENGINE_ACTIVATION_TYPE_LINEAR:
+            {
+                op_code = std::format("\naccu = ({} * accu + {});", op.activation_params_.params.linear.a, op.activation_params_.params.linear.b);
+            }
+            break;
+            default:
+                assert(!"Unknown activation type. Cant create reference activation kernel.");
+            }
+            code_string.insert(pos, op_code);
+            pos += op_code.length();
+        }        
+    }
+    kernel_ = ctx.create_kernel("matmul_ref", code_string.c_str(), code_string.length(), build_options.c_str(), INFERENCE_ENGINE_KERNEL_LANGUAGE_OCL);
 }
 
 inference_engine::GpuResource::Ptr inference_engine::GpuMatMul::execute(GpuStream& stream)

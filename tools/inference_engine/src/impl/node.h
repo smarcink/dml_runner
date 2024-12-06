@@ -47,6 +47,12 @@ namespace inference_engine
         std::vector<inference_engine_node_id_t> inputs_{};
     };
 
+    struct PostOp
+    {
+        // for now assume only activation can be fused, we can later extend this into some std::variant of other operators...
+        inference_engine_activation_desc_t activation_params_;
+    };
+
     /*
     Concrete class which knows it's predecessors, successors, tensor and GPU objects.
     */
@@ -132,5 +138,8 @@ namespace inference_engine
         std::vector<GpuNode*> outputs_;
         GpuResource::Ptr resource_;
         Tensor output_tensor_;
+        std::vector<PostOp> post_ops_;
     };
+
+
 }  // namespace inference_engine

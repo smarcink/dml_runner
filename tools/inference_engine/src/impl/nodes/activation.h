@@ -45,6 +45,7 @@ namespace inference_engine
         }
 
         void accept(GpuVisitor* visitor) override;
+        PostOp create_post_op() const { return PostOp{desc_}; }
 
     private:
         inference_engine_activation_desc_t desc_{};
