@@ -1,5 +1,6 @@
 #pragma once
 #include <inference_engine.h>
+#include <inference_engine.hpp>
 
 #include <utility>
 #include <iostream>
@@ -451,3 +452,57 @@ inline inference_engine_context_callbacks_t fill_with_dx12_callbacks()
 
     return callbacks;
 }
+
+
+class ResourceDX12 : public inference_engine::Resource
+{
+public:
+    ResourceDX12(ComPtr<ID3D12Resource> resource)
+        : rsc_(resource)
+    {
+    }
+
+    ID3D12Resource* get() { return rsc_.Get(); }
+
+private:
+    ComPtr<ID3D12Resource> rsc_;
+};
+
+class StreamDX12 : public inference_engine::Stream<StreamDX12>
+{
+public:
+    StreamDX12(ComPtr<ID3D12GraphicsCommandList> cmd_list)
+        : cmd_list_(cmd_list)
+    {}
+
+    void disaptch_resource_barrier(std::vector<ResourceDX12*> rscs_list)
+    {
+        std::vector<CD3DX12_RESOURCE_BARRIER> barriers(rscs_list.size());
+        for (auto i = 0; i < barriers.size(); i++)
+        {
+            barriers.push_back(CD3DX12_RESOURCE_BARRIER::UAV(rscs_list[i]->get()));
+        }
+        cmd_list_->ResourceBarrier(static_cast<std::uint32_t>(barriers.size()), barriers.data());
+    }
+private:
+    ComPtr<ID3D12GraphicsCommandList> cmd_list_ = nullptr;
+};
+
+class DeviceDX12 : public inference_engine::Device<DeviceDX12>
+{
+public:
+    DeviceDX12(ComPtr<ID3D12Device> device)
+        : device_(device)
+    {}
+
+    ResourceDX12 allocate_resource(std::size_t size)
+    {
+        return ResourceDX12(create_buffer(device_.Get(), size, D3D12_HEAP_TYPE_DEFAULT,
+            D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS));
+    }
+
+private:
+    ComPtr<ID3D12Device> device_ = nullptr;
+};
+
+using ContextDX12 = inference_engine::Context<DeviceDX12, StreamDX12, ResourceDX12>;

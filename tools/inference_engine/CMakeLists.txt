@@ -12,7 +12,9 @@ set(TARGET_SOURCES
     ${HEADERS_DIR}/inference_engine_model.h
     
     ${HEADERS_DIR}/inference_engine.hpp
-    ${HEADERS_DIR}/inference_engine_Tensor.hpp
+    ${HEADERS_DIR}/inference_engine_operators.hpp
+    ${HEADERS_DIR}/inference_engine_tensor.hpp
+    ${HEADERS_DIR}/inference_engine_model.hpp
     
     ${SOURCES_DIR}/inference_engine.cpp
     ${SOURCES_DIR}/inference_engine_operators.cpp
