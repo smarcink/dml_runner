@@ -81,13 +81,15 @@ private:
     ComPtr<ID3D12Device> device_ = nullptr;
 };
 
+using ContextDX12 = inference_engine::Context<DeviceDX12, StreamDX12, ResourceDX12>;
+
 TEST(OperatorTest, Matmul_model_0)
 {
 
     
     DeviceDX12 device(G_DX12_ENGINE.d3d12_device);
     StreamDX12 stream(G_DX12_ENGINE.command_list);
-    inference_engine::Context<DeviceDX12, StreamDX12, ResourceDX12> ctx(device);
+    ContextDX12 ctx(device);
 
  
     //    auto device = reinterpret_cast<inference_engine_device_t>(G_DX12_ENGINE.d3d12_device.Get());
