@@ -247,15 +247,10 @@ public:
         // if we have multiple activations in a row, we do it one by one
 
         auto& inputs = pn->get_inputs();
-        if (inputs.size() == 1) {
-            if (auto matmul = dynamic_cast<GpuMatMul*>(inputs[0])) {
+        if (inputs.size() == 1 && !pn->get_outputs().empty()) // don't fuse with the last output node
+        {     
+            if (inputs[0]->fuse_with(pn))
                 mark_node_for_deletion(pn);
-                matmul->fuse_with(pn);
-            }
-            else if (auto conv = dynamic_cast<GpuConvolution*>(inputs[0])) {
-                mark_node_for_deletion(pn);
-                conv->fuse_with(pn);
-            }
         }
     }
     void visit(GpuMatMul* pn) override 

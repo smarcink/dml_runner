@@ -6,14 +6,16 @@
 
 namespace inference_engine
 {
-    void GpuMatMul::fuse_with(const GpuActivation* activation)
+    bool GpuMatMul::fuse_with(const GpuActivation* activation)
     {
+        assert(activation);
         std::cout << "matmul fuse with... activation\n";
         outputs_ = activation->get_outputs();
         for (auto& out : outputs_)
-            out->replace_input(activation, this);
+            GpuNode::replace_input(out, activation, this);
 
         post_ops_.push_back(activation->create_post_op());
+        return true;
     }
 
     void GpuMatMul::accept(GpuVisitor* visitor)

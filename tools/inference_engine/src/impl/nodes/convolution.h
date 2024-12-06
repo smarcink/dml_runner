@@ -22,8 +22,10 @@ namespace inference_engine
 
         std::string to_str() const override;
 
-        void fuse_with(const GpuActivation*);
+        bool fuse_with(const GpuActivation*) override;
+
         void accept(GpuVisitor* visitor) override;        
+
     private:
         inference_engine_convolution_desc_t desc_{};
     };

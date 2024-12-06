@@ -29,12 +29,13 @@ namespace inference_engine
     }
 
     // todo: move this code to the base class...
-    void GpuConvolution::fuse_with(const GpuActivation* activation)
+    bool GpuConvolution::fuse_with(const GpuActivation* activation)
     {
         std::cout << "convolution fuse with... activation\n";
         outputs_ = activation->get_outputs();
         for (auto& out : outputs_)
-            out->replace_input(activation, this);
+            GpuNode::replace_input(out, activation, this);
+        return true;
     }
 
     void GpuConvolution::accept(GpuVisitor* visitor)

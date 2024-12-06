@@ -90,14 +90,6 @@ namespace inference_engine
             outputs_.push_back(node);
         }
 
-        virtual void replace_input(const GpuNode* old_node, GpuNode* new_node)
-        {
-            for (auto&& input : inputs_) {
-                if (input == old_node)
-                    input = new_node;
-            }
-        }
-
         virtual const std::vector<GpuNode*>& get_inputs() const
         {
             return inputs_;
@@ -106,6 +98,15 @@ namespace inference_engine
         virtual const std::vector<GpuNode*>& get_outputs() const
         {
             return outputs_;
+        }
+
+        static void replace_input(GpuNode* node, const GpuNode* old_node, GpuNode* new_node)
+        {
+            for (auto&& input : node->inputs_)
+            {
+                if (input == old_node)
+                    input = new_node;
+            }
         }
 
         virtual void set_id(std::size_t id)
@@ -142,6 +143,9 @@ namespace inference_engine
         }
 
         virtual void accept(class GpuVisitor*) = 0;
+
+        virtual bool fuse_with(const class GpuActivation*) { return false; } // false if no fusion happened
+        virtual bool fuse_with(const class GpuElementwiseAdd*) { return false; } // false if no fusion happened
 
     protected:
         std::size_t id_ = INFERENCE_ENGINE_INVALID_NODE_ID; // init with invalid id
