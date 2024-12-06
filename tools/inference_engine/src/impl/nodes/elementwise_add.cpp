@@ -1,5 +1,4 @@
 #include "elementwise_add.h"
-#include "..\gpu_visitor.h"
 #include <format>
 
 void inference_engine::GpuElementwiseAdd::compile(GpuContext& ctx)
@@ -22,9 +21,4 @@ std::string inference_engine::GpuElementwiseAdd::to_str() const
 {
     // more details about the node here
     return node_utils::create_name("GpuElementwiseAdd", name_);
-}
-
-void inference_engine::GpuElementwiseAdd::accept(GpuVisitor* visitor)
-{
-    visitor->visit(this);
 }

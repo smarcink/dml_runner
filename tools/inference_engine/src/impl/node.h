@@ -142,9 +142,7 @@ namespace inference_engine
             return output_tensor_;
         }
 
-        virtual void accept(class GpuVisitor*) = 0;
-
-        virtual bool fuse_with(const class GpuActivation*) { return false; } // false if no fusion happened
+        virtual bool fuse_with(const class GpuActivation*) { return false; }     // false if no fusion happened
         virtual bool fuse_with(const class GpuElementwiseAdd*) { return false; } // false if no fusion happened
 
     protected:

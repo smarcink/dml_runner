@@ -1,5 +1,4 @@
 #include "port.h"
-#include "..\gpu_visitor.h"
 #include <format>
 
 void inference_engine::GpuPort::compile(GpuContext& ctx)
@@ -21,9 +20,4 @@ inference_engine::GpuResource::Ptr inference_engine::GpuPort::execute(GpuStream&
 std::string inference_engine::GpuPort::to_str() const
 {
     return node_utils::create_name("GpuPort", name_);
-}
-
-void inference_engine::GpuPort::accept(GpuVisitor* visitor)
-{
-    visitor->visit(this);
 }

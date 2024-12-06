@@ -24,8 +24,6 @@ namespace inference_engine
 
         bool fuse_with(const GpuActivation*) override;
 
-        void accept(class GpuVisitor*) override;
-
     private:
         std::uint32_t get_M() const;
         std::uint32_t get_N() const;

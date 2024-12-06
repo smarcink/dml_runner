@@ -20,8 +20,6 @@ namespace inference_engine
 
         std::string to_str() const override;
 
-        void accept(GpuVisitor* visitor) override;
-
     private:
         inference_engine_elementwise_add_desc_t desc_{};
     };

@@ -37,7 +37,6 @@ namespace inference_engine
 
         std::string to_str() const override;
 
-        void accept(GpuVisitor* visitor) override;
         PostOp create_post_op() const { return PostOp{desc_}; }
 
     private:

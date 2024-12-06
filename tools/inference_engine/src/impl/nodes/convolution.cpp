@@ -1,6 +1,5 @@
 #include "convolution.h"
 #include "activation.h"
-#include "..\gpu_visitor.h"
 #include <format>
 
 namespace inference_engine
@@ -38,8 +37,4 @@ namespace inference_engine
         return true;
     }
 
-    void GpuConvolution::accept(GpuVisitor* visitor)
-    {
-        visitor->visit(this);
-    }
 } // namespace inference_engine

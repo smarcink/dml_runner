@@ -26,7 +26,6 @@ namespace inference_engine
 
         std::string to_str() const override;
 
-        void accept(class GpuVisitor*) override;
     private:
         inference_engine_port_desc_t desc_{};
     };

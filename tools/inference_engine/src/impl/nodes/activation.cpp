@@ -1,5 +1,4 @@
 #include "activation.h"
-#include "..\gpu_visitor.h"
 #include <sstream>
 #include <iomanip>
 #include <format>
@@ -98,9 +97,4 @@ std::string inference_engine::GpuActivation::to_str() const
 {
     // more details about the node here
     return node_utils::create_name("GpuActivation", name_);
-}
-
-void inference_engine::GpuActivation::accept(GpuVisitor* visitor)
-{
-    visitor->visit(this);
 }

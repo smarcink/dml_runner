@@ -182,7 +182,7 @@ void test_fusion_activation_impl(int num_activations)
     // ask model for output size (we know that there has to be 1 output in this test case)
     inference_engine_tensor_mapping_t output_mapping{};
     ASSERT_EQ(inferenceEngineModelGetOutputs(model, &output_mapping, nullptr), true);
-    ASSERT_EQ(output_mapping.id, port_matmul_out); // we fuse to matmul + activations...
+    ASSERT_EQ(output_mapping.id, activation_nodes.back()); // we fuse to matmul, but the last actiovation won't be fused as it's the output...
     ASSERT_EQ(output_mapping.tensor.data_type, input_desc.data_type);
     ASSERT_EQ(output_mapping.tensor.dims[0], 1);
     ASSERT_EQ(output_mapping.tensor.dims[1], 1);
@@ -237,7 +237,12 @@ void test_fusion_activation_impl(int num_activations)
 
 TEST(ModelTest, MatMul_fused_activation_single)
 {
-    test_fusion_activation_impl(1);
+    test_fusion_activation_impl(1); // no activation should be fused as it's the last one and the output node
+}
+
+TEST(ModelTest, MatMul_fused_activation_two)
+{
+    test_fusion_activation_impl(2); // one activation should be fused, 
 }
 
 TEST(ModelTest, MatMul_fused_activation_five)

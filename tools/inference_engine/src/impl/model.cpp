@@ -209,7 +209,7 @@ public:
         for (auto it = std::begin(sorted_nodes); it != std::end(sorted_nodes);) 
         {
             to_delete_.clear();
-            (*it)->accept(this);
+            process_node((*it).get());
             if (!to_delete_.empty()) 
             {
                 if (to_delete_.size() == 1) 
@@ -235,35 +235,25 @@ public:
         }
     }
 
-    void visit(GpuPort* pn) override 
+    void process_node(GpuNode* pn) 
     {
-        std::cout << "visiting port...\n";
-    }
-    void visit(GpuActivation* pn) override 
-    {
-        std::cout << "visiting activation...\n";
+        assert(pn);
+        // we could use get_type or is_activation virtual function, and then static_assert... 
+        // but possibly safer with dynamic_cast for now
+        if (auto activation = dynamic_cast<GpuActivation*>(pn))  
+        {
+            std::cout << "visiting activation...\n";
 
-        // check matmul/conv + activation and fuse?
-        // if we have multiple activations in a row, we do it one by one
+            // check matmul/conv + activation and fuse?
+            // if we have multiple activations in a row, we do it one by one
 
-        auto& inputs = pn->get_inputs();
-        if (inputs.size() == 1 && !pn->get_outputs().empty()) // don't fuse with the last output node
-        {     
-            if (inputs[0]->fuse_with(pn))
-                mark_node_for_deletion(pn);
+            auto& inputs = pn->get_inputs();
+            if (inputs.size() == 1 && !pn->get_outputs().empty()) // don't fuse with the last output node
+            {
+                if (inputs[0]->fuse_with(activation))
+                    mark_node_for_deletion(pn);
+            }
         }
-    }
-    void visit(GpuMatMul* pn) override 
-    {
-        std::cout << "visiting matmul...\n";        
-    }
-    void visit(class GpuElementwiseAdd*) override
-    {
-        std::cout << "visiting elementwise add...\n";
-    }
-    void visit(class GpuConvolution*) override
-    {
-        std::cout << "visiting convolution...\n";
     }
 };
 

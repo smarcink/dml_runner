@@ -1,5 +1,4 @@
 #include "matmul.h"
-#include "..\gpu_visitor.h"
 #include "activation.h"
 #include <iostream>
 #include <format>
@@ -18,13 +17,8 @@ namespace inference_engine
         return true;
     }
 
-    void GpuMatMul::accept(GpuVisitor* visitor)
-    {
-        visitor->visit(this);
-    }
-} // namespace inference_engine
 
-void inference_engine::GpuMatMul::compile(GpuContext& ctx)
+void GpuMatMul::compile(GpuContext& ctx)
 {
     std::cout << std::format("[{}] Compile.\n", to_str());
     assert(kernel_ == nullptr); // compile can happen only once
@@ -88,12 +82,12 @@ void inference_engine::GpuMatMul::compile(GpuContext& ctx)
     kernel_ = ctx.create_kernel("matmul_ref", code_string.c_str(), code_string.length(), build_options.c_str(), INFERENCE_ENGINE_KERNEL_LANGUAGE_OCL);
 }
 
-void inference_engine::GpuMatMul::initalize(GpuStream& stream)
+void GpuMatMul::initalize(GpuStream& stream)
 {
     std::cout << std::format("[{}] Initialize.\n", to_str());
 }
 
-inference_engine::GpuResource::Ptr inference_engine::GpuMatMul::execute(GpuStream& stream)
+inference_engine::GpuResource::Ptr GpuMatMul::execute(GpuStream& stream)
 {
     std::cout << std::format("[{}] Execute.\n", to_str());
     auto input_rsc_a = get_inputs().at(0)->get_resource().get();
@@ -114,33 +108,33 @@ inference_engine::GpuResource::Ptr inference_engine::GpuMatMul::execute(GpuStrea
     return resource_;
 }
 
-std::string inference_engine::GpuMatMul::to_str() const
+std::string GpuMatMul::to_str() const
 {
     return node_utils::create_name("GpuMatMul", name_);
 }
 
-std::uint32_t inference_engine::GpuMatMul::get_M() const
+std::uint32_t GpuMatMul::get_M() const
 {
     assert(!get_inputs().empty());
     const auto tensor_a = get_inputs()[0]->get_output_tensor();
     return static_cast<std::uint32_t>(tensor_a.dims[tensor_a.dims.size() - 2]);
 }
 
-std::uint32_t inference_engine::GpuMatMul::get_N() const
+std::uint32_t GpuMatMul::get_N() const
 {
     assert(get_inputs().size() >= 2);
     const auto tensor_b = get_inputs()[1]->get_output_tensor();
     return static_cast<std::uint32_t>(tensor_b.dims[tensor_b.dims.size() - 1]);
 }
 
-std::uint32_t inference_engine::GpuMatMul::get_K() const
+std::uint32_t GpuMatMul::get_K() const
 {
     assert(!get_inputs().empty());
     const auto tensor_a = get_inputs()[0]->get_output_tensor();
     return static_cast<std::uint32_t>(tensor_a.dims[tensor_a.dims.size() - 1]);
 }
 
-std::unique_ptr<inference_engine::GpuNode> inference_engine::MatMul::create_gpu_node(const std::vector<GpuNode*>& inputs)
+std::unique_ptr<GpuNode> MatMul::create_gpu_node(const std::vector<GpuNode*>& inputs)
 {
     auto are_tensors_compatible_for_matmul = [](const Tensor& tensor_a, const Tensor& tensor_b) {
         // Check if both tensors have at least 2 dimensions
@@ -184,7 +178,7 @@ std::unique_ptr<inference_engine::GpuNode> inference_engine::MatMul::create_gpu_
     return std::make_unique<GpuMatMul>(id_, compute_output_tensor(tensor_a, tensor_b), inputs, desc_, name_);
 }
 
-inference_engine::Tensor inference_engine::MatMul::compute_output_tensor(const Tensor& input_a, const Tensor& input_b)
+Tensor MatMul::compute_output_tensor(const Tensor& input_a, const Tensor& input_b)
 {
     // just an example
     assert(input_a.data_type == input_b.data_type);
@@ -199,3 +193,5 @@ inference_engine::Tensor inference_engine::MatMul::compute_output_tensor(const T
     ret.strides.assign({ 0,0,0,0 });
     return ret;
 }
+
+} // namespace inference_engine
