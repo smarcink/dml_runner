@@ -17,6 +17,22 @@ namespace inference_engine
 using NodeID = std::size_t;
 constexpr static inline NodeID INVALID_NODE_ID = INFERENCE_ENGINE_INVALID_NODE_ID;
 
+class IEexception : public std::exception
+{
+public:
+    IEexception(const char* msg)
+        : what_message_(msg)
+    {
+    }
+
+    const char* what() const override
+    {
+        return what_message_.c_str();
+    }
+private:
+    std::string what_message_;
+};
+
 class Context
 {
 public:
@@ -80,7 +96,6 @@ private:
 
 class ModelDescriptor
 {
-    
 public:
     ModelDescriptor()
         : handle_(inferenceEngineCreateModelDescriptor())
@@ -110,6 +125,32 @@ public:
     Model compile_model(Context& ctx, Stream& stream) const
     {
         return Model(inferenceEngineCompileModelDescriptor(ctx.get(), stream.get(), handle_, nullptr, 0));
+    }
+
+public:
+    NodeID add_port(const inference_engine_port_desc_t& desc)
+    {
+        return add_node(desc, inferenceEngineModelDescriptorAddPort);
+    }
+    NodeID add_matmul(const inference_engine_matmul_desc_t& desc)
+    {
+        return add_node(desc, inferenceEngineModelDescriptorAddMatMul);
+    }
+    NodeID add_activation(const inference_engine_activation_desc_t& desc)
+    {
+        return add_node(desc, inferenceEngineModelDescriptorAddActivation);
+    }
+
+private:
+    template<typename TDesc, typename TFunc>
+    NodeID add_node(const TDesc& desc, TFunc tfunc)
+    {
+        const auto ret = tfunc(handle_, desc);
+        if (ret == INVALID_NODE_ID)
+        {
+            throw IEexception("Could not add node to the model descriptor");
+        }
+        return ret;
     }
 
 private:
