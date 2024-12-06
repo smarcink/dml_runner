@@ -6,11 +6,13 @@ set(SOURCES_DIR "src")
 
 set(TARGET_SOURCES
     ${HEADERS_DIR}/inference_engine.h
-    ${HEADERS_DIR}/inference_engine.hpp
     ${HEADERS_DIR}/inference_engine_export.h
     ${HEADERS_DIR}/inference_engine_operators.h
     ${HEADERS_DIR}/inference_engine_tensor.h
     ${HEADERS_DIR}/inference_engine_model.h
+    
+    ${HEADERS_DIR}/inference_engine.hpp
+    ${HEADERS_DIR}/inference_engine_Tensor.hpp
     
     ${SOURCES_DIR}/inference_engine.cpp
     ${SOURCES_DIR}/inference_engine_operators.cpp
@@ -20,7 +22,6 @@ set(TARGET_SOURCES
     ${SOURCES_DIR}/impl/gpu_context.h
     ${SOURCES_DIR}/impl/model.cpp
     ${SOURCES_DIR}/impl/model.h
-	${SOURCES_DIR}/impl/tensor.h
 	${SOURCES_DIR}/impl/node.h
     
 	${SOURCES_DIR}/impl/nodes/activation.h

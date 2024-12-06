@@ -3,7 +3,7 @@
 #include "inference_engine.h"
 #include "inference_engine_model.h"
 #include "inference_engine_operators.h"
-
+#include "inference_engine_tensor.hpp"
 #include <cstdint>
 #include <utility>
 
@@ -21,8 +21,8 @@ class IEexception : public std::exception
 {
 public:
     IEexception(const char* msg)
-        : what_message_(msg)
     {
+        what_message_ += std::string(msg);
     }
 
     const char* what() const override
@@ -30,21 +30,28 @@ public:
         return what_message_.c_str();
     }
 private:
-    std::string what_message_;
+    std::string what_message_ = "[IE Exception]";
 };
 
-class Context
+struct TensorMapping
 {
-public:
-
-    inference_engine_context_handle_t get() { return handle_; }
-private:
-    inference_engine_context_handle_t handle_;
+    NodeID id;
+    Tensor tensor;
 };
+
+
 
 class Stream
 {
 public:
+
+protected:
+    Stream()
+        : handle_(reinterpret_cast<inference_engine_stream_t>(this))
+    {
+    }
+
+    virtual void disaptch_resource_barrier(std::vector<class Resource*> rscs_list) = 0;
 
     inference_engine_stream_t get() { return handle_; }
 private:
@@ -53,11 +60,70 @@ private:
 
 class Resource
 {
+protected:
+    Resource()
+    {
+    }
 public:
+    virtual ~Resource() = default;
+};
 
-    inference_engine_resource_t get() { return handle_; }
+class Device
+{
+public:
+    virtual Resource* allocate_resource(std::size_t size) = 0;
+    virtual ~Device() = default;
+    inference_engine_device_t get() { return handle_; }
+
+protected:
+    Device()
+        : handle_(reinterpret_cast<inference_engine_device_t>(this))
+    {
+    }
+protected:
+    inference_engine_device_t handle_ = nullptr;
+};
+
+template<typename DeviceT, typename StreamT>
+class Context
+{
+public:
+    Context(DeviceT& device)
+    {
+        inference_engine_context_callbacks_t cbs{};
+        cbs.fn_gpu_device_allocate_resource = &allocate_resource;
+
+        cbs.fn_gpu_stream_resource_barrier = &disaptch_resource_barrier;
+
+        handle_ = inferenceEngineCreateContext(device.get(), cbs);
+
+        if (!handle_)
+        {
+            throw IEexception("Can't create context.");
+        }
+    }
+
+    static inference_engine_resource_t allocate_resource(inference_engine_device_t handle, std::size_t size)
+    {
+        auto typed_impl = reinterpret_cast<DeviceT*>(handle);
+        auto typed_resource = new Resource(typed_impl->allocate_resource(size));
+        return reinterpret_cast<inference_engine_resource_t>(typed_resource);
+    }
+
+    static void disaptch_resource_barrier(inference_engine_stream_t handle, inference_engine_resource_t* resource_list, std::size_t resource_count)
+    {
+        auto typed_impl = reinterpret_cast<StreamT*>(handle);
+        std::vector<Resource*> rscs(resource_count);
+        for (auto i = 0; i < resource_count; i++)
+        {
+            rscs[i] = reinterpret_cast<Resource*>(resource_list[i]);
+        }
+        typed_impl->disaptch_resource_barrier(rscs);
+    }
+
+    inference_engine_context_handle_t get() { return handle_; }
 private:
-    inference_engine_resource_t handle_;
+    inference_engine_context_handle_t handle_;
 };
 
 class Model
@@ -83,6 +149,32 @@ class Model
     }
 
     inference_engine_model_t get() { return handle_; }
+
+    std::vector<TensorMapping> get_outputs() const
+    {
+        std::size_t outputs_counts = 0;
+        auto result = inferenceEngineModelGetOutputs(handle_, nullptr, &outputs_counts);
+        if (!result)
+        {
+            throw IEexception("Could not get number of outputs from the model!");
+        }
+        if (outputs_counts == 0)
+        {
+            return {};
+        }
+        std::vector<inference_engine_tensor_mapping_t> output_mappings(outputs_counts);
+        result = inferenceEngineModelGetOutputs(handle_, output_mappings.data(), &outputs_counts);
+        if (!result)
+        {
+            throw IEexception("Could not get output mappings from the model!");
+        }
+        std::vector<TensorMapping> ret(output_mappings.size());
+        for (auto i = 0; i < ret.size(); i++)
+        {
+            ret[i] = TensorMapping{ output_mappings[i].id, output_mappings[i].tensor };
+        }
+        return ret;
+    }
 
 private:
     Model(inference_engine_model_t handle)
@@ -122,7 +214,8 @@ public:
 
     inference_engine_model_descriptor_t get() { return handle_; }
 
-    Model compile_model(Context& ctx, Stream& stream) const
+    template<typename DeviceT, typename StreamT> 
+    Model compile_model(Context<DeviceT, StreamT>& ctx, StreamT& stream, const std::vector<TensorMapping>& input_mappings) const
     {
         return Model(inferenceEngineCompileModelDescriptor(ctx.get(), stream.get(), handle_, nullptr, 0));
     }
