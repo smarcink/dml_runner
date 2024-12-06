@@ -44,19 +44,19 @@ private:
     ComPtr<ID3D12Resource> rsc_;
 };
 
-class StreamDX12 : public inference_engine::Stream
+class StreamDX12 : public inference_engine::Stream<StreamDX12>
 {
 public:
     StreamDX12(ComPtr<ID3D12GraphicsCommandList> cmd_list)
         : cmd_list_(cmd_list)
     {}
-    void disaptch_resource_barrier(std::vector<inference_engine::Resource*> rscs_list) override
+
+    void disaptch_resource_barrier(std::vector<ResourceDX12*> rscs_list)
     {
         std::vector<CD3DX12_RESOURCE_BARRIER> barriers(rscs_list.size());
         for (auto i = 0; i < barriers.size(); i++)
         {
-            auto typed_rsc = dynamic_cast<ResourceDX12*>(rscs_list[i]);
-            barriers.push_back(CD3DX12_RESOURCE_BARRIER::UAV(typed_rsc->get()));
+            barriers.push_back(CD3DX12_RESOURCE_BARRIER::UAV(rscs_list[i]->get()));
         }
         cmd_list_->ResourceBarrier(static_cast<std::uint32_t>(barriers.size()), barriers.data());
     }
@@ -64,16 +64,16 @@ private:
     ComPtr<ID3D12GraphicsCommandList> cmd_list_ = nullptr;
 };
 
-class DeviceDX12 : public inference_engine::Device
+class DeviceDX12 : public inference_engine::Device<DeviceDX12>
 {
 public:
     DeviceDX12(ComPtr<ID3D12Device> device)
         : device_(device)
     {}
 
-    inference_engine::Resource* allocate_resource(std::size_t size) override
+    ResourceDX12 allocate_resource(std::size_t size)
     {
-        return new ResourceDX12(create_buffer(device_.Get(), size, D3D12_HEAP_TYPE_DEFAULT, 
+        return ResourceDX12(create_buffer(device_.Get(), size, D3D12_HEAP_TYPE_DEFAULT, 
             D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS));
     }
 
@@ -86,7 +86,8 @@ TEST(OperatorTest, Matmul_model_0)
 
     
     DeviceDX12 device(G_DX12_ENGINE.d3d12_device);
-    inference_engine::Context<DeviceDX12, StreamDX12> ctx(device);
+    StreamDX12 stream(G_DX12_ENGINE.command_list);
+    inference_engine::Context<DeviceDX12, StreamDX12, ResourceDX12> ctx(device);
 
  
     //    auto device = reinterpret_cast<inference_engine_device_t>(G_DX12_ENGINE.d3d12_device.Get());

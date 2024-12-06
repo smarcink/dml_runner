@@ -41,6 +41,7 @@ struct TensorMapping
 
 
 
+template<typename Impl>
 class Stream
 {
 public:
@@ -51,7 +52,12 @@ protected:
     {
     }
 
-    virtual void disaptch_resource_barrier(std::vector<class Resource*> rscs_list) = 0;
+    template<typename ResourceT>
+    void disaptch_resource_barrier(std::vector<ResourceT*> rscs_list)
+    {
+        Impl& derived = static_cast<Impl&>(*this);
+        return derived.disaptch_resource_barrier(rscs_list);
+    }
 
     inference_engine_stream_t get() { return handle_; }
 private:
@@ -68,10 +74,16 @@ public:
     virtual ~Resource() = default;
 };
 
+template<typename Impl>
 class Device
 {
 public:
-    virtual Resource* allocate_resource(std::size_t size) = 0;
+    template<typename ResourceT>
+    ResourceT allocate_resource(std::size_t size)
+    {
+        Impl& derived = static_cast<Impl&>(*this);
+        return derived.allocate_resource(size);
+    }
     virtual ~Device() = default;
     inference_engine_device_t get() { return handle_; }
 
@@ -84,7 +96,7 @@ protected:
     inference_engine_device_t handle_ = nullptr;
 };
 
-template<typename DeviceT, typename StreamT>
+template<typename DeviceT, typename StreamT, typename ResourceT>
 class Context
 {
 public:
@@ -105,18 +117,18 @@ public:
 
     static inference_engine_resource_t allocate_resource(inference_engine_device_t handle, std::size_t size)
     {
-        auto typed_impl = reinterpret_cast<DeviceT*>(handle);
-        auto typed_resource = new Resource(typed_impl->allocate_resource(size));
+        auto typed_impl = reinterpret_cast<Device<DeviceT>*>(handle);
+        auto typed_resource = new ResourceT(typed_impl->allocate_resource<ResourceT>(size));
         return reinterpret_cast<inference_engine_resource_t>(typed_resource);
     }
 
     static void disaptch_resource_barrier(inference_engine_stream_t handle, inference_engine_resource_t* resource_list, std::size_t resource_count)
     {
         auto typed_impl = reinterpret_cast<StreamT*>(handle);
-        std::vector<Resource*> rscs(resource_count);
+        std::vector<ResourceT*> rscs(resource_count);
         for (auto i = 0; i < resource_count; i++)
         {
-            rscs[i] = reinterpret_cast<Resource*>(resource_list[i]);
+            rscs[i] = reinterpret_cast<ResourceT*>(resource_list[i]);
         }
         typed_impl->disaptch_resource_barrier(rscs);
     }
@@ -125,6 +137,7 @@ public:
 private:
     inference_engine_context_handle_t handle_;
 };
+
 
 class Model
 {
@@ -214,8 +227,8 @@ public:
 
     inference_engine_model_descriptor_t get() { return handle_; }
 
-    template<typename DeviceT, typename StreamT> 
-    Model compile_model(Context<DeviceT, StreamT>& ctx, StreamT& stream, const std::vector<TensorMapping>& input_mappings) const
+    template<typename ContextT, typename StreamT> 
+    Model compile_model(ContextT& ctx, StreamT& stream, const std::vector<TensorMapping>& input_mappings) const
     {
         return Model(inferenceEngineCompileModelDescriptor(ctx.get(), stream.get(), handle_, nullptr, 0));
     }
