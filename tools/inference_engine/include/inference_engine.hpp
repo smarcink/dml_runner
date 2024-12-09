@@ -33,6 +33,46 @@ private:
 
 using TensorMapping = std::unordered_map<NodeID, Tensor>;
 
+
+class Resource
+{
+protected:
+    Resource()
+    {
+    }
+public:
+    virtual ~Resource() = default;
+};
+
+template<typename Impl>
+class Kernel
+{
+public:
+    inference_engine_kernel_t get() { return handle_; }
+
+protected:
+    Kernel()
+        : handle_(reinterpret_cast<inference_engine_kernel_t>(this))
+    {
+    }
+
+    template<typename ResourceT>
+    void set_arg(std::uint32_t idx, ResourceT* rsc, std::size_t offset = 0)
+    {
+        Impl& derived = static_cast<Impl&>(*this);
+        return derived.set_arg(idx, rsc, offset);
+    }
+    template<typename T>
+    void set_arg(std::uint32_t idx, T u32)
+    {
+        Impl& derived = static_cast<Impl&>(*this);
+        return derived.set_arg(idx, T);
+    }
+
+private:
+    inference_engine_kernel_t handle_;
+};
+
 template<typename Impl>
 class Stream
 {
@@ -56,15 +96,6 @@ private:
     inference_engine_stream_t handle_;
 };
 
-class Resource
-{
-protected:
-    Resource()
-    {
-    }
-public:
-    virtual ~Resource() = default;
-};
 
 template<typename Impl>
 class Device
@@ -76,6 +107,14 @@ public:
         Impl& derived = static_cast<Impl&>(*this);
         return derived.allocate_resource(size);
     }
+
+    template<typename KernelT>
+    KernelT create_kernel(const char* kernel_name, const void* kernel_code, size_t kernel_code_size, const char* build_options, inference_engine_kernel_language_t language)
+    {
+        Impl& derived = static_cast<Impl&>(*this);
+        return derived.create_kernel(kernel_name, kernel_code, kernel_code_size, build_options, language);
+    }
+
     virtual ~Device() = default;
     inference_engine_device_t get() { return handle_; }
 
@@ -98,6 +137,12 @@ public:
         inference_engine_context_callbacks_t cbs{};
         cbs.fn_gpu_device_allocate_resource = &allocate_resource;
 
+        cbs.fn_gpu_device_create_kernel = &create_kernel;
+        cbs.fn_gpu_kernel_destroy = &destroy_kernel;
+        cbs.fn_gpu_kernel_set_arg_resource = &kernel_set_arg_resource;
+        cbs.fn_gpu_kernel_set_arg_uint32 = &kernel_set_arg_u32;
+        cbs.fn_gpu_kernel_set_arg_float = &kernel_set_arg_f32;
+
         cbs.fn_gpu_stream_resource_barrier = &disaptch_resource_barrier;
 
         handle_ = inferenceEngineCreateContext(device_.get(), cbs);
@@ -108,12 +153,37 @@ public:
         }
     }
 
-    static inference_engine_kernel_t create_kernel(inference_engine_device_t device, const char* kernel_name, const void* kernel_code, size_t kernel_code_size, const char* build_options, inference_engine_kernel_language_t language)
+    static inference_engine_kernel_t create_kernel(inference_engine_device_t handle, const char* kernel_name, const void* kernel_code, size_t kernel_code_size, const char* build_options, inference_engine_kernel_language_t language)
     {
-        //auto typed_impl = reinterpret_cast<Device<DeviceT>*>(handle);
-        //auto typed_resource = new ResourceT(typed_impl->allocate_resource<ResourceT>(size));
-        //return reinterpret_cast<inference_engine_resource_t>(typed_resource);
-        return nullptr;
+        auto typed_impl = reinterpret_cast<DeviceT*>(handle);
+        auto typed_kernel = new KernelT(typed_impl->create_kernel(kernel_name, kernel_code, kernel_code_size,
+            build_options, language));
+        return reinterpret_cast<inference_engine_kernel_t>(typed_kernel);
+    }
+
+    static void destroy_kernel(inference_engine_kernel_t kernel)
+    {
+        auto typed_kernel = reinterpret_cast<KernelT*>(kernel);
+        delete typed_kernel;
+    }
+
+    static void kernel_set_arg_resource(inference_engine_kernel_t kernel, uint32_t index, inference_engine_resource_t resource, size_t offset)
+    {
+        auto typed_kernel = reinterpret_cast<KernelT*>(kernel);
+        auto typed_rsc = reinterpret_cast<ResourceT*>(resource);
+        typed_kernel->set_arg(index, typed_rsc, offset);
+    }
+
+    static void kernel_set_arg_u32(inference_engine_kernel_t kernel, uint32_t index, uint32_t u32)
+    {
+        auto typed_kernel = reinterpret_cast<KernelT*>(kernel);
+        typed_kernel->set_arg(index, u32);
+    }
+
+    static void kernel_set_arg_f32(inference_engine_kernel_t kernel, uint32_t index, float f32)
+    {
+        auto typed_kernel = reinterpret_cast<KernelT*>(kernel);
+        typed_kernel->set_arg(index, f32);
     }
 
     static inference_engine_resource_t allocate_resource(inference_engine_device_t handle, std::size_t size)

@@ -453,21 +453,6 @@ inline inference_engine_context_callbacks_t fill_with_dx12_callbacks()
     return callbacks;
 }
 
-
-class KernelDX12 : public inference_engine::Resource
-{
-public:
-    KernelDX12(ComPtr<ID3D12Resource> resource)
-        : rsc_(resource)
-    {
-    }
-
-    ID3D12Resource* get() { return rsc_.Get(); }
-
-private:
-    ComPtr<ID3D12Resource> rsc_;
-};
-
 class ResourceDX12 : public inference_engine::Resource
 {
 public:
@@ -481,6 +466,72 @@ public:
 private:
     ComPtr<ID3D12Resource> rsc_;
 };
+
+
+class KernelDX12 : public inference_engine::Resource
+{
+public:
+    KernelDX12(ID3D12Device* d3d12_dev, const char* kernel_name, const void* kernel_code, size_t kernel_code_size, const char* build_options, inference_engine_kernel_language_t language)
+        : name_(kernel_name)
+    {
+        ID3D12Device5* dev5 = nullptr;
+        throw_if_failed(d3d12_dev->QueryInterface(&dev5), "cant cast d3d12 device to ID3D12Device5");
+
+        if (kernel_code == nullptr || kernel_code_size == 0)
+        {
+            throw std::runtime_error("Code string is empty. Please provide valid kernel/binary data.\n");
+        }
+
+        META_COMMAND_CREATE_CUSTOM_DESC create_desc{};
+        create_desc.ShaderSourceCode = reinterpret_cast<UINT64>(kernel_code);
+        create_desc.ShaderSourceCodeSize = kernel_code_size;
+        create_desc.BuildOptionString = reinterpret_cast<UINT64>(build_options);
+        create_desc.BuildOptionStringSize = build_options ? std::strlen(build_options) : 0ull;
+
+        switch (language)
+        {
+        case inference_engine_kernel_language_t::INFERENCE_ENGINE_KERNEL_LANGUAGE_OCL:
+            create_desc.ShaderLanguage = META_COMMAND_CUSTOM_SHADER_LANGUAGE_OCL_STATELESS;
+            break;
+        default:
+            create_desc.ShaderLanguage = META_COMMAND_CUSTOM_SHADER_LANGUAGE_NONE;
+        }
+        assert(create_desc.ShaderLanguage != META_COMMAND_CUSTOM_SHADER_LANGUAGE_NONE);
+        auto mcw = new MetaCommandWrapper{};
+        throw_if_failed(dev5->CreateMetaCommand(GUID_CUSTOM, 0, &create_desc, sizeof(create_desc),
+            IID_PPV_ARGS(&mcw->mc)), "Cant create custom metacommand");
+        if (!mcw->mc)
+        {
+            delete mcw;
+            assert(!"Creation of custom MC failed.");
+        }
+    }
+
+    ID3D12MetaCommand* get() { return mc_.Get(); }
+
+    void set_arg(std::uint32_t idx, ResourceDX12* rsc, std::size_t offset = 0)
+    {
+        resources_[idx] = { rsc, offset };
+    }
+
+    void set_arg(std::uint32_t idx, std::uint32_t u32)
+    {
+        scalars_[idx] = u32;
+    }
+
+    void set_arg(std::uint32_t idx, float f32)
+    {
+        scalars_[idx] = f32;
+    }
+
+private:
+    ComPtr<ID3D12MetaCommand> mc_;
+    std::unordered_map<std::size_t, std::pair<ResourceDX12*, std::size_t>> resources_;
+    std::unordered_map<std::size_t, std::variant<float, std::uint32_t>> scalars_;
+    std::unordered_map<std::size_t, std::size_t> locals_;
+    std::string name_;
+};
+
 
 class StreamDX12 : public inference_engine::Stream<StreamDX12>
 {
@@ -508,6 +559,11 @@ public:
     DeviceDX12(ComPtr<ID3D12Device> device)
         : device_(device)
     {}
+
+    KernelDX12 create_kernel(const char* kernel_name, const void* kernel_code, size_t kernel_code_size, const char* build_options, inference_engine_kernel_language_t language)
+    {
+        return KernelDX12(device_.Get(), kernel_name, kernel_code, kernel_code_size, build_options, language);
+    }
 
     ResourceDX12 allocate_resource(std::size_t size)
     {
