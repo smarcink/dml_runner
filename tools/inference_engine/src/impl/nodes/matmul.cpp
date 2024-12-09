@@ -67,16 +67,19 @@ void GpuMatMul::compile(GpuContext& ctx)
         assert(pos != std::string::npos);
         for (auto& op : post_ops_)
         {
-            const std::string op_code = [](inference_engine_activation_desc_t params) {
-                if (params.type == INFERENCE_ENGINE_ACTIVATION_TYPE_RELU)
-                    return std::string("\naccu = fmax(accu, (DT)0.0f);");
-                if (params.type == INFERENCE_ENGINE_ACTIVATION_TYPE_LINEAR)
-                    return std::format("\naccu = ({} * accu + {});", params.params.linear.a, params.params.linear.b); 
-                assert(!"Unknown activation type. Cant create activation post ops..");
-                return std::string();
-                }(op.activation_params_);
-            code_string.insert(pos, op_code);
-            pos += op_code.length();
+            if (const auto activation_params = std::get_if<inference_engine_activation_desc_t>(&op.params_))
+            {
+                const std::string op_code = [](inference_engine_activation_desc_t* params) {
+                    if (params->type == INFERENCE_ENGINE_ACTIVATION_TYPE_RELU)
+                        return std::string("\naccu = fmax(accu, (DT)0.0f);");
+                    if (params->type == INFERENCE_ENGINE_ACTIVATION_TYPE_LINEAR)
+                        return std::format("\naccu = ({} * accu + {});", params->params.linear.a, params->params.linear.b);
+                    assert(!"Unknown activation type. Cant create activation post ops..");
+                    return std::string();
+                    }(activation_params);
+                code_string.insert(pos, op_code);
+                pos += op_code.length();
+            }
         }        
     }
     kernel_ = ctx.create_kernel("matmul_ref", code_string.c_str(), code_string.length(), build_options.c_str(), INFERENCE_ENGINE_KERNEL_LANGUAGE_OCL);

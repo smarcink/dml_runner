@@ -242,7 +242,7 @@ public:
         // but possibly safer with dynamic_cast for now
         if (auto activation = dynamic_cast<GpuActivation*>(pn))  
         {
-            std::cout << "visiting activation...\n";
+            std::cout << "testing activation node for fusion...\n";
 
             // check matmul/conv + activation and fuse?
             // if we have multiple activations in a row, we do it one by one
@@ -251,6 +251,16 @@ public:
             if (inputs.size() == 1 && !pn->get_outputs().empty()) // don't fuse with the last output node
             {
                 if (inputs[0]->fuse_with(activation))
+                    mark_node_for_deletion(pn);
+            }
+        }
+        else if (auto elem_add = dynamic_cast<GpuElementwiseAdd*>(pn))
+        {
+            std::cout << "testing elementwise_add node for fusion...\n";
+            auto& inputs = pn->get_inputs();
+            if (inputs.size() == 2 && !pn->get_outputs().empty()) // don't fuse with the last output node
+            {
+                if (inputs[0]->fuse_with(elem_add) || inputs[1]->fuse_with(elem_add)) // try fusing with the first or the second input
                     mark_node_for_deletion(pn);
             }
         }

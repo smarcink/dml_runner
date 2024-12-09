@@ -14,7 +14,7 @@ void inference_engine::GpuElementwiseAdd::initalize(GpuStream& stream)
 inference_engine::GpuResource::Ptr inference_engine::GpuElementwiseAdd::execute(GpuStream& stream)
 {
     std::cout << std::format("[{}] Execute.\n", to_str());
-    return {};
+    return resource_;
 }
 
 std::string inference_engine::GpuElementwiseAdd::to_str() const

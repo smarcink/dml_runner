@@ -4,6 +4,7 @@
 #include "tensor.h"
 #include "gpu_context.h"
 #include <string>
+#include <variant>
 
 namespace inference_engine
 {
@@ -55,8 +56,8 @@ namespace inference_engine
 
     struct PostOp
     {
-        // for now assume only activation can be fused, we can later extend this into some std::variant of other operators...
-        inference_engine_activation_desc_t activation_params_;
+        // probably this structure will evolve, depending on the needs
+        std::variant<inference_engine_activation_desc_t, inference_engine_elementwise_add_desc_t> params_;
     };
 
     /*

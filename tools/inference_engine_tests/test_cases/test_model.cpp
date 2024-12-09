@@ -361,6 +361,7 @@ TEST(ModelTest, ConvPlusAddFusion)
     //     \   *     activation
     //      \ /
     //       *       elementwise_add
+    //       *       activation at the end, so that we can fuse "inner" nodes
 
     // we'll fuse nodes on the right side of the graph
     // *        * port, port
@@ -368,6 +369,7 @@ TEST(ModelTest, ConvPlusAddFusion)
     //   *    /   conv
     //    \  /
     //     * conv fused with activation fused with elementwise_add 
+    //     * activation at the end, unchanged
 
 
     auto device = reinterpret_cast<inference_engine_device_t>(G_DX12_ENGINE.d3d12_device.Get());
@@ -411,6 +413,14 @@ TEST(ModelTest, ConvPlusAddFusion)
     auto port_add_final = inferenceEngineModelDescriptorAddElementwiseAdd(md, add_desc_final);
     ASSERT_NE(port_add_final, INFERENCE_ENGINE_INVALID_NODE_ID);
 
+    // activation final
+    inference_engine_activation_desc_t activation_desc_final{};
+    activation_desc_final.input = port_add_final;
+    activation_desc_final.type = INFERENCE_ENGINE_ACTIVATION_TYPE_RELU;
+    auto final_activation = inferenceEngineModelDescriptorAddActivation(md, activation_desc_final);
+    ASSERT_NE(final_activation, INFERENCE_ENGINE_INVALID_NODE_ID);
+    inferenceEngineSetNodeName(md, final_activation, "final_activation");
+
     // define input mappings
     std::array<inference_engine_tensor_mapping_t, 3> inputs{};
     // input a
@@ -433,12 +443,25 @@ TEST(ModelTest, ConvPlusAddFusion)
     // ask model for output size (we know that there has to be 1 output in this test case)
     inference_engine_tensor_mapping_t output_mapping{};
     ASSERT_EQ(inferenceEngineModelGetOutputs(model, &output_mapping, nullptr), true);
-    ASSERT_EQ(output_mapping.id, port_add_final);
+    ASSERT_EQ(output_mapping.id, final_activation);
     ASSERT_EQ(output_mapping.tensor.data_type, input_desc.data_type);
     ASSERT_EQ(output_mapping.tensor.dims[0], 1);
     ASSERT_EQ(output_mapping.tensor.dims[1], 1);
     ASSERT_EQ(output_mapping.tensor.dims[2], 4);
     ASSERT_EQ(output_mapping.tensor.dims[3], 4);
+
+    auto input_a_buffer = create_buffer(G_DX12_ENGINE.d3d12_device.Get(), accumulate_tensor_dims(inputs[0].tensor),
+        D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+    auto input_b_buffer = create_buffer(G_DX12_ENGINE.d3d12_device.Get(), accumulate_tensor_dims(inputs[1].tensor),
+        D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+    auto input_c_buffer = create_buffer(G_DX12_ENGINE.d3d12_device.Get(), accumulate_tensor_dims(inputs[2].tensor),
+        D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+    auto output_buffer = create_buffer(G_DX12_ENGINE.d3d12_device.Get(), accumulate_tensor_dims(output_mapping.tensor),
+        D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+    inferenceEngineModelSetResource(model, inputs[0].id, reinterpret_cast<inference_engine_resource_t>(input_a_buffer.Get()));
+    inferenceEngineModelSetResource(model, inputs[1].id, reinterpret_cast<inference_engine_resource_t>(input_b_buffer.Get()));
+    inferenceEngineModelSetResource(model, inputs[2].id, reinterpret_cast<inference_engine_resource_t>(input_c_buffer.Get()));
+    inferenceEngineModelSetResource(model, output_mapping.id, reinterpret_cast<inference_engine_resource_t>(output_buffer.Get()));
 
     // can execute here (assign resources call execute)
     inferenceEngineExecuteModel(model, stream);
