@@ -151,13 +151,6 @@ public:
         cbs.fn_gpu_stream_resource_barrier = &disaptch_resource_barrier;
         cbs.fn_gpu_stream_execute_kernel = &disaptch_kernel;
 
-        /*
-
-    callbacks.fn_gpu_stream_execute_kernel = &dx12_callbacks::gpu_stream_execute_kernel;
-    callbacks.fn_gpu_stream_fill_memory = &dx12_callbacks::gpu_stream_fill_memory;
-    callbacks.fn_gpu_stream_resource_barrier = &dx12_callbacks::gpu_stream_resource_barrier;
-        */
-
         handle_ = inferenceEngineCreateContext(device_.get(), cbs);
 
         if (!handle_)

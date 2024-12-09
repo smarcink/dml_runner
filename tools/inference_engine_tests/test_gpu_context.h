@@ -447,7 +447,7 @@ inline inference_engine_context_callbacks_t fill_with_dx12_callbacks()
     callbacks.fn_gpu_kernel_set_arg_float = &dx12_callbacks::gpu_kernel_set_arg_float;
 
     callbacks.fn_gpu_stream_execute_kernel = &dx12_callbacks::gpu_stream_execute_kernel;
-    callbacks.fn_gpu_stream_fill_memory = &dx12_callbacks::gpu_stream_fill_memory;
+    //callbacks.fn_gpu_stream_fill_memory = &dx12_callbacks::gpu_stream_fill_memory;
     callbacks.fn_gpu_stream_resource_barrier = &dx12_callbacks::gpu_stream_resource_barrier;
 
     return callbacks;
