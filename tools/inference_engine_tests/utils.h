@@ -1,6 +1,7 @@
 #pragma once 
-#include <inference_engine.h>
-#include <inference_engine_operators.h>
+#include <inference_engine.hpp>
+#include <inference_engine_operators.hpp>
+#include <inference_engine_tensor.hpp>
 #include <gtest/gtest.h>
 #include <random>
 

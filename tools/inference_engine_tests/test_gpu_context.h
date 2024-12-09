@@ -453,7 +453,7 @@ inline inference_engine_context_callbacks_t fill_with_dx12_callbacks()
     return callbacks;
 }
 
-class ResourceDX12 : public inference_engine::Resource
+class ResourceDX12 : public inference_engine::Resource<ResourceDX12>
 {
 public:
     ResourceDX12(ComPtr<ID3D12Resource> resource)
@@ -461,14 +461,17 @@ public:
     {
     }
 
-    ID3D12Resource* get() { return rsc_.Get(); }
+    CD3DX12_RESOURCE_BARRIER get_uav_barrier() const
+    {
+        return CD3DX12_RESOURCE_BARRIER::UAV(rsc_.Get());
+    }
 
 private:
     ComPtr<ID3D12Resource> rsc_;
 };
 
 
-class KernelDX12 : public inference_engine::Resource
+class KernelDX12 : public inference_engine::Kernel<KernelDX12>
 {
 public:
     KernelDX12(ID3D12Device* d3d12_dev, const char* kernel_name, const void* kernel_code, size_t kernel_code_size, const char* build_options, inference_engine_kernel_language_t language)
@@ -615,10 +618,11 @@ public:
 
     void disaptch_resource_barrier(std::vector<ResourceDX12*> rscs_list)
     {
-        std::vector<CD3DX12_RESOURCE_BARRIER> barriers(rscs_list.size());
-        for (auto i = 0; i < barriers.size(); i++)
+        std::vector<CD3DX12_RESOURCE_BARRIER> barriers;
+        barriers.reserve(rscs_list.size());
+        for (auto& rsc : rscs_list)
         {
-            barriers.push_back(CD3DX12_RESOURCE_BARRIER::UAV(rscs_list[i]->get()));
+            barriers.push_back(rsc->get_uav_barrier());
         }
         cmd_list_->ResourceBarrier(static_cast<std::uint32_t>(barriers.size()), barriers.data());
     }

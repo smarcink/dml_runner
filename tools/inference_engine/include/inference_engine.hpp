@@ -34,14 +34,20 @@ private:
 using TensorMapping = std::unordered_map<NodeID, Tensor>;
 
 
+template<typename Impl>
 class Resource
 {
+public:
+    inference_engine_resource_t get() { return handle_; }
+
 protected:
     Resource()
+        : handle_(reinterpret_cast<inference_engine_resource_t>(this))
     {
     }
-public:
-    virtual ~Resource() = default;
+
+private:
+    inference_engine_resource_t handle_;
 };
 
 template<typename Impl>

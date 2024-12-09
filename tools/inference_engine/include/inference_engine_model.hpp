@@ -123,6 +123,7 @@ namespace inference_engine
 
         TensorMapping get_outputs() const
         {
+            assert(handle_);
             std::size_t outputs_counts = 0;
             auto result = inferenceEngineModelGetOutputs(handle_, nullptr, &outputs_counts);
             if (!result)
@@ -145,6 +146,17 @@ namespace inference_engine
                 ret[output_mappings[i].id] = Tensor(output_mappings[i].tensor);
             }
             return ret;
+        }
+
+        template<typename ResourceT>
+        void set_resource(NodeID node_id, ResourceT& rsc)
+        {
+            assert(handle_);
+            auto result = inferenceEngineModelSetResource(handle_, node_id, rsc.get());
+            if (!result)
+            {
+                throw IEexception("Could not set resource!");
+            }
         }
 
     private:

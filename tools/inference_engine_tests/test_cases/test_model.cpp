@@ -17,12 +17,13 @@ TEST(ModelTest, Activation_0)
     auto port_id = md.add_port(inference_engine_port_desc_t{ INFERENCE_ENGINE_DATA_TYPE_FP32 });
     auto out_node = md.add_activation(inference_engine_activation_desc_t{ port_id, INFERENCE_ENGINE_ACTIVATION_TYPE_RELU });
 
-    inference_engine::TensorMapping input{};
-    input[port_id] = inference_engine::Tensor(INFERENCE_ENGINE_DATA_TYPE_FP16, { 1, 2, 4, 4 });
+    inference_engine::TensorMapping inputs{};
+    inputs[port_id] = inference_engine::Tensor(INFERENCE_ENGINE_DATA_TYPE_FP16, { 1, 2, 4, 4 });
+    const auto& input = inputs[port_id];
 
-    auto model = inference_engine::Model(ctx, stream, md, input);
+    auto model = inference_engine::Model(ctx, stream, md, inputs);
 
-    const auto tensor_elements_count = accumulate_tensor_dims(input[port_id]);
+    const auto tensor_elements_count = accumulate_tensor_dims(input);
     const auto tensor_size_bytes = tensor_elements_count * sizeof(float);
     std::vector<float> input_data_host(tensor_elements_count, 0.0f);
 
@@ -31,25 +32,39 @@ TEST(ModelTest, Activation_0)
     std::uniform_real_distribution<float> uniform_distribution(-5.0f, 5.0f);
     randomize_linear_container_float(random_generator, uniform_distribution, input_data_host);
 
-    auto input_buffer = create_buffer(G_DX12_ENGINE.d3d12_device.Get(), tensor_size_bytes, D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
-    // copy data to GPU
-    auto upload_buffer = create_buffer(G_DX12_ENGINE.d3d12_device.Get(), tensor_size_bytes, D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_COPY_SOURCE);
-    std::byte* upload_mapped_ptr = nullptr;
-    upload_buffer->Map(0, nullptr, reinterpret_cast<void**>(&upload_mapped_ptr));
-    std::size_t memcopy_offset = 0;
-    std::memcpy(upload_mapped_ptr, input_data_host.data(), tensor_size_bytes);
-    upload_buffer->Unmap(0, nullptr);
-    G_DX12_ENGINE.command_list->CopyResource(input_buffer.Get(), upload_buffer.Get());
-    dispatch_resource_barrier(G_DX12_ENGINE.command_list.Get(), { CD3DX12_RESOURCE_BARRIER::Transition(input_buffer.Get(),
-            D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_UNORDERED_ACCESS) });
-    G_DX12_ENGINE.wait_for_execution();
-    auto output_buffer = create_buffer(G_DX12_ENGINE.d3d12_device.Get(), tensor_size_bytes, D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
 
+    auto input_buffer = device.allocate_resource(tensor_size_bytes);
+    //auto upload_buffer = create_buffer(G_DX12_ENGINE.d3d12_device.Get(), tensor_size_bytes, D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_COPY_SOURCE);
+    //std::byte* upload_mapped_ptr = nullptr;
+    //upload_buffer->Map(0, nullptr, reinterpret_cast<void**>(&upload_mapped_ptr));
+    //std::size_t memcopy_offset = 0;
+    //std::memcpy(upload_mapped_ptr, input_data_host.data(), tensor_size_bytes);
+    //upload_buffer->Unmap(0, nullptr);
+    //G_DX12_ENGINE.command_list->CopyResource(input_buffer.Get(), upload_buffer.Get());
+    //dispatch_resource_barrier(G_DX12_ENGINE.command_list.Get(), { CD3DX12_RESOURCE_BARRIER::Transition(input_buffer.Get(),
+    //        D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_UNORDERED_ACCESS) });
+    //G_DX12_ENGINE.wait_for_execution();
+
+    auto output_buffer = device.allocate_resource(tensor_size_bytes);
     // set resources
-     
+    model.set_resource(port_id, input_buffer);
+    model.set_resource(out_node, output_buffer);
     
-    //ASSERT_EQ(inferenceEngineModelSetResource(model, port_id, reinterpret_cast<inference_engine_resource_t>(input_buffer.Get())), true);
-    //ASSERT_EQ(inferenceEngineModelSetResource(model, out_node, reinterpret_cast<inference_engine_resource_t>(output_buffer.Get())), true);
+    // ask model for output size (we know that there has to be 1 output in this test case)
+    auto output = model.get_outputs()[out_node];
+    ASSERT_EQ(output.data_type, input.data_type);
+    ASSERT_EQ(output.dims, input.dims);
+    //inference_engine_tensor_mapping_t output_mapping{};
+    //ASSERT_EQ(inferenceEngineModelGetOutputs(model, &output_mapping, nullptr), true);
+    //ASSERT_EQ(output_mapping.id, out_node);
+    //ASSERT_EQ(output_mapping.tensor.data_type, input.tensor.data_type);
+    //for (auto i = 0; i < 4; i++)
+    //{
+    //    ASSERT_EQ(output_mapping.tensor.dims[i], input.tensor.dims[i]);
+    //}
+
+    //// finally execute model
+    //ASSERT_EQ(inferenceEngineExecuteModel(model, stream), true);
 
     {
         auto device = reinterpret_cast<inference_engine_device_t>(G_DX12_ENGINE.d3d12_device.Get());
