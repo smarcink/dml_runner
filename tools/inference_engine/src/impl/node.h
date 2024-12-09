@@ -5,6 +5,7 @@
 #include "gpu_context.h"
 #include <string>
 #include <variant>
+#include <format>
 
 namespace inference_engine
 {
@@ -56,8 +57,13 @@ namespace inference_engine
 
     struct PostOp
     {
+        struct ElemWisePosOp {
+            inference_engine_elementwise_add_desc_t desc;
+            GpuNode* additional_input{ nullptr };   // for elementwise_add, we have to bring second input if fused with unary operation...
+        };
+
         // probably this structure will evolve, depending on the needs
-        std::variant<inference_engine_activation_desc_t, inference_engine_elementwise_add_desc_t> params_;
+        std::variant<inference_engine_activation_desc_t, ElemWisePosOp> params_;
     };
 
     /*
@@ -106,7 +112,22 @@ namespace inference_engine
             for (auto&& input : node->inputs_)
             {
                 if (input == old_node)
+                {
+                    std::cout << std::format("  Replace input for node: {}, old {}, new {}\n", node->to_str(), old_node->to_str(), new_node->to_str());
                     input = new_node;
+                }
+            }
+        }
+
+        static void replace_output(GpuNode* node, const GpuNode* old_node, GpuNode* new_node)
+        {
+            for (auto&& output_node : node->outputs_)
+            {
+                if (output_node == old_node)
+                {
+                    std::cout << std::format("  Replace output for node: {}, old {}, new {}\n", node->to_str(), old_node->to_str(), new_node->to_str());
+                    output_node = new_node;
+                }
             }
         }
 

@@ -20,7 +20,7 @@ namespace inference_engine
 
         std::string to_str() const override;
 
-        PostOp create_post_op() const { return PostOp{desc_}; }
+        PostOp create_post_op(GpuNode* new_input) const { return { PostOp::ElemWisePosOp{desc_, new_input } }; }
 
     private:
         inference_engine_elementwise_add_desc_t desc_{};

@@ -19,6 +19,23 @@ namespace inference_engine
     inference_engine::GpuResource::Ptr GpuConvolution::execute(GpuStream& stream)
     {
         std::cout << std::format("[{}] Execute.\n", to_str());
+
+        if (!post_ops_.empty())
+        {
+            std::cout << "  Post ops:\n";
+            for (auto& op : post_ops_)
+            {
+                if (const auto activation_params = std::get_if<inference_engine_activation_desc_t>(&op.params_))
+                {
+                    std::cout << std::format("    Activation: \n");
+                }
+                else if (const auto elemwise_params = std::get_if<PostOp::ElemWisePosOp>(&op.params_))
+                {
+                    std::cout << std::format("    Elementwise add: additional input {}\n", elemwise_params->additional_input->to_str());
+                }
+            }
+        }
+
         return resource_;
     }
 
@@ -41,17 +58,19 @@ namespace inference_engine
     bool GpuConvolution::fuse_with(const GpuElementwiseAdd* elemwise)
     {
         assert(elemwise);
-        std::cout << "activation fuse with... elementwise_add\n";
+        std::cout << "convolution fuse with... elementwise_add\n";
         outputs_ = elemwise->get_outputs();
         for (auto& out : outputs_)
             GpuNode::replace_input(out, elemwise, this);
 
-        // we have to update out inputs, activation contains only one input, bur for elementwise_add we have bring its second input
+        // we have to update our inputs, convolution contains only one input, bur for elementwise_add we have bring its second input
         auto& elem_inputs = elemwise->get_inputs();
         assert(elem_inputs.size() == 2 && (elem_inputs[0] == this || elem_inputs[1] == this));
-        inputs_.push_back(elem_inputs[0] == this ? elem_inputs[1] : elem_inputs[0]);
+        auto other_input = elem_inputs[0] == this ? elem_inputs[1] : elem_inputs[0];
+        GpuNode::replace_output(other_input, elemwise, this);
+        inputs_.push_back(other_input);
 
-        post_ops_.push_back(elemwise->create_post_op());
+        post_ops_.push_back(elemwise->create_post_op(other_input));
         return true;
     }
 
