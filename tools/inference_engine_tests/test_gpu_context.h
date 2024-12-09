@@ -501,12 +501,10 @@ public:
             create_desc.ShaderLanguage = META_COMMAND_CUSTOM_SHADER_LANGUAGE_NONE;
         }
         assert(create_desc.ShaderLanguage != META_COMMAND_CUSTOM_SHADER_LANGUAGE_NONE);
-        auto mcw = new MetaCommandWrapper{};
         throw_if_failed(dev5->CreateMetaCommand(GUID_CUSTOM, 0, &create_desc, sizeof(create_desc),
-            IID_PPV_ARGS(&mcw->mc)), "Cant create custom metacommand");
-        if (!mcw->mc)
+            IID_PPV_ARGS(&mc_)), "Cant create custom metacommand");
+        if (!mc_)
         {
-            delete mcw;
             assert(!"Creation of custom MC failed.");
         }
     }
@@ -560,10 +558,10 @@ public:
             if (rsc_handle)
             {
                 // set offset no matter what type of resource
-                auto mem_ptr = reinterpret_cast<ID3D12Resource*>(rsc_handle);
+                auto mem_ptr = 
                 exec_desc.ResourcesByteOffset[idx] = base_offset;
                 exec_desc.ResourceBindType[idx] = META_COMMAND_CUSTOM_RESOURCE_BIND_TYPE_ADDRESS;
-                exec_desc.ResourcesAddress[idx] = mem_ptr->GetGPUVirtualAddress();
+                exec_desc.ResourcesAddress[idx] = rsc_handle->get_dx12_rsc()->GetGPUVirtualAddress();
             }
             idx++;
         }
