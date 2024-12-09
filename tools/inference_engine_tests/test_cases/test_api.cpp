@@ -70,12 +70,13 @@ TEST(ApiTest, get_outputs_multiple_outs)
     }
 }
 
-TEST(ApiTest, get_outputs_null)
+TEST(ApiTest, empty_model_descriptor)
 {
     DeviceDX12 device(G_DX12_ENGINE.d3d12_device);
     StreamDX12 stream(G_DX12_ENGINE.command_list);
     ContextDX12 ctx(device);
 
     inference_engine::ModelDescriptor md{};
-    auto model = inference_engine::Model(ctx, stream, md, {});
+    // Negative test, we expect it to throw.
+    ASSERT_THROW(inference_engine::Model(ctx, stream, md, {}), inference_engine::IEexception);
 }

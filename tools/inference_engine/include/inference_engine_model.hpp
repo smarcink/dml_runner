@@ -131,7 +131,7 @@ namespace inference_engine
             }
             if (outputs_counts == 0)
             {
-                return {};
+                throw IEexception("Model has 0 outputs, something gone wrong or model descriptor was not valid!");
             }
             std::vector<inference_engine_tensor_mapping_t> output_mappings(outputs_counts);
             result = inferenceEngineModelGetOutputs(handle_, output_mappings.data(), &outputs_counts);
@@ -140,9 +140,9 @@ namespace inference_engine
                 throw IEexception("Could not get output mappings from the model!");
             }
             TensorMapping ret;
-            for (auto i = 0; i < ret.size(); i++)
+            for (auto i = 0; i < outputs_counts; i++)
             {
-                ret[i] = Tensor(output_mappings[i].tensor);
+                ret[output_mappings[i].id] = Tensor(output_mappings[i].tensor);
             }
             return ret;
         }
