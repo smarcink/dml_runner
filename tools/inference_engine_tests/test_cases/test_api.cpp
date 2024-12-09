@@ -35,10 +35,7 @@ TEST(ApiTest, get_outputs_single_out)
     ASSERT_NE(output_mappings.find(out_node), std::end(output_mappings));
     ASSERT_EQ(out_mapping.data_type, input.data_type);
     ASSERT_EQ(out_mapping.dims.size(), input.dims.size());
-    for (auto i = 0; i < out_mapping.dims.size(); i++)
-    {
-        ASSERT_EQ(out_mapping.dims[i], input.dims[i]);
-    }
+    ASSERT_EQ(out_mapping.dims, input.dims);
 }
 
 TEST(ApiTest, get_outputs_multiple_outs)
