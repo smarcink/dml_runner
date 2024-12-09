@@ -13,6 +13,14 @@ namespace inference_engine
         std::vector<std::uint64_t> strides;
 
         Tensor() = default;
+        Tensor(inference_engine_data_type_t dt, std::vector<std::uint64_t>&& dimensions)
+            : data_type(dt)
+            , dims(std::move(dimensions))
+        {
+            // ToDo: Decide if should we allow for default strides?
+            // if Yes: NCHW strides calculation should be default
+            strides.resize(dims.size());
+        }
         Tensor(const inference_engine_tensor_t& tensor_desc)
             : data_type(tensor_desc.data_type)
         {

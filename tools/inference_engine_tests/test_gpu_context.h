@@ -454,6 +454,20 @@ inline inference_engine_context_callbacks_t fill_with_dx12_callbacks()
 }
 
 
+class KernelDX12 : public inference_engine::Resource
+{
+public:
+    KernelDX12(ComPtr<ID3D12Resource> resource)
+        : rsc_(resource)
+    {
+    }
+
+    ID3D12Resource* get() { return rsc_.Get(); }
+
+private:
+    ComPtr<ID3D12Resource> rsc_;
+};
+
 class ResourceDX12 : public inference_engine::Resource
 {
 public:
@@ -505,4 +519,4 @@ private:
     ComPtr<ID3D12Device> device_ = nullptr;
 };
 
-using ContextDX12 = inference_engine::Context<DeviceDX12, StreamDX12, ResourceDX12>;
+using ContextDX12 = inference_engine::Context<DeviceDX12, StreamDX12, ResourceDX12, KernelDX12>;

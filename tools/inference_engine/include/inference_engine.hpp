@@ -5,6 +5,7 @@
 #include "inference_engine_tensor.hpp"
 #include <utility>
 #include <string>
+#include <unordered_map>
 
 /*
     Header only CPP API for inference engine.
@@ -30,17 +31,13 @@ private:
     std::string what_message_ = "[IE Exception]";
 };
 
-struct TensorMapping
-{
-    NodeID id;
-    Tensor tensor;
-};
-
+using TensorMapping = std::unordered_map<NodeID, Tensor>;
 
 template<typename Impl>
 class Stream
 {
 public:
+    inference_engine_stream_t get() { return handle_; }
 
 protected:
     Stream()
@@ -55,7 +52,6 @@ protected:
         return derived.disaptch_resource_barrier(rscs_list);
     }
 
-    inference_engine_stream_t get() { return handle_; }
 private:
     inference_engine_stream_t handle_;
 };
@@ -92,18 +88,19 @@ protected:
     inference_engine_device_t handle_ = nullptr;
 };
 
-template<typename DeviceT, typename StreamT, typename ResourceT>
+template<typename DeviceT, typename StreamT, typename ResourceT, typename KernelT>
 class Context
 {
 public:
     Context(DeviceT& device)
+        : device_(device)
     {
         inference_engine_context_callbacks_t cbs{};
         cbs.fn_gpu_device_allocate_resource = &allocate_resource;
 
         cbs.fn_gpu_stream_resource_barrier = &disaptch_resource_barrier;
 
-        handle_ = inferenceEngineCreateContext(device.get(), cbs);
+        handle_ = inferenceEngineCreateContext(device_.get(), cbs);
 
         if (!handle_)
         {
@@ -111,10 +108,18 @@ public:
         }
     }
 
+    static inference_engine_kernel_t create_kernel(inference_engine_device_t device, const char* kernel_name, const void* kernel_code, size_t kernel_code_size, const char* build_options, inference_engine_kernel_language_t language)
+    {
+        //auto typed_impl = reinterpret_cast<Device<DeviceT>*>(handle);
+        //auto typed_resource = new ResourceT(typed_impl->allocate_resource<ResourceT>(size));
+        //return reinterpret_cast<inference_engine_resource_t>(typed_resource);
+        return nullptr;
+    }
+
     static inference_engine_resource_t allocate_resource(inference_engine_device_t handle, std::size_t size)
     {
-        auto typed_impl = reinterpret_cast<Device<DeviceT>*>(handle);
-        auto typed_resource = new ResourceT(typed_impl->allocate_resource<ResourceT>(size));
+        auto typed_impl = reinterpret_cast<DeviceT*>(handle);
+        auto typed_resource = new ResourceT(typed_impl->allocate_resource(size));
         return reinterpret_cast<inference_engine_resource_t>(typed_resource);
     }
 
@@ -132,6 +137,7 @@ public:
     inference_engine_context_handle_t get() { return handle_; }
 private:
     inference_engine_context_handle_t handle_;
+    DeviceT& device_{};
 };
 
 }

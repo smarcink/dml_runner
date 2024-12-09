@@ -11,80 +11,24 @@
 */
 namespace inference_engine
 {
-    class Model
-    {
-        friend class ModelDescriptor;
-        Model(const Model&& rhs) = delete;
-        Model& operator=(const Model&& rhs) = delete;
-        Model(Model&& rhs)
-        {
-            std::swap(handle_, rhs.handle_);
-        }
-        Model& operator=(Model&& rhs)
-        {
-            if (this != &rhs)
-            {
-                std::swap(handle_, rhs.handle_);
-            }
-            return *this;
-        }
-        ~Model()
-        {
-            inferenceEngineDestroyModel(handle_);
-        }
-
-        inference_engine_model_t get() { return handle_; }
-
-        std::vector<TensorMapping> get_outputs() const
-        {
-            std::size_t outputs_counts = 0;
-            auto result = inferenceEngineModelGetOutputs(handle_, nullptr, &outputs_counts);
-            if (!result)
-            {
-                throw IEexception("Could not get number of outputs from the model!");
-            }
-            if (outputs_counts == 0)
-            {
-                return {};
-            }
-            std::vector<inference_engine_tensor_mapping_t> output_mappings(outputs_counts);
-            result = inferenceEngineModelGetOutputs(handle_, output_mappings.data(), &outputs_counts);
-            if (!result)
-            {
-                throw IEexception("Could not get output mappings from the model!");
-            }
-            std::vector<TensorMapping> ret(output_mappings.size());
-            for (auto i = 0; i < ret.size(); i++)
-            {
-                ret[i] = TensorMapping{ output_mappings[i].id, output_mappings[i].tensor };
-            }
-            return ret;
-        }
-
-    private:
-        Model(inference_engine_model_t handle)
-            : handle_(handle)
-        {
-        }
-
-    private:
-        inference_engine_model_t handle_;
-    };
-
     class ModelDescriptor
     {
     public:
         ModelDescriptor()
             : handle_(inferenceEngineCreateModelDescriptor())
         {
+            if (!handle_)
+            {
+                throw IEexception("Could not create model descriptor!");
+            }
         }
         ModelDescriptor(const ModelDescriptor&& rhs) = delete;
         ModelDescriptor& operator=(const ModelDescriptor&& rhs) = delete;
-        ModelDescriptor(ModelDescriptor&& rhs)
+        ModelDescriptor(ModelDescriptor&& rhs) noexcept
         {
             std::swap(handle_, rhs.handle_);
-        }
-        ModelDescriptor& operator=(ModelDescriptor&& rhs)
+        } 
+        ModelDescriptor& operator=(ModelDescriptor&& rhs) noexcept
         {
             if (this != &rhs)
             {
@@ -94,16 +38,15 @@ namespace inference_engine
         }
         ~ModelDescriptor()
         {
-            inferenceEngineDestroyModelDescriptor(handle_);
+            if (handle_)
+            {
+                inferenceEngineDestroyModelDescriptor(handle_);
+            }        
         }
 
         inference_engine_model_descriptor_t get() { return handle_; }
+        const inference_engine_model_descriptor_t get() const { return handle_; }
 
-        template<typename ContextT, typename StreamT>
-        Model compile_model(ContextT& ctx, StreamT& stream, const std::vector<TensorMapping>& input_mappings) const
-        {
-            return Model(inferenceEngineCompileModelDescriptor(ctx.get(), stream.get(), handle_, nullptr, 0));
-        }
 
     public:
         NodeID add_port(const inference_engine_port_desc_t& desc)
@@ -133,6 +76,85 @@ namespace inference_engine
 
     private:
         inference_engine_model_descriptor_t handle_ = nullptr;
+    };
+
+    class Model
+    {
+    public:
+        template<typename ContextT, typename StreamT>
+        Model(ContextT& ctx, StreamT& stream, const ModelDescriptor& md, const TensorMapping& input_mappings)
+        {
+            std::vector<inference_engine_tensor_mapping_t> c_mapping;
+            c_mapping.reserve(input_mappings.size());
+            for (const auto& [id, tensor] : input_mappings)
+            {
+                c_mapping.push_back({ id, tensor });
+            }
+            handle_ = inferenceEngineCompileModelDescriptor(ctx.get(), stream.get(), md.get(), c_mapping.data(), c_mapping.size());
+            if (!handle_)
+            {
+                throw IEexception("Could not compile model!");
+            }
+        }
+
+        Model(const Model&& rhs) = delete;
+        Model& operator=(const Model&& rhs) = delete;
+        Model(Model&& rhs) noexcept
+        {
+            std::swap(handle_, rhs.handle_);
+        }
+        Model& operator=(Model&& rhs) noexcept
+        {
+            if (this != &rhs)
+            {
+                std::swap(handle_, rhs.handle_);
+            }
+            return *this;
+        }
+        ~Model()
+        {
+            if (handle_)
+            {
+                inferenceEngineDestroyModel(handle_);
+            }   
+        }
+
+        inference_engine_model_t get() { return handle_; }
+
+        TensorMapping get_outputs() const
+        {
+            std::size_t outputs_counts = 0;
+            auto result = inferenceEngineModelGetOutputs(handle_, nullptr, &outputs_counts);
+            if (!result)
+            {
+                throw IEexception("Could not get number of outputs from the model!");
+            }
+            if (outputs_counts == 0)
+            {
+                return {};
+            }
+            std::vector<inference_engine_tensor_mapping_t> output_mappings(outputs_counts);
+            result = inferenceEngineModelGetOutputs(handle_, output_mappings.data(), &outputs_counts);
+            if (!result)
+            {
+                throw IEexception("Could not get output mappings from the model!");
+            }
+            TensorMapping ret;
+            for (auto i = 0; i < ret.size(); i++)
+            {
+                ret[i] = Tensor(output_mappings[i].tensor);
+            }
+            return ret;
+        }
+
+    private:
+        Model(inference_engine_model_t handle)
+            : handle_(handle)
+        {
+        }
+
+    private:
+        inference_engine_model_t handle_;
     };
 
 }  // namespace inference_engine
