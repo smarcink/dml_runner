@@ -1,12 +1,29 @@
-#pragma once
 #include "matmul.h"
+#include "activation.h"
+#include <iostream>
+#include <format>
 
-void inference_engine::GpuMatMul::compile(GpuContext& ctx)
+namespace inference_engine
 {
-    std::cout << "[MatMul] Compile." << std::endl;
+    bool GpuMatMul::fuse_with(const GpuActivation* activation)
+    {
+        assert(activation);
+        std::cout << "matmul fuse with... activation\n";
+        outputs_ = activation->get_outputs();
+        for (auto& out : outputs_)
+            GpuNode::replace_input(out, activation, this);
+
+        post_ops_.push_back(activation->create_post_op());
+        return true;
+    }
+
+
+void GpuMatMul::compile(GpuContext& ctx)
+{
+    std::cout << std::format("[{}] Compile.\n", to_str());
     assert(kernel_ == nullptr); // compile can happen only once
 
-    const char* code_string
+    std::string code_string
         =
         "#if defined(cl_khr_fp16)\n"
         "#pragma OPENCL EXTENSION cl_khr_fp16 : enable)\n "
@@ -42,12 +59,40 @@ void inference_engine::GpuMatMul::compile(GpuContext& ctx)
     build_options += " -DM=" + std::to_string(get_M());
     build_options += " -DK=" + std::to_string(get_K());
     build_options += " -DN=" + std::to_string(get_N());
-    kernel_ = ctx.create_kernel("matmul_ref", code_string, std::strlen(code_string), build_options.c_str(), INFERENCE_ENGINE_KERNEL_LANGUAGE_OCL);
+
+    if (!post_ops_.empty())
+    {
+        // insert post ops just before "\noutput[id_m" in the code_string
+        std::size_t pos = code_string.find("\noutput[id_m");
+        assert(pos != std::string::npos);
+        for (auto& op : post_ops_)
+        {
+            if (const auto activation_params = std::get_if<inference_engine_activation_desc_t>(&op.params_))
+            {
+                const std::string op_code = [](inference_engine_activation_desc_t* params) {
+                    if (params->type == INFERENCE_ENGINE_ACTIVATION_TYPE_RELU)
+                        return std::string("\naccu = fmax(accu, (DT)0.0f);");
+                    if (params->type == INFERENCE_ENGINE_ACTIVATION_TYPE_LINEAR)
+                        return std::format("\naccu = ({} * accu + {});", params->params.linear.a, params->params.linear.b);
+                    assert(!"Unknown activation type. Cant create activation post ops..");
+                    return std::string();
+                    }(activation_params);
+                code_string.insert(pos, op_code);
+                pos += op_code.length();
+            }
+        }        
+    }
+    kernel_ = ctx.create_kernel("matmul_ref", code_string.c_str(), code_string.length(), build_options.c_str(), INFERENCE_ENGINE_KERNEL_LANGUAGE_OCL);
 }
 
-inference_engine::GpuResource::Ptr inference_engine::GpuMatMul::execute(GpuStream& stream)
+void GpuMatMul::initalize(GpuStream& stream)
 {
-    std::cout << "[MatMul] Execute." << std::endl;
+    std::cout << std::format("[{}] Initialize.\n", to_str());
+}
+
+inference_engine::GpuResource::Ptr GpuMatMul::execute(GpuStream& stream)
+{
+    std::cout << std::format("[{}] Execute.\n", to_str());
     auto input_rsc_a = get_inputs().at(0)->get_resource().get();
     auto input_rsc_b = get_inputs().at(1)->get_resource().get();
     assert(input_rsc_a);
@@ -66,28 +111,33 @@ inference_engine::GpuResource::Ptr inference_engine::GpuMatMul::execute(GpuStrea
     return resource_;
 }
 
-std::uint32_t inference_engine::GpuMatMul::get_M() const
+std::string GpuMatMul::to_str() const
+{
+    return node_utils::create_name("GpuMatMul", name_);
+}
+
+std::uint32_t GpuMatMul::get_M() const
 {
     assert(!get_inputs().empty());
     const auto tensor_a = get_inputs()[0]->get_output_tensor();
     return static_cast<std::uint32_t>(tensor_a.dims[tensor_a.dims.size() - 2]);
 }
 
-std::uint32_t inference_engine::GpuMatMul::get_N() const
+std::uint32_t GpuMatMul::get_N() const
 {
     assert(get_inputs().size() >= 2);
     const auto tensor_b = get_inputs()[1]->get_output_tensor();
     return static_cast<std::uint32_t>(tensor_b.dims[tensor_b.dims.size() - 1]);
 }
 
-std::uint32_t inference_engine::GpuMatMul::get_K() const
+std::uint32_t GpuMatMul::get_K() const
 {
     assert(!get_inputs().empty());
     const auto tensor_a = get_inputs()[0]->get_output_tensor();
     return static_cast<std::uint32_t>(tensor_a.dims[tensor_a.dims.size() - 1]);
 }
 
-std::unique_ptr<inference_engine::GpuNode> inference_engine::MatMul::create_gpu_node(const std::vector<GpuNode*>& inputs)
+std::unique_ptr<GpuNode> MatMul::create_gpu_node(const std::vector<GpuNode*>& inputs)
 {
     auto are_tensors_compatible_for_matmul = [](const Tensor& tensor_a, const Tensor& tensor_b) {
         // Check if both tensors have at least 2 dimensions
@@ -128,10 +178,10 @@ std::unique_ptr<inference_engine::GpuNode> inference_engine::MatMul::create_gpu_
         throw std::invalid_argument("Not supported path in MatMul yet. ToDo: add batch support.");
     }
 
-    return std::make_unique<GpuMatMul>(id_, compute_output_tensor(tensor_a, tensor_b), inputs, desc_);
+    return std::make_unique<GpuMatMul>(id_, compute_output_tensor(tensor_a, tensor_b), inputs, desc_, name_);
 }
 
-inference_engine::Tensor inference_engine::MatMul::compute_output_tensor(const Tensor& input_a, const Tensor& input_b)
+Tensor MatMul::compute_output_tensor(const Tensor& input_a, const Tensor& input_b)
 {
     // just an example
     assert(input_a.data_type == input_b.data_type);
@@ -146,3 +196,5 @@ inference_engine::Tensor inference_engine::MatMul::compute_output_tensor(const T
     ret.strides.assign({ 0,0,0,0 });
     return ret;
 }
+
+} // namespace inference_engine

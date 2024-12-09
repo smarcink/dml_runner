@@ -31,10 +31,19 @@ public:
         return id;
     }
 
+    void set_name(size_t id, std::string_view name)
+    {
+        nodes_.at(id)->set_name(name);
+    }
+
 public:
     std::vector<std::unique_ptr<GpuNode>> compile(std::span<TensorMapping> input_mappings);
 
+
+
 private:
+    void create_adjacency_list();
+    void set_input_tensors(std::vector<std::unique_ptr<inference_engine::GpuNode>>& ret, std::span<TensorMapping> input_mappings);
     std::vector<INode*> topological_sort();
     void topological_sort_util(INode* node, std::unordered_set<INode*>& visited, std::stack<INode*>& stack);
 
@@ -70,6 +79,11 @@ public:
     std::size_t add_node(const TDesc& desc)
     {
         return dag_.add_node<T>(desc);
+    }
+
+    void set_name(size_t id, std::string_view name)
+    {
+        dag_.set_name(id, name);
     }
 
     ExecutableModel compile(GpuContext& ctx, GpuStream& stream, std::span<TensorMapping> input_mappings);

@@ -6,8 +6,8 @@ namespace inference_engine
     class GpuActivation : public GpuNode
     {
     public:
-        GpuActivation(std::size_t user_id, GpuNode* input, const inference_engine_activation_desc_t& desc)
-            : GpuNode(user_id, input->get_output_tensor(), { input })
+        GpuActivation(std::size_t user_id, GpuNode* input, const inference_engine_activation_desc_t& desc, const std::string& name)
+            : GpuNode(user_id, input->get_output_tensor(), { input }, name)
             , desc_(desc)
         {
         }
@@ -31,18 +31,13 @@ namespace inference_engine
 
         void compile(GpuContext& ctx) override;
 
-        void initalize(GpuStream& stream) override
-        {
-            std::cout << "[Activation] Initialize." << std::endl;
-        }
+        void initalize(GpuStream& stream) override;
 
         GpuResource::Ptr execute(GpuStream& stream) override;
 
-        std::string to_str() const override
-        {
-            // more details about the node here
-            return "GpuActivation";
-        }
+        std::string to_str() const override;
+
+        PostOp create_post_op() const { return PostOp{desc_}; }
 
     private:
         inference_engine_activation_desc_t desc_{};
@@ -61,7 +56,7 @@ namespace inference_engine
         std::unique_ptr<GpuNode> create_gpu_node(const std::vector<GpuNode*>& inputs) override
         {
             assert(inputs.size() == 1);
-            return std::make_unique<GpuActivation>(id_, inputs[0], desc_);
+            return std::make_unique<GpuActivation>(id_, inputs[0], desc_, name_);
         }
     private:
         inference_engine_activation_desc_t desc_;

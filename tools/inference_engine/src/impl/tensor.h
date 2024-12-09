@@ -23,6 +23,11 @@ namespace inference_engine
             }
         }
 
+        bool operator==(const Tensor& other) const
+        {
+            return data_type == other.data_type && dims == other.dims && strides == other.strides;
+        }
+
         operator inference_engine_tensor_t() const
         {
             inference_engine_tensor_t ret{};

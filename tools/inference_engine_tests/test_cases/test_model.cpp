@@ -101,7 +101,7 @@ TEST(ModelTest, Activation_0)
     inferenceEngineDestroyContext(ctx);
 }
 
-TEST(ModelTest, MatMul_fused_activation)
+void test_fusion_activation_impl(int num_activations)
 {
     auto device = reinterpret_cast<inference_engine_device_t>(G_DX12_ENGINE.d3d12_device.Get());
     auto stream = reinterpret_cast<inference_engine_stream_t>(G_DX12_ENGINE.command_list.Get());
@@ -123,15 +123,19 @@ TEST(ModelTest, MatMul_fused_activation)
     auto port_matmul_out = inferenceEngineModelDescriptorAddMatMul(md, matmul_desc);
     ASSERT_NE(port_matmul_out, INFERENCE_ENGINE_INVALID_NODE_ID);
 
-    // activation
-    inference_engine_activation_desc_t activation_desc{};
-    activation_desc.input = port_matmul_out;
+    // activation nodes
+    std::vector<inference_engine_node_id_t> activation_nodes;
+    inference_engine_activation_desc_t activation_desc{};    
     activation_desc.type = INFERENCE_ENGINE_ACTIVATION_TYPE_LINEAR;
     activation_desc.params.linear.a = 2.0f;
     activation_desc.params.linear.b = 0.5f;
-
-    auto port_out = inferenceEngineModelDescriptorAddActivation(md, activation_desc);
-    ASSERT_NE(port_out, INFERENCE_ENGINE_INVALID_NODE_ID);
+    for (int i = 0; i < num_activations; ++i)
+    {
+        activation_desc.input = i == 0 ? port_matmul_out : activation_nodes.back();
+        auto port_out = inferenceEngineModelDescriptorAddActivation(md, activation_desc);
+        ASSERT_NE(port_out, INFERENCE_ENGINE_INVALID_NODE_ID);
+        activation_nodes.push_back(port_out);        
+    }
 
     // define input mappings
     std::array<inference_engine_tensor_mapping_t, 2> inputs{};
@@ -178,7 +182,7 @@ TEST(ModelTest, MatMul_fused_activation)
     // ask model for output size (we know that there has to be 1 output in this test case)
     inference_engine_tensor_mapping_t output_mapping{};
     ASSERT_EQ(inferenceEngineModelGetOutputs(model, &output_mapping, nullptr), true);
-    ASSERT_EQ(output_mapping.id, port_out);
+    ASSERT_EQ(output_mapping.id, activation_nodes.back()); // we fuse to matmul, but the last actiovation won't be fused as it's the output...
     ASSERT_EQ(output_mapping.tensor.data_type, input_desc.data_type);
     ASSERT_EQ(output_mapping.tensor.dims[0], 1);
     ASSERT_EQ(output_mapping.tensor.dims[1], 1);
@@ -215,7 +219,10 @@ TEST(ModelTest, MatMul_fused_activation)
     {
         // relu activation reference
         const auto matmul_result = 32.0f;
-        const auto reference = activation_desc.params.linear.a * matmul_result + activation_desc.params.linear.b;
+        auto reference = matmul_result;
+        for (int j = 0; j < num_activations; ++j)
+            reference = activation_desc.params.linear.a * reference + activation_desc.params.linear.b;
+
         const auto& real_data = data_out[i];
         // for now switch it off so we have the test passing and result is not polluted with fake fail
         ASSERT_FLOAT_EQ(real_data, reference) << "idx: " << i;
@@ -224,6 +231,23 @@ TEST(ModelTest, MatMul_fused_activation)
     inferenceEngineDestroyModelDescriptor(md);
     inferenceEngineDestroyModel(model);
     inferenceEngineDestroyContext(ctx);
+}
+
+// we tried INSTANTIATE_TEST_SUITE_P(VariablePorts, ModelTestWithParams, ::testing::Values(1, 5));, but DX objectes caused the app to crash for some reason...
+
+TEST(ModelTest, MatMul_fused_activation_single)
+{
+    test_fusion_activation_impl(1); // no activation should be fused as it's the last one and the output node
+}
+
+TEST(ModelTest, MatMul_fused_activation_two)
+{
+    test_fusion_activation_impl(2); // one activation should be fused, 
+}
+
+TEST(ModelTest, MatMul_fused_activation_five)
+{
+    test_fusion_activation_impl(5);
 }
 
 TEST(ModelTest, MatMul_6_nodes)
@@ -303,6 +327,128 @@ TEST(ModelTest, MatMul_6_nodes)
     ASSERT_EQ(output_mapping.tensor.dims[1], 1);
     ASSERT_EQ(output_mapping.tensor.dims[2], 8);
     ASSERT_EQ(output_mapping.tensor.dims[3], 64);
+
+    auto input_a_buffer = create_buffer(G_DX12_ENGINE.d3d12_device.Get(), accumulate_tensor_dims(inputs[0].tensor),
+        D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+    auto input_b_buffer = create_buffer(G_DX12_ENGINE.d3d12_device.Get(), accumulate_tensor_dims(inputs[1].tensor),
+        D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+    auto input_c_buffer = create_buffer(G_DX12_ENGINE.d3d12_device.Get(), accumulate_tensor_dims(inputs[2].tensor),
+        D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+    auto output_buffer = create_buffer(G_DX12_ENGINE.d3d12_device.Get(), accumulate_tensor_dims(output_mapping.tensor),
+        D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+    inferenceEngineModelSetResource(model, inputs[0].id, reinterpret_cast<inference_engine_resource_t>(input_a_buffer.Get()));
+    inferenceEngineModelSetResource(model, inputs[1].id, reinterpret_cast<inference_engine_resource_t>(input_b_buffer.Get()));
+    inferenceEngineModelSetResource(model, inputs[2].id, reinterpret_cast<inference_engine_resource_t>(input_c_buffer.Get()));
+    inferenceEngineModelSetResource(model, output_mapping.id, reinterpret_cast<inference_engine_resource_t>(output_buffer.Get()));
+
+    // can execute here (assign resources call execute)
+    inferenceEngineExecuteModel(model, stream);
+    // do conformance check etc ..
+    // ...
+    // delete model
+
+    inferenceEngineDestroyModelDescriptor(md);
+    inferenceEngineDestroyModel(model);
+    inferenceEngineDestroyContext(ctx);
+}
+
+TEST(ModelTest, ConvPlusAddFusion)
+{
+    // *           * port, port
+    //  \         /
+    //   *       *   conv, conv
+    //    \     /
+    //     \   *     activation
+    //      \ /
+    //       *       elementwise_add
+    //       *       activation at the end, so that we can fuse "inner" nodes
+
+    // we'll fuse nodes on the right side of the graph
+    // *        * port, port
+    //  \      /
+    //   *    /   conv
+    //    \  /
+    //     * conv fused with activation fused with elementwise_add 
+    //     * activation at the end, unchanged
+
+
+    auto device = reinterpret_cast<inference_engine_device_t>(G_DX12_ENGINE.d3d12_device.Get());
+    auto stream = reinterpret_cast<inference_engine_stream_t>(G_DX12_ENGINE.command_list.Get());
+    auto ctx = inferenceEngineCreateContext(device, fill_with_dx12_callbacks());
+
+    auto md = inferenceEngineCreateModelDescriptor();
+
+    inference_engine_port_desc_t input_desc{};
+    input_desc.data_type = inference_engine_data_type_t::INFERENCE_ENGINE_DATA_TYPE_FP16;
+    auto input_a = inferenceEngineModelDescriptorAddPort(md, input_desc);
+    ASSERT_NE(input_a, INFERENCE_ENGINE_INVALID_NODE_ID);
+    inferenceEngineSetNodeName(md, input_a, "input_a");
+    auto input_b = inferenceEngineModelDescriptorAddPort(md, input_desc);
+    ASSERT_NE(input_b, INFERENCE_ENGINE_INVALID_NODE_ID);
+    inferenceEngineSetNodeName(md, input_b, "input_b");
+
+    // Conv left
+    inference_engine_convolution_desc_t conv_desc{.input = input_a};
+    auto port_conv_a = inferenceEngineModelDescriptorAddConvolution(md, conv_desc);
+    ASSERT_NE(port_conv_a, INFERENCE_ENGINE_INVALID_NODE_ID);
+    inferenceEngineSetNodeName(md, port_conv_a, "conv_a");
+
+    // Conv right
+    inference_engine_convolution_desc_t conv_desc1{ .input = input_b };
+    auto port_conv_b = inferenceEngineModelDescriptorAddConvolution(md, conv_desc1);
+    ASSERT_NE(port_conv_b, INFERENCE_ENGINE_INVALID_NODE_ID);
+    inferenceEngineSetNodeName(md, port_conv_b, "conv_b");
+
+    // activation
+    inference_engine_activation_desc_t activation_desc{};
+    activation_desc.input = port_conv_b;
+    activation_desc.type = INFERENCE_ENGINE_ACTIVATION_TYPE_RELU;
+    auto activation = inferenceEngineModelDescriptorAddActivation(md, activation_desc);
+    ASSERT_NE(activation, INFERENCE_ENGINE_INVALID_NODE_ID);
+
+    // elementwise_add
+    inference_engine_elementwise_add_desc_t add_desc_final{};
+    add_desc_final.input_a = port_conv_a;
+    add_desc_final.input_b = activation;
+    auto port_add_final = inferenceEngineModelDescriptorAddElementwiseAdd(md, add_desc_final);
+    ASSERT_NE(port_add_final, INFERENCE_ENGINE_INVALID_NODE_ID);
+
+    // activation final
+    inference_engine_activation_desc_t activation_desc_final{};
+    activation_desc_final.input = port_add_final;
+    activation_desc_final.type = INFERENCE_ENGINE_ACTIVATION_TYPE_RELU;
+    auto final_activation = inferenceEngineModelDescriptorAddActivation(md, activation_desc_final);
+    ASSERT_NE(final_activation, INFERENCE_ENGINE_INVALID_NODE_ID);
+    inferenceEngineSetNodeName(md, final_activation, "final_activation");
+
+    // define input mappings
+    std::array<inference_engine_tensor_mapping_t, 3> inputs{};
+    // input a
+    {
+        inputs[0].id = input_a;
+        inputs[0].tensor.data_type = input_desc.data_type;
+        set_array(inputs[0].tensor.dims, 1, 1, 4, 4);
+    }
+    // input b
+    {
+        inputs[1].id = input_b;
+        inputs[1].tensor.data_type = input_desc.data_type;
+        set_array(inputs[1].tensor.dims, 1, 1, 4, 4);
+    }
+
+    // create model
+    auto model = inferenceEngineCompileModelDescriptor(ctx, stream, md, inputs.data(), inputs.size());
+    ASSERT_NE(model, nullptr);
+
+    // ask model for output size (we know that there has to be 1 output in this test case)
+    inference_engine_tensor_mapping_t output_mapping{};
+    ASSERT_EQ(inferenceEngineModelGetOutputs(model, &output_mapping, nullptr), true);
+    ASSERT_EQ(output_mapping.id, final_activation);
+    ASSERT_EQ(output_mapping.tensor.data_type, input_desc.data_type);
+    ASSERT_EQ(output_mapping.tensor.dims[0], 1);
+    ASSERT_EQ(output_mapping.tensor.dims[1], 1);
+    ASSERT_EQ(output_mapping.tensor.dims[2], 4);
+    ASSERT_EQ(output_mapping.tensor.dims[3], 4);
 
     auto input_a_buffer = create_buffer(G_DX12_ENGINE.d3d12_device.Get(), accumulate_tensor_dims(inputs[0].tensor),
         D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
