@@ -85,6 +85,13 @@ protected:
     {
     }
 
+    template<typename KernelT>
+    void disaptch_kernel(KernelT& kernel, std::uint32_t gws[3], std::uint32_t lws[3])
+    {
+        Impl& derived = static_cast<Impl&>(*this);
+        return derived.dispatch_kernel(kernel, gws, lws);
+    }
+
     template<typename ResourceT>
     void disaptch_resource_barrier(std::vector<ResourceT*> rscs_list)
     {
@@ -115,9 +122,7 @@ public:
         return derived.create_kernel(kernel_name, kernel_code, kernel_code_size, build_options, language);
     }
 
-    virtual ~Device() = default;
     inference_engine_device_t get() { return handle_; }
-
 protected:
     Device()
         : handle_(reinterpret_cast<inference_engine_device_t>(this))
@@ -144,12 +149,28 @@ public:
         cbs.fn_gpu_kernel_set_arg_float = &kernel_set_arg_f32;
 
         cbs.fn_gpu_stream_resource_barrier = &disaptch_resource_barrier;
+        cbs.fn_gpu_stream_execute_kernel = &disaptch_kernel;
+
+        /*
+
+    callbacks.fn_gpu_stream_execute_kernel = &dx12_callbacks::gpu_stream_execute_kernel;
+    callbacks.fn_gpu_stream_fill_memory = &dx12_callbacks::gpu_stream_fill_memory;
+    callbacks.fn_gpu_stream_resource_barrier = &dx12_callbacks::gpu_stream_resource_barrier;
+        */
 
         handle_ = inferenceEngineCreateContext(device_.get(), cbs);
 
         if (!handle_)
         {
             throw IEexception("Can't create context.");
+        }
+    }
+
+    ~Context()
+    {
+        if (handle_)
+        {
+            inferenceEngineDestroyContext(handle_);
         }
     }
 
@@ -202,6 +223,13 @@ public:
             rscs[i] = reinterpret_cast<ResourceT*>(resource_list[i]);
         }
         typed_impl->disaptch_resource_barrier(rscs);
+    }
+
+    static void disaptch_kernel(inference_engine_stream_t stream, inference_engine_kernel_t kernel, uint32_t gws[3], uint32_t lws[3])
+    {
+        auto typed_stream = reinterpret_cast<StreamT*>(stream);
+        auto typed_kernel = reinterpret_cast<KernelT*>(kernel);
+        typed_stream->dispatch_kernel(*typed_kernel, gws, lws);
     }
 
     inference_engine_context_handle_t get() { return handle_; }
