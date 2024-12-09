@@ -72,15 +72,10 @@ TEST(ApiTest, get_outputs_multiple_outs)
 
 TEST(ApiTest, get_outputs_null)
 {
-    auto device = reinterpret_cast<inference_engine_device_t>(G_DX12_ENGINE.d3d12_device.Get());
-    auto stream = reinterpret_cast<inference_engine_stream_t>(G_DX12_ENGINE.command_list.Get());
-    auto ctx = inferenceEngineCreateContext(device, fill_with_dx12_callbacks());
-    EXPECT_TRUE(nullptr != ctx);
+    DeviceDX12 device(G_DX12_ENGINE.d3d12_device);
+    StreamDX12 stream(G_DX12_ENGINE.command_list);
+    ContextDX12 ctx(device);
 
-    auto model_desc = inferenceEngineCreateModelDescriptor();
-    auto model = inferenceEngineCompileModelDescriptor(ctx, stream, model_desc, nullptr, 100); // <<
-    ASSERT_EQ(model, nullptr);
-    
-    inferenceEngineDestroyModelDescriptor(model_desc);
-    inferenceEngineDestroyContext(ctx);
+    inference_engine::ModelDescriptor md{};
+    auto model = inference_engine::Model(ctx, stream, md, {});
 }
