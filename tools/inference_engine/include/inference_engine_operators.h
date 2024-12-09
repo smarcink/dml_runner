@@ -52,12 +52,20 @@ typedef struct _inference_engine_activation_desc_t
 
 } inference_engine_activation_desc_t;
 
-typedef struct _inference_engine_elementwise_add_desc_t
+typedef enum _inference_engine_elementwise_type_t
+{
+    INFERENCE_ENGINE_ELEMENTWISE_TYPE_ADD = 0,
+
+    INFERENCE_ENGINE_ELEMENTWISE_TYPE_UNKNOWN = -1000,
+} inference_engine_elementwise_type_t;
+
+typedef struct _inference_engine_elementwise_desc_t
 {
     inference_engine_node_id_t input_a;
     inference_engine_node_id_t input_b;
+    inference_engine_elementwise_type_t type;
     // params..
-} inference_engine_elementwise_add_desc_t;
+} inference_engine_elementwise_desc_t;
 
 typedef struct _inference_engine_convolution_desc_t
 {

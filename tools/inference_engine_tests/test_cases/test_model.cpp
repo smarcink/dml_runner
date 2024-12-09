@@ -368,10 +368,11 @@ TEST(ModelTest, ConvPlusAddFusion)
     ASSERT_NE(activation, INFERENCE_ENGINE_INVALID_NODE_ID);
 
     // elementwise_add
-    inference_engine_elementwise_add_desc_t add_desc_final{};
+    inference_engine_elementwise_desc_t add_desc_final{};
+    add_desc_final.type = inference_engine_elementwise_type_t::INFERENCE_ENGINE_ELEMENTWISE_TYPE_ADD;
     add_desc_final.input_a = port_conv_a;
     add_desc_final.input_b = activation;
-    auto port_add_final = inferenceEngineModelDescriptorAddElementwiseAdd(md, add_desc_final);
+    auto port_add_final = inferenceEngineModelDescriptorAddElementwise(md, add_desc_final);
     ASSERT_NE(port_add_final, INFERENCE_ENGINE_INVALID_NODE_ID);
 
     // activation final

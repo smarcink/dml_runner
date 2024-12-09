@@ -58,7 +58,7 @@ namespace inference_engine
     struct PostOp
     {
         struct ElemWisePosOp {
-            inference_engine_elementwise_add_desc_t desc;
+            inference_engine_elementwise_desc_t desc;
             GpuNode* additional_input{ nullptr };   // for elementwise_add, we have to bring second input if fused with unary operation...
         };
 
@@ -165,7 +165,7 @@ namespace inference_engine
         }
 
         virtual bool fuse_with(const class GpuActivation*) { return false; }     // false if no fusion happened
-        virtual bool fuse_with(const class GpuElementwiseAdd*) { return false; } // false if no fusion happened
+        virtual bool fuse_with(const class GpuElementwise*) { return false; } // false if no fusion happened
 
     protected:
         std::size_t id_ = INFERENCE_ENGINE_INVALID_NODE_ID; // init with invalid id

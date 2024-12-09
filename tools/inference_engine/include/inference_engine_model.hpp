@@ -61,7 +61,14 @@ namespace inference_engine
         {
             return add_node(desc, inferenceEngineModelDescriptorAddActivation);
         }
-
+        NodeID add_elementwise(const inference_engine_elementwise_desc_t& desc)
+        {
+            return add_node(desc, inferenceEngineModelDescriptorAddElementwise);
+        }
+        NodeID add_convolution(const inference_engine_convolution_desc_t& desc)
+        {
+            return add_node(desc, inferenceEngineModelDescriptorAddConvolution);
+        }
     private:
         template<typename TDesc, typename TFunc>
         NodeID add_node(const TDesc& desc, TFunc tfunc)

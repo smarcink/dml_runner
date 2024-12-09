@@ -55,7 +55,7 @@ namespace inference_engine
         return true;
     }
 
-    bool GpuConvolution::fuse_with(const GpuElementwiseAdd* elemwise)
+    bool GpuConvolution::fuse_with(const GpuElementwise* elemwise)
     {
         assert(elemwise);
         std::cout << "convolution fuse with... elementwise_add\n";

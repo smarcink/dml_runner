@@ -56,12 +56,12 @@ INFERENCE_ENGINE_API inference_engine_node_id_t inferenceEngineModelDescriptorAd
         });
 }
 
-INFERENCE_ENGINE_API inference_engine_node_id_t inferenceEngineModelDescriptorAddElementwiseAdd(inference_engine_model_descriptor_t model_desc, inference_engine_elementwise_add_desc_t desc)
+INFERENCE_ENGINE_API inference_engine_node_id_t inferenceEngineModelDescriptorAddElementwise(inference_engine_model_descriptor_t model_desc, inference_engine_elementwise_desc_t desc)
 {
     return handle_exceptions([&]() {
-        std::cout << "Created ElementwiseAdd" << std::endl;
+        std::cout << "Created Elementwise" << std::endl;
         auto typed_md = reinterpret_cast<inference_engine::ModelDescriptor*>(model_desc);
-        return typed_md->add_node<inference_engine::ElementwiseAdd>(desc);
+        return typed_md->add_node<inference_engine::Elementwise>(desc);
         });
 }
 

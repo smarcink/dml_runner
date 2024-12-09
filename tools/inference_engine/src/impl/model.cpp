@@ -255,7 +255,7 @@ public:
                         mark_node_for_deletion(pn);
                 }
             }
-            else if (auto elem_add = dynamic_cast<GpuElementwiseAdd*>(pn))
+            else if (auto elem_add = dynamic_cast<GpuElementwise*>(pn))
             {
                 std::cout << "testing elementwise_add node for fusion...\n";
                 if (inputs.size() == 2) 
