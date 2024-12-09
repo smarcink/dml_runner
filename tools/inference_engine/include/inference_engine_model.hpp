@@ -159,6 +159,16 @@ namespace inference_engine
             }
         }
 
+        template<typename StreamT>
+        void execute(StreamT& stream)
+        {
+            auto result = inferenceEngineExecuteModel(handle_, stream.get());
+            if (!result)
+            {
+                throw IEexception("Could not execute model successfully!");
+            }
+        }
+
     private:
         Model(inference_engine_model_t handle)
             : handle_(handle)

@@ -18,7 +18,7 @@ TEST(ModelTest, Activation_0)
     auto out_node = md.add_activation(inference_engine_activation_desc_t{ port_id, INFERENCE_ENGINE_ACTIVATION_TYPE_RELU });
 
     inference_engine::TensorMapping inputs{};
-    inputs[port_id] = inference_engine::Tensor(INFERENCE_ENGINE_DATA_TYPE_FP16, { 1, 2, 4, 4 });
+    inputs[port_id] = inference_engine::Tensor(INFERENCE_ENGINE_DATA_TYPE_FP32, { 1, 2, 4, 4 });
     const auto& input = inputs[port_id];
 
     auto model = inference_engine::Model(ctx, stream, md, inputs);
@@ -32,18 +32,8 @@ TEST(ModelTest, Activation_0)
     std::uniform_real_distribution<float> uniform_distribution(-5.0f, 5.0f);
     randomize_linear_container_float(random_generator, uniform_distribution, input_data_host);
 
-
     auto input_buffer = device.allocate_resource(tensor_size_bytes);
-    //auto upload_buffer = create_buffer(G_DX12_ENGINE.d3d12_device.Get(), tensor_size_bytes, D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_COPY_SOURCE);
-    //std::byte* upload_mapped_ptr = nullptr;
-    //upload_buffer->Map(0, nullptr, reinterpret_cast<void**>(&upload_mapped_ptr));
-    //std::size_t memcopy_offset = 0;
-    //std::memcpy(upload_mapped_ptr, input_data_host.data(), tensor_size_bytes);
-    //upload_buffer->Unmap(0, nullptr);
-    //G_DX12_ENGINE.command_list->CopyResource(input_buffer.Get(), upload_buffer.Get());
-    //dispatch_resource_barrier(G_DX12_ENGINE.command_list.Get(), { CD3DX12_RESOURCE_BARRIER::Transition(input_buffer.Get(),
-    //        D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_UNORDERED_ACCESS) });
-    //G_DX12_ENGINE.wait_for_execution();
+    device.upload_data_to_resource<float>(input_buffer, input_data_host);
 
     auto output_buffer = device.allocate_resource(tensor_size_bytes);
     // set resources
@@ -54,110 +44,21 @@ TEST(ModelTest, Activation_0)
     auto output = model.get_outputs()[out_node];
     ASSERT_EQ(output.data_type, input.data_type);
     ASSERT_EQ(output.dims, input.dims);
-    //inference_engine_tensor_mapping_t output_mapping{};
-    //ASSERT_EQ(inferenceEngineModelGetOutputs(model, &output_mapping, nullptr), true);
-    //ASSERT_EQ(output_mapping.id, out_node);
-    //ASSERT_EQ(output_mapping.tensor.data_type, input.tensor.data_type);
-    //for (auto i = 0; i < 4; i++)
-    //{
-    //    ASSERT_EQ(output_mapping.tensor.dims[i], input.tensor.dims[i]);
-    //}
 
-    //// finally execute model
-    //ASSERT_EQ(inferenceEngineExecuteModel(model, stream), true);
+    // finally execute model
+    model.execute(stream);
 
+    // readback data and wait for execution
+    const auto data_out = device.readback_data_from_resource<float>(output_buffer);
+
+    // validate conformance
+    for (int i = 0; i < tensor_elements_count; i++)
     {
-        auto device = reinterpret_cast<inference_engine_device_t>(G_DX12_ENGINE.d3d12_device.Get());
-        auto stream = reinterpret_cast<inference_engine_stream_t>(G_DX12_ENGINE.command_list.Get());
-        auto ctx = inferenceEngineCreateContext(device, fill_with_dx12_callbacks());
-
-        auto md = inferenceEngineCreateModelDescriptor();
-
-        inference_engine_port_desc_t input_desc{};
-        input_desc.data_type = inference_engine_data_type_t::INFERENCE_ENGINE_DATA_TYPE_FP32;
-        auto port_id = inferenceEngineModelDescriptorAddPort(md, input_desc);
-        ASSERT_NE(port_id, INFERENCE_ENGINE_INVALID_NODE_ID);
-
-        inference_engine_activation_desc_t activation_desc{};
-        activation_desc.type = inference_engine_activation_type_t::INFERENCE_ENGINE_ACTIVATION_TYPE_RELU;
-        activation_desc.input = port_id;
-        auto out_node = inferenceEngineModelDescriptorAddActivation(md, activation_desc);
-        ASSERT_NE(out_node, INFERENCE_ENGINE_INVALID_NODE_ID);
-
-        inference_engine_tensor_mapping_t input{};
-        input.id = port_id;
-        input.tensor.data_type = input_desc.data_type;
-        set_array(input.tensor.dims, 1, 2, 4, 4);
-        auto model = inferenceEngineCompileModelDescriptor(ctx, stream, md, &input, 1);
-        ASSERT_NE(model, nullptr);
-
-        const auto tensor_elements_count = accumulate_tensor_dims(input.tensor);
-        const auto tensor_size_bytes = tensor_elements_count * sizeof(float);
-        std::vector<float> input_data_host(tensor_elements_count, 0.0f);
-
-        // randomize data
-        std::mt19937 random_generator(42); // static, create it once!
-        std::uniform_real_distribution<float> uniform_distribution(-5.0f, 5.0f);
-        randomize_linear_container_float(random_generator, uniform_distribution, input_data_host);
-
-        auto input_buffer = create_buffer(G_DX12_ENGINE.d3d12_device.Get(), tensor_size_bytes, D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
-        // copy data to GPU
-        auto upload_buffer = create_buffer(G_DX12_ENGINE.d3d12_device.Get(), tensor_size_bytes, D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_COPY_SOURCE);
-        std::byte* upload_mapped_ptr = nullptr;
-        upload_buffer->Map(0, nullptr, reinterpret_cast<void**>(&upload_mapped_ptr));
-        std::size_t memcopy_offset = 0;
-        std::memcpy(upload_mapped_ptr, input_data_host.data(), tensor_size_bytes);
-        upload_buffer->Unmap(0, nullptr);
-        G_DX12_ENGINE.command_list->CopyResource(input_buffer.Get(), upload_buffer.Get());
-        dispatch_resource_barrier(G_DX12_ENGINE.command_list.Get(), { CD3DX12_RESOURCE_BARRIER::Transition(input_buffer.Get(),
-                D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_UNORDERED_ACCESS) });
-        G_DX12_ENGINE.wait_for_execution();
-        auto output_buffer = create_buffer(G_DX12_ENGINE.d3d12_device.Get(), tensor_size_bytes, D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
-
-        // set resources
-        ASSERT_EQ(inferenceEngineModelSetResource(model, port_id, reinterpret_cast<inference_engine_resource_t>(input_buffer.Get())), true);
-        ASSERT_EQ(inferenceEngineModelSetResource(model, out_node, reinterpret_cast<inference_engine_resource_t>(output_buffer.Get())), true);
-
-        // ask model for output size (we know that there has to be 1 output in this test case)
-        inference_engine_tensor_mapping_t output_mapping{};
-        ASSERT_EQ(inferenceEngineModelGetOutputs(model, &output_mapping, nullptr), true);
-        ASSERT_EQ(output_mapping.id, out_node);
-        ASSERT_EQ(output_mapping.tensor.data_type, input.tensor.data_type);
-        for (auto i = 0; i < 4; i++)
-        {
-            ASSERT_EQ(output_mapping.tensor.dims[i], input.tensor.dims[i]);
-        }
-
-        // finally execute model
-        ASSERT_EQ(inferenceEngineExecuteModel(model, stream), true);
-
-        // readback data and wait for execution
-        auto readback_buffer = create_buffer(G_DX12_ENGINE.d3d12_device.Get(), tensor_size_bytes, D3D12_HEAP_TYPE_READBACK, D3D12_RESOURCE_STATE_COPY_DEST);
-        dispatch_resource_barrier(G_DX12_ENGINE.command_list.Get(), { CD3DX12_RESOURCE_BARRIER::Transition(output_buffer.Get(),
-            D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE) });
-        G_DX12_ENGINE.command_list->CopyResource(readback_buffer.Get(), output_buffer.Get());
-        G_DX12_ENGINE.wait_for_execution();
-
-        // copy output data to host
-        std::vector<float> data_out(tensor_elements_count);
-        std::byte* readback_mapped_ptr = nullptr;
-        readback_buffer->Map(0, nullptr, reinterpret_cast<void**>(&readback_mapped_ptr));
-        std::memcpy(data_out.data(), readback_mapped_ptr, tensor_size_bytes);
-        readback_buffer->Unmap(0, nullptr);
-
-        // validate conformance
-        for (int i = 0; i < tensor_elements_count; i++)
-        {
-            // relu activation reference
-            const auto reference = std::max(input_data_host[i], 0.0f);
-            const auto& real_data = data_out[i];
-            // for now switch it off so we have the test passing and result is not polluted with fake fail
-            ASSERT_FLOAT_EQ(real_data, reference) << "idx: " << i;
-        }
-
-        inferenceEngineDestroyModelDescriptor(md);
-        inferenceEngineDestroyModel(model);
-        inferenceEngineDestroyContext(ctx);
+        // relu activation reference
+        const auto reference = std::max(input_data_host[i], 0.0f);
+        const auto& real_data = data_out[i];
+        // for now switch it off so we have the test passing and result is not polluted with fake fail
+        ASSERT_FLOAT_EQ(real_data, reference) << "idx: " << i;
     }
 }
 

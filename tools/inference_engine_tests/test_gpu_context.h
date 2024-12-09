@@ -8,6 +8,7 @@
 #include <vector>
 #include <unordered_map>
 #include <variant>
+#include <span>
 
 #include <dxgi1_4.h>
 #include <d3d12.h>
@@ -461,9 +462,9 @@ public:
     {
     }
 
-    CD3DX12_RESOURCE_BARRIER get_uav_barrier() const
+    ID3D12Resource* get_dx12_rsc()
     {
-        return CD3DX12_RESOURCE_BARRIER::UAV(rsc_.Get());
+        return rsc_.Get();
     }
 
 private:
@@ -622,7 +623,7 @@ public:
         barriers.reserve(rscs_list.size());
         for (auto& rsc : rscs_list)
         {
-            barriers.push_back(rsc->get_uav_barrier());
+            barriers.push_back(CD3DX12_RESOURCE_BARRIER::UAV(rsc->get_dx12_rsc()));
         }
         cmd_list_->ResourceBarrier(static_cast<std::uint32_t>(barriers.size()), barriers.data());
     }
@@ -654,6 +655,44 @@ public:
     {
         return ResourceDX12(create_buffer(device_.Get(), size, D3D12_HEAP_TYPE_DEFAULT,
             D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS));
+    }
+
+    template<typename T>
+    void upload_data_to_resource(ResourceDX12& dst, std::span<T> data)
+    {
+        auto upload_buffer = create_buffer(G_DX12_ENGINE.d3d12_device.Get(), data.size_bytes(), D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_COPY_SOURCE);
+        std::byte* upload_mapped_ptr = nullptr;
+        upload_buffer->Map(0, nullptr, reinterpret_cast<void**>(&upload_mapped_ptr));
+        std::size_t memcopy_offset = 0;
+        std::memcpy(upload_mapped_ptr, data.data(), data.size_bytes());
+        upload_buffer->Unmap(0, nullptr);
+
+        dispatch_resource_barrier(G_DX12_ENGINE.command_list.Get(), { CD3DX12_RESOURCE_BARRIER::Transition(dst.get_dx12_rsc(),
+        D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COPY_DEST) });
+        G_DX12_ENGINE.command_list->CopyResource(dst.get_dx12_rsc(), upload_buffer.Get());
+        dispatch_resource_barrier(G_DX12_ENGINE.command_list.Get(), { CD3DX12_RESOURCE_BARRIER::Transition(dst.get_dx12_rsc(),
+                D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_UNORDERED_ACCESS) });
+        G_DX12_ENGINE.wait_for_execution();
+    }
+
+    template<typename T>
+    std::vector<T> readback_data_from_resource(ResourceDX12& src)
+    {
+        const auto bytes_size = src.get_dx12_rsc()->GetDesc().Width;
+        std::vector<T> data_out(bytes_size / sizeof(T));
+
+        auto readback_buffer = create_buffer(G_DX12_ENGINE.d3d12_device.Get(), bytes_size, D3D12_HEAP_TYPE_READBACK, D3D12_RESOURCE_STATE_COPY_DEST);
+        dispatch_resource_barrier(G_DX12_ENGINE.command_list.Get(), { CD3DX12_RESOURCE_BARRIER::Transition(src.get_dx12_rsc(),
+            D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE) });
+        G_DX12_ENGINE.command_list->CopyResource(readback_buffer.Get(), src.get_dx12_rsc());
+        G_DX12_ENGINE.wait_for_execution();
+
+        // copy output data to host
+        std::byte* readback_mapped_ptr = nullptr;
+        readback_buffer->Map(0, nullptr, reinterpret_cast<void**>(&readback_mapped_ptr));
+        std::memcpy(data_out.data(), readback_mapped_ptr, bytes_size);
+        readback_buffer->Unmap(0, nullptr);
+        return data_out;
     }
 
 private:
