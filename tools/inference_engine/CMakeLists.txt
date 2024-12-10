@@ -34,8 +34,8 @@ set(TARGET_SOURCES
 	${SOURCES_DIR}/impl/nodes/matmul.cpp
 	${SOURCES_DIR}/impl/nodes/port.h
 	${SOURCES_DIR}/impl/nodes/port.cpp
-	${SOURCES_DIR}/impl/nodes/elementwise_add.h
-	${SOURCES_DIR}/impl/nodes/elementwise_add.cpp
+	${SOURCES_DIR}/impl/nodes/elementwise.h
+	${SOURCES_DIR}/impl/nodes/elementwise.cpp
 	${SOURCES_DIR}/impl/nodes/convolution.h
 	${SOURCES_DIR}/impl/nodes/convolution.cpp
 )

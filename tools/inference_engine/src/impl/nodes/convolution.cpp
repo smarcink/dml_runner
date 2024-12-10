@@ -1,6 +1,6 @@
 #include "convolution.h"
 #include "activation.h"
-#include "elementwise_add.h"
+#include "elementwise.h"
 #include <format>
 
 namespace inference_engine

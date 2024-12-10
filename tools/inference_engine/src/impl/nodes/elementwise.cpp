@@ -1,4 +1,4 @@
-#include "elementwise_add.h"
+#include "elementwise.h"
 #include <format>
 
 void inference_engine::GpuElementwise::compile(GpuContext& ctx)

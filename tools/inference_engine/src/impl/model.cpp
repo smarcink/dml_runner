@@ -7,7 +7,7 @@
 #include "nodes/matmul.h"
 #include "nodes/activation.h"
 #include "nodes/convolution.h"
-#include "nodes/elementwise_add.h"
+#include "nodes/elementwise.h"
 #include "gpu_visitor.h"
 
 namespace inference_engine

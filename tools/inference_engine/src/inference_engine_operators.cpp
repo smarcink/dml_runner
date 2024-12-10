@@ -5,7 +5,7 @@
 #include "impl/nodes/port.h"
 #include "impl/nodes/activation.h"
 #include "impl/nodes/matmul.h"
-#include "impl/nodes/elementwise_add.h"
+#include "impl/nodes/elementwise.h"
 #include "impl/nodes/convolution.h"
 
 #include <iostream>
