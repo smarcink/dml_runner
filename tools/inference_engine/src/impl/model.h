@@ -34,6 +34,11 @@ public:
         const auto& inputs = nodes_.back()->inputs();
         for (const auto& in : inputs)
         {
+            // Dont allow for loops/cycles.
+            if (in == id)
+            {
+                throw std::runtime_error("Nodes input can't point to itself.");
+            }
             // We know that inputs have to be already added to graph, so their ID has to be lower.
             if (in >= nodes_.size())
             {
