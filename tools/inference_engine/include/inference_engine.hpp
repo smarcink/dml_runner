@@ -72,7 +72,7 @@ protected:
     void set_arg(std::uint32_t idx, T u32)
     {
         Impl& derived = static_cast<Impl&>(*this);
-        return derived.set_arg(idx, T);
+        return derived.set_arg(idx, u32);
     }
 
 private:
