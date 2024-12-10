@@ -3,10 +3,10 @@
 
 namespace inference_engine
 {
-    class GpuElementwiseAdd : public GpuNode
+    class GpuElementwise : public GpuNode
     {
     public:
-        GpuElementwiseAdd(std::size_t user_id, Tensor output_tensor, const std::vector<GpuNode*>& inputs, const inference_engine_elementwise_add_desc_t& desc, const std::string& name)
+        GpuElementwise(std::size_t user_id, Tensor output_tensor, const std::vector<GpuNode*>& inputs, const inference_engine_elementwise_desc_t& desc, const std::string& name)
             : GpuNode(user_id, output_tensor, inputs, name)
             , desc_(desc)
         {
@@ -23,13 +23,13 @@ namespace inference_engine
         PostOp create_post_op(GpuNode* new_input) const { return { PostOp::ElemWisePosOp{desc_, new_input } }; }
 
     private:
-        inference_engine_elementwise_add_desc_t desc_{};
+        inference_engine_elementwise_desc_t desc_{};
     };
 
-    class ElementwiseAdd : public INode
+    class Elementwise : public INode
     {
     public:
-        ElementwiseAdd(const inference_engine_elementwise_add_desc_t& desc, std::size_t id)
+        Elementwise(const inference_engine_elementwise_desc_t& desc, std::size_t id)
             : INode(id, { desc.input_a, desc.input_b })
             , desc_(desc)
         {
@@ -46,7 +46,7 @@ namespace inference_engine
                 throw std::invalid_argument("tensors don't match!");
             }
 
-            return std::make_unique<GpuElementwiseAdd>(id_, compute_output_tensor(tensor_a, tensor_b), inputs, desc_, name_);
+            return std::make_unique<GpuElementwise>(id_, compute_output_tensor(tensor_a, tensor_b), inputs, desc_, name_);
         }
     private:
         Tensor compute_output_tensor(const Tensor& input_a, const Tensor& input_b)
@@ -62,7 +62,7 @@ namespace inference_engine
             return ret;
         }
     private:
-        inference_engine_elementwise_add_desc_t desc_;
+        inference_engine_elementwise_desc_t desc_;
     };
 
 }  // namespace inference_engine
