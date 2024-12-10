@@ -37,8 +37,8 @@ namespace inference_engine
     class MatMul : public INode
     {
     public:
-        MatMul(const inference_engine_matmul_desc_t& desc, std::size_t id)
-            : INode(id, { desc.input_a, desc.input_b })
+        MatMul(const inference_engine_matmul_desc_t& desc, std::size_t id, std::string_view name)
+            : INode(id, { desc.input_a, desc.input_b }, name)
             , desc_(desc)
         {
         }
