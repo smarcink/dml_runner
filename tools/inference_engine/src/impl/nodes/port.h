@@ -20,7 +20,10 @@ namespace inference_engine
 
         void set_tensor(const Tensor& tensor)
         {
-            assert(tensor.data_type == desc_.data_type);
+            if (desc_.data_type != tensor.data_type)
+            {
+                throw std::runtime_error("Cant set tensor for port. It was created with different data type.");
+            }
             output_tensor_ = tensor;
         }
 
