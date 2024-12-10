@@ -235,12 +235,10 @@ TEST(ModelTest, ConvPlusAddFusion)
     auto input_b = md.add_port(input_desc);
 
     // Conv left
-    auto port_conv_a = md.add_convolution(inference_engine_convolution_desc_t{ input_a });
-    md.set_node_name(port_conv_a, "conv_a");
+    auto port_conv_a = md.add_convolution(inference_engine_convolution_desc_t{ input_a }, "conv_a");
 
     // Conv right
-    auto port_conv_b = md.add_convolution(inference_engine_convolution_desc_t{ input_b });
-    md.set_node_name(port_conv_b, "conv_b");
+    auto port_conv_b = md.add_convolution(inference_engine_convolution_desc_t{ input_b }, "conv_b");
 
     // activation
     auto activation = md.add_activation(inference_engine_activation_desc_t{port_conv_b, INFERENCE_ENGINE_ACTIVATION_TYPE_RELU });
@@ -253,8 +251,7 @@ TEST(ModelTest, ConvPlusAddFusion)
     auto port_add_final = md.add_elementwise(add_desc_final);
 
     // activation final
-    auto final_activation = md.add_activation(inference_engine_activation_desc_t{port_add_final, INFERENCE_ENGINE_ACTIVATION_TYPE_RELU });
-    md.set_node_name(final_activation, "final_activation");
+    auto final_activation = md.add_activation(inference_engine_activation_desc_t{port_add_final, INFERENCE_ENGINE_ACTIVATION_TYPE_RELU }, "final_activation");
 
     // define input mappings
     inference_engine::TensorMapping inputs{};

@@ -49,39 +49,31 @@ namespace inference_engine
 
 
     public:
-        void set_node_name(NodeID id, std::string_view name)
+        NodeID add_port(const inference_engine_port_desc_t& desc, const char* name = "")
         {
-            auto res = inferenceEngineSetNodeName(handle_, id, name.data());
-            if (!res)
-            {
-                throw IEexception("Cant set node name for a node. Probably node does not exist?");
-            }
+            return add_node(desc, inferenceEngineModelDescriptorAddPortNamed, name);
         }
-        NodeID add_port(const inference_engine_port_desc_t& desc)
+        NodeID add_matmul(const inference_engine_matmul_desc_t& desc, const char* name = "")
         {
-            return add_node(desc, inferenceEngineModelDescriptorAddPort);
+            return add_node(desc, inferenceEngineModelDescriptorAddMatMulNamed, name);
         }
-        NodeID add_matmul(const inference_engine_matmul_desc_t& desc)
+        NodeID add_activation(const inference_engine_activation_desc_t& desc, const char* name = "")
         {
-            return add_node(desc, inferenceEngineModelDescriptorAddMatMul);
+            return add_node(desc, inferenceEngineModelDescriptorAddActivationNamed, name);
         }
-        NodeID add_activation(const inference_engine_activation_desc_t& desc)
+        NodeID add_elementwise(const inference_engine_elementwise_desc_t& desc, const char* name = "")
         {
-            return add_node(desc, inferenceEngineModelDescriptorAddActivation);
+            return add_node(desc, inferenceEngineModelDescriptorAddElementwiseNamed, name);
         }
-        NodeID add_elementwise(const inference_engine_elementwise_desc_t& desc)
+        NodeID add_convolution(const inference_engine_convolution_desc_t& desc, const char* name = "")
         {
-            return add_node(desc, inferenceEngineModelDescriptorAddElementwise);
-        }
-        NodeID add_convolution(const inference_engine_convolution_desc_t& desc)
-        {
-            return add_node(desc, inferenceEngineModelDescriptorAddConvolution);
+            return add_node(desc, inferenceEngineModelDescriptorAddConvolutionNamed, name);
         }
     private:
         template<typename TDesc, typename TFunc>
-        NodeID add_node(const TDesc& desc, TFunc tfunc)
+        NodeID add_node(const TDesc& desc, TFunc tfunc, const char* name)
         {
-            const auto ret = tfunc(handle_, desc);
+            const auto ret = tfunc(handle_, desc, name);
             if (ret == INVALID_NODE_ID)
             {
                 throw IEexception("Could not add node to the model descriptor");

@@ -33,8 +33,8 @@ namespace inference_engine
     class Port : public INode
     {
     public:
-        Port(const inference_engine_port_desc_t& desc, std::size_t id)
-            : INode(id, {/*no inputs*/ })
+        Port(const inference_engine_port_desc_t& desc, std::size_t id, std::string_view name)
+            : INode(id, {/*no inputs*/ }, name)
             , desc_(desc)
         {
         }

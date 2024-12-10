@@ -89,12 +89,3 @@ TEST(ApiTest, invalid_node_connection)
     // Negative test, we expect it to throw.
     ASSERT_THROW(md.add_activation(activation_desc), inference_engine::IEexception);
 }
-
-TEST(ApiTest, set_model_name_for_non_exisiting_node)
-{
-    inference_engine::ModelDescriptor md{};
-    const auto node = md.add_port(inference_engine_port_desc_t{ INFERENCE_ENGINE_DATA_TYPE_FP32 });
-    const auto invalid_node_id = node + 1331;
-    // Negative test, we expect it to throw.
-    ASSERT_THROW(md.set_node_name(invalid_node_id, "port"), inference_engine::IEexception);
-}
