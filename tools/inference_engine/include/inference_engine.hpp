@@ -34,108 +34,82 @@ private:
 using TensorMapping = std::unordered_map<NodeID, Tensor>;
 
 
-template<typename Impl>
-class Resource
+
+template <typename TImpl, typename THandle>
+struct crtp_handle
 {
-public:
-    inference_engine_resource_t get() { return handle_; }
+    TImpl& underlying() { return static_cast<TImpl&>(*this); }
+    TImpl const& underlying() const { return static_cast<TImpl const&>(*this); }
 
-protected:
-    Resource()
-        : handle_(reinterpret_cast<inference_engine_resource_t>(this))
-    {
-    }
+    const THandle get() const { return reinterpret_cast<const THandle>(&underlying()); }
+    THandle get() { return reinterpret_cast<THandle>(&underlying()); }
 
-private:
-    inference_engine_resource_t handle_;
+    static TImpl* from_handle(THandle& handle) { return reinterpret_cast<TImpl*>(handle); }
 };
 
 template<typename Impl>
-class Kernel
+class Resource : public crtp_handle<Impl, inference_engine_resource_t>
 {
-public:
-    inference_engine_kernel_t get() { return handle_; }
-
 protected:
-    Kernel()
-        : handle_(reinterpret_cast<inference_engine_kernel_t>(this))
-    {
-    }
+    Resource() = default;
+};
+
+template<typename Impl>
+class Kernel : public crtp_handle<Impl, inference_engine_kernel_t>
+{
+protected:
+    Kernel() = default;
 
     template<typename ResourceT>
     void set_arg(std::uint32_t idx, ResourceT* rsc, std::size_t offset = 0)
     {
-        Impl& derived = static_cast<Impl&>(*this);
-        return derived.set_arg(idx, rsc, offset);
+        return this->underlying().set_arg(idx, rsc, offset);
     }
     template<typename T>
     void set_arg(std::uint32_t idx, T u32)
     {
-        Impl& derived = static_cast<Impl&>(*this);
-        return derived.set_arg(idx, u32);
+        return this->underlying().set_arg(idx, u32);
     }
-
-private:
-    inference_engine_kernel_t handle_;
 };
 
 template<typename Impl>
-class Stream
+class Stream : public crtp_handle<Impl, inference_engine_stream_t>
 {
-public:
-    inference_engine_stream_t get() { return handle_; }
-
 protected:
-    Stream()
-        : handle_(reinterpret_cast<inference_engine_stream_t>(this))
-    {
-    }
+    Stream() = default;
 
     template<typename KernelT>
     void disaptch_kernel(KernelT& kernel, std::uint32_t gws[3], std::uint32_t lws[3])
     {
-        Impl& derived = static_cast<Impl&>(*this);
-        return derived.dispatch_kernel(kernel, gws, lws);
+        return this->underlying().dispatch_kernel(kernel, gws, lws);
     }
 
     template<typename ResourceT>
     void disaptch_resource_barrier(std::vector<ResourceT*> rscs_list)
     {
-        Impl& derived = static_cast<Impl&>(*this);
-        return derived.disaptch_resource_barrier(rscs_list);
+        return this->underlying().disaptch_resource_barrier(rscs_list);
     }
-
-private:
-    inference_engine_stream_t handle_;
 };
 
 
 template<typename Impl>
-class Device
+class Device : public crtp_handle<Impl, inference_engine_device_t>
 {
 public:
     template<typename ResourceT>
     ResourceT allocate_resource(std::size_t size)
     {
-        Impl& derived = static_cast<Impl&>(*this);
-        return derived.allocate_resource(size);
+        return this->underlying().allocate_resource(size);
     }
 
     template<typename KernelT>
     KernelT create_kernel(const char* kernel_name, const void* kernel_code, size_t kernel_code_size, const char* build_options, inference_engine_kernel_language_t language)
     {
-        Impl& derived = static_cast<Impl&>(*this);
-        return derived.create_kernel(kernel_name, kernel_code, kernel_code_size, build_options, language);
+        return this->underlying().create_kernel(kernel_name, kernel_code, kernel_code_size, build_options, language);
     }
 
-    inference_engine_device_t get() { return handle_; }
 protected:
-    Device()
-        : handle_(reinterpret_cast<inference_engine_device_t>(this))
-    {
-    }
-protected:
-    inference_engine_device_t handle_ = nullptr;
+    Device() = default;
 };
 
 template<typename DeviceT, typename StreamT, typename ResourceT, typename KernelT>
@@ -175,59 +149,59 @@ public:
 
     static inference_engine_kernel_t create_kernel(inference_engine_device_t handle, const char* kernel_name, const void* kernel_code, size_t kernel_code_size, const char* build_options, inference_engine_kernel_language_t language)
     {
-        auto typed_impl = reinterpret_cast<DeviceT*>(handle);
+        auto typed_impl = DeviceT::from_handle(handle);
         auto typed_kernel = new KernelT(typed_impl->create_kernel(kernel_name, kernel_code, kernel_code_size,
             build_options, language));
-        return reinterpret_cast<inference_engine_kernel_t>(typed_kernel);
+        return typed_kernel->get();
     }
 
     static void destroy_kernel(inference_engine_kernel_t kernel)
     {
-        auto typed_kernel = reinterpret_cast<KernelT*>(kernel);
+        auto typed_kernel = KernelT::from_handle(kernel);
         delete typed_kernel;
     }
 
     static void kernel_set_arg_resource(inference_engine_kernel_t kernel, uint32_t index, inference_engine_resource_t resource, size_t offset)
     {
-        auto typed_kernel = reinterpret_cast<KernelT*>(kernel);
-        auto typed_rsc = reinterpret_cast<ResourceT*>(resource);
+        auto typed_kernel = KernelT::from_handle(kernel);
+        auto typed_rsc = ResourceT::from_handle(resource);
         typed_kernel->set_arg(index, typed_rsc, offset);
     }
 
     static void kernel_set_arg_u32(inference_engine_kernel_t kernel, uint32_t index, uint32_t u32)
     {
-        auto typed_kernel = reinterpret_cast<KernelT*>(kernel);
+        auto typed_kernel = KernelT::from_handle(kernel);
         typed_kernel->set_arg(index, u32);
     }
 
     static void kernel_set_arg_f32(inference_engine_kernel_t kernel, uint32_t index, float f32)
     {
-        auto typed_kernel = reinterpret_cast<KernelT*>(kernel);
+        auto typed_kernel = KernelT::from_handle(kernel);
         typed_kernel->set_arg(index, f32);
     }
 
     static inference_engine_resource_t allocate_resource(inference_engine_device_t handle, std::size_t size)
     {
-        auto typed_impl = reinterpret_cast<DeviceT*>(handle);
+        auto typed_impl = DeviceT::from_handle(handle);
         auto typed_resource = new ResourceT(typed_impl->allocate_resource(size));
-        return reinterpret_cast<inference_engine_resource_t>(typed_resource);
+        return typed_resource->get();
     }
 
-    static void disaptch_resource_barrier(inference_engine_stream_t handle, inference_engine_resource_t* resource_list, std::size_t resource_count)
+    static void disaptch_resource_barrier(inference_engine_stream_t stream, inference_engine_resource_t* resource_list, std::size_t resource_count)
     {
-        auto typed_impl = reinterpret_cast<StreamT*>(handle);
+        auto typed_stream = StreamT::from_handle(stream);
         std::vector<ResourceT*> rscs(resource_count);
         for (auto i = 0; i < resource_count; i++)
         {
-            rscs[i] = reinterpret_cast<ResourceT*>(resource_list[i]);
+            rscs[i] = ResourceT::from_handle(resource_list[i]);
         }
-        typed_impl->disaptch_resource_barrier(rscs);
+        typed_stream->disaptch_resource_barrier(rscs);
     }
 
     static void disaptch_kernel(inference_engine_stream_t stream, inference_engine_kernel_t kernel, uint32_t gws[3], uint32_t lws[3])
     {
-        auto typed_stream = reinterpret_cast<StreamT*>(stream);
-        auto typed_kernel = reinterpret_cast<KernelT*>(kernel);
+        auto typed_stream = StreamT::from_handle(stream);
+        auto typed_kernel = KernelT::from_handle(kernel);
         typed_stream->dispatch_kernel(*typed_kernel, gws, lws);
     }
 

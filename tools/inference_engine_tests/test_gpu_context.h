@@ -243,6 +243,7 @@ inline Dx12Engine G_DX12_ENGINE{};
 class ResourceDX12 : public inference_engine::Resource<ResourceDX12>
 {
 public:
+    ResourceDX12() = default;
     ResourceDX12(ComPtr<ID3D12Resource> resource)
         : rsc_(resource)
     {
@@ -250,11 +251,12 @@ public:
 
     ID3D12Resource* get_dx12_rsc()
     {
+        assert(rsc_);
         return rsc_.Get();
     }
 
 private:
-    ComPtr<ID3D12Resource> rsc_;
+    ComPtr<ID3D12Resource> rsc_ = nullptr;
 };
 
 
@@ -295,7 +297,7 @@ public:
         }
     }
 
-    ID3D12MetaCommand* get() { return mc_.Get(); }
+    ID3D12MetaCommand* get_mc() { return mc_.Get(); }
 
     void set_arg(std::uint32_t idx, ResourceDX12* rsc, std::size_t offset = 0)
     {
@@ -426,6 +428,7 @@ private:
 class DeviceDX12 : public inference_engine::Device<DeviceDX12>
 {
 public:
+
     DeviceDX12(ComPtr<ID3D12Device> device)
         : device_(device)
     {}
@@ -442,7 +445,7 @@ public:
     }
 
     template<typename T>
-    void upload_data_to_resource(ResourceDX12& dst, std::span<T> data)
+    void upload_data_to_resource(ResourceDX12& dst, std::span<const T> data)
     {
         auto upload_buffer = create_buffer(G_DX12_ENGINE.d3d12_device.Get(), data.size_bytes(), D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_COPY_SOURCE);
         std::byte* upload_mapped_ptr = nullptr;

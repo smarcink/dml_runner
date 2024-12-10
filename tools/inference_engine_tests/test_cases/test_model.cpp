@@ -2,164 +2,420 @@
 #include "inference_engine.hpp"
 #include "inference_engine_model.hpp"
 #include "utils.h"
+#include <tuple>
 
 #include <numeric>
 #include <vector>
 #include <array>
+#include <format>
 
-TEST(ModelTest, Activation_0)
+#include <oneapi/dnnl/dnnl_graph.hpp>
+#include <oneapi/dnnl/dnnl.hpp>
+
+inline dnnl::graph::logical_tensor::data_type to_onednn_data_type(inference_engine_data_type_t dt)
 {
-    DeviceDX12 device(G_DX12_ENGINE.d3d12_device);
-    StreamDX12 stream(G_DX12_ENGINE.command_list);
-    ContextDX12 ctx(device);
+    dnnl::graph::logical_tensor::data_type data_type = dnnl::graph::logical_tensor::data_type::undef;
+    switch (dt)
+    {
+    case inference_engine_data_type_t::INFERENCE_ENGINE_DATA_TYPE_FP32:
+    {
+        data_type = dnnl::graph::logical_tensor::data_type::f32;
+        break;
+    }
+    case inference_engine_data_type_t::INFERENCE_ENGINE_DATA_TYPE_FP16:
+    {
+        data_type = dnnl::graph::logical_tensor::data_type::f16;
+        break;
+    }
+    default:
+        assert(!"add more data types support to to_onednn_logical_tensor() function");
+    }
+    return data_type;
+}
 
-    inference_engine::ModelDescriptor md{};
-    auto port_id = md.add_port(inference_engine_port_desc_t{ INFERENCE_ENGINE_DATA_TYPE_FP32 });
-    auto out_node = md.add_activation(inference_engine_activation_desc_t{ port_id, INFERENCE_ENGINE_ACTIVATION_TYPE_RELU });
+inline dnnl::graph::logical_tensor to_onednn_logical_tensor(std::size_t onednn_logical_tensor_id, const inference_engine::Tensor& tensor)
+{
+    dnnl::graph::logical_tensor::dims dims{};
+    for (const auto& d : tensor.dims)
+    {
+        dims.push_back(static_cast<dnnl::graph::logical_tensor::dim>(d));
+    }
 
-    inference_engine::TensorMapping inputs{};
-    inputs[port_id] = inference_engine::Tensor(INFERENCE_ENGINE_DATA_TYPE_FP32, { 1, 2, 4, 4 });
-    const auto& input = inputs[port_id];
+    return dnnl::graph::logical_tensor(onednn_logical_tensor_id, to_onednn_data_type(tensor.data_type), dims, dnnl::graph::logical_tensor::layout_type::strided);
+}
 
-    auto model = inference_engine::Model(ctx, stream, md, inputs);
+inline dnnl::graph::tensor onednn_get_or_allocate_graph_mem(const dnnl::graph::logical_tensor& lt, std::unordered_map<inference_engine::NodeID, std::vector<std::uint8_t>>& data_buffer, const dnnl::engine& eng)
+{
+    const auto id = lt.get_id();
+    const auto mem_size = lt.get_mem_size();
+    if (data_buffer.find(id) == std::end(data_buffer))
+    {
+        data_buffer[id] = std::vector<std::uint8_t>(mem_size);
+    }
+    return dnnl::graph::tensor{ lt, eng, data_buffer[id].data() };
+}
 
-    const auto tensor_elements_count = accumulate_tensor_dims(input);
-    const auto tensor_size_bytes = tensor_elements_count * sizeof(float);
-    std::vector<float> input_data_host(tensor_elements_count, 0.0f);
+class Onednn
+{
+public:
+    Onednn()
+        : engine_(dnnl::engine::kind::cpu, 0)
+        , graph_(dnnl::engine::kind::cpu)
+    {
 
-    // randomize data
-    std::mt19937 random_generator(42); // static, create it once!
-    std::uniform_real_distribution<float> uniform_distribution(-5.0f, 5.0f);
-    randomize_linear_container_float(random_generator, uniform_distribution, input_data_host);
+    }
 
-    auto input_buffer = device.allocate_resource(tensor_size_bytes);
-    device.upload_data_to_resource<float>(input_buffer, input_data_host);
+    std::unordered_map<inference_engine::NodeID, std::vector<std::uint8_t>> get_results(const std::unordered_map<inference_engine::NodeID, std::vector<std::uint8_t>>& input_host_data)
+    {
+        dnnl::stream stream(engine_);
 
-    auto output_buffer = device.allocate_resource(tensor_size_bytes);
-    // set resources
-    model.set_resource(port_id, input_buffer);
-    model.set_resource(out_node, output_buffer);
-    
-    // ask model for output size (we know that there has to be 1 output in this test case)
-    auto output = model.get_outputs()[out_node];
-    ASSERT_EQ(output.data_type, input.data_type);
-    ASSERT_EQ(output.dims, input.dims);
+        graph_.finalize();
+        auto partitions = graph_.get_partitions();
 
-    // finally execute model
-    model.execute(stream);
+        // copy input host data, this will be extended with output and intermidate data
+        std::unordered_map<inference_engine::NodeID, std::vector<std::uint8_t>> host_data = input_host_data;
 
-    // readback data and wait for execution
-    const auto data_out = device.readback_data_from_resource<float>(output_buffer);
+        std::vector<dnnl::graph::compiled_partition> cps;
+        cps.reserve(partitions.size());
+        for (auto& p : partitions)
+        {
+            std::vector<dnnl::graph::logical_tensor> onednn_inputs = p.get_input_ports();
+            std::vector<dnnl::graph::logical_tensor> onednn_outputs = p.get_output_ports();
+
+            // Update input logical tensors with concrete shape and layout
+            for (auto& input : onednn_inputs) 
+            {
+                const auto id = input.get_id();
+                // If the tensor is an output of another partition, use the cached logical tensor
+                if (id_to_queried_logical_tensors_.find(id) != id_to_queried_logical_tensors_.end())
+                {
+                    input = id_to_queried_logical_tensors_[id];
+                }
+                else
+                {
+                    // ToDo:
+                    //input = onednn_input;
+                }
+            }
+
+            // Update output logical tensors with concrete shape and layout
+            for (auto& output : onednn_outputs)
+            {
+                const auto id = output.get_id();
+                output = dnnl::graph::logical_tensor{ id, output.get_data_type(), DNNL_GRAPH_UNKNOWN_NDIMS, dnnl::graph::logical_tensor::layout_type::strided };
+            }
+
+            // compile partition
+            cps.push_back(p.compile(onednn_inputs, onednn_outputs, engine_));
+
+            // Update output logical tensors with queried one
+            for (auto& output : onednn_outputs) 
+            {
+                const auto id = output.get_id();
+                output = cps.back().query_logical_tensor(id);
+                id_to_queried_logical_tensors_[id] = output;
+            }
+
+            // Allocate memory for the partition, and bind the data buffers with
+            // input and output logical tensors
+            std::vector<dnnl::graph::tensor> inputs_ts;
+            for (auto i = 0; i < onednn_inputs.size(); i++)
+            {
+                inputs_ts.push_back(onednn_get_or_allocate_graph_mem(onednn_inputs[i], host_data, engine_));
+            }
+            std::vector<dnnl::graph::tensor> outputs_ts;
+            for (auto i = 0; i < onednn_outputs.size(); i++)
+            {
+                outputs_ts.push_back(onednn_get_or_allocate_graph_mem(onednn_outputs[i], host_data, engine_));
+            }
+            cps.back().execute(stream, inputs_ts, outputs_ts);
+        }
+        stream.wait();
+
+        std::unordered_map<inference_engine::NodeID, std::vector<std::uint8_t>> return_data{};
+        for (const auto& op : partitions.back().get_output_ports())
+        {
+            const auto id = op.get_id();
+            return_data[id] = host_data.at(id);
+        }
+
+        return return_data;
+    }
+
+    void add_op_to_graph(const dnnl::graph::op& op)
+    {
+        graph_.add_op(op);
+    }
+
+    dnnl::graph::logical_tensor& get_logical_tensor(std::size_t id)
+    {
+        return id_to_queried_logical_tensors_.at(id);
+    }
+
+    const dnnl::graph::logical_tensor& get_logical_tensor(std::size_t id) const
+    {
+        return id_to_queried_logical_tensors_.at(id);
+    }
+
+    const dnnl::graph::logical_tensor& add_logical_tensor(std::size_t id, inference_engine_data_type_t dt)
+    {
+        id_to_queried_logical_tensors_[id] = dnnl::graph::logical_tensor(id, to_onednn_data_type(dt));
+        return get_logical_tensor(id);
+    }
+
+    void set_tensor(std::size_t id, const inference_engine::Tensor& tensor)
+    {
+        id_to_queried_logical_tensors_.at(id) = to_onednn_logical_tensor(id, tensor);
+    }
+
+private:
+    dnnl::engine engine_;
+    dnnl::graph::graph graph_;
+    std::unordered_map<std::size_t, dnnl::graph::logical_tensor> id_to_queried_logical_tensors_;
+};
+
+
+class ModelTest
+{
+protected:
+    ModelTest()
+        : device_(G_DX12_ENGINE.d3d12_device)
+        , ctx_(device_)
+    {
+    }
+
+    ~ModelTest() = default;
+
+protected:
+    void run_test()
+    {
+        StreamDX12 stream(G_DX12_ENGINE.command_list);
+        auto model = inference_engine::Model(ctx_, stream, md_, inputs_);
+
+        // allocate resources for the model outputs
+        auto outputs = model.get_outputs();
+        for (const auto& [id, tensor] : outputs)
+        {
+            node_id_to_resource_[id] = device_.allocate_resource(tensor.bytes_width());
+        }
+
+        // set resources to the model
+        for (auto& [id, resource] : node_id_to_resource_)
+        {
+            model.set_resource(id, resource);
+        }
+
+        // execute model
+        model.execute(stream);
+
+        // readback outputs
+        for (const auto& [id, tensor] : outputs)
+        {
+            output_node_id_to_data_[id] = device_.readback_data_from_resource<std::uint8_t>(node_id_to_resource_[id]);
+        }
+        // compute references
+        references_id_to_data_ = onednn_.get_results(input_node_id_to_data_);
+    }
+
+    const std::unordered_map<inference_engine::NodeID, std::vector<std::uint8_t>>& get_output_data()
+    {
+        return output_node_id_to_data_;
+    }
+
+    const std::unordered_map<inference_engine::NodeID, std::vector<std::uint8_t>>& get_reference_data()
+    {
+        return references_id_to_data_;
+    }
+
+
+    inference_engine::NodeID add_port(const inference_engine_port_desc_t& desc)
+    {
+        const auto ret = md_.add_port(desc);
+        onednn_.add_logical_tensor(ret, desc.data_type);
+        return ret;
+    }
+
+    inference_engine::NodeID add_activation(const inference_engine_activation_desc_t& desc)
+    {
+        const auto ret = md_.add_activation(desc);
+
+        auto onednn_in = onednn_.get_logical_tensor(desc.input);
+
+
+        switch (desc.type)
+        {
+        case inference_engine_activation_type_t::INFERENCE_ENGINE_ACTIVATION_TYPE_RELU:
+        {
+            auto onednn_out = onednn_.add_logical_tensor(ret, desc.out_data_type);
+            auto onednn_activ = dnnl::graph::op(ret, dnnl::graph::op::kind::ReLU, { onednn_in }, { onednn_out });
+            onednn_.add_op_to_graph(onednn_activ);
+            break;
+        }
+        case inference_engine_activation_type_t::INFERENCE_ENGINE_ACTIVATION_TYPE_LINEAR:
+        {
+            auto onednn_in_a = onednn_.add_logical_tensor(onednn_unique_lt_id_, desc.out_data_type);
+            onednn_.set_tensor(onednn_in_a.get_id(), inference_engine::Tensor(desc.out_data_type, { 1, 1, 1, 1 }));
+            input_node_id_to_data_[onednn_unique_lt_id_].resize(4);
+            auto in_a = reinterpret_cast<float*>(input_node_id_to_data_[onednn_unique_lt_id_].data());
+            *in_a = desc.params.linear.a;
+            onednn_unique_lt_id_++;
+            auto onednn_out_temp = onednn_.add_logical_tensor(onednn_unique_lt_id_, desc.out_data_type);
+            onednn_unique_lt_id_++;
+            auto mult = dnnl::graph::op(onednn_unique_op_id_, dnnl::graph::op::kind::Multiply, { onednn_in, onednn_in_a }, { onednn_out_temp });
+            onednn_unique_op_id_++;
+            onednn_.add_op_to_graph(mult);
+
+            auto onednn_in_b = onednn_.add_logical_tensor(onednn_unique_lt_id_, desc.out_data_type);
+            onednn_.set_tensor(onednn_in_b.get_id(), inference_engine::Tensor(desc.out_data_type, { 1, 1, 1, 1 }));
+            input_node_id_to_data_[onednn_unique_lt_id_].resize(4);
+            auto in_b = reinterpret_cast<float*>(input_node_id_to_data_[onednn_unique_lt_id_].data());
+            *in_b = desc.params.linear.b;
+            onednn_unique_lt_id_++;
+            auto onednn_out = onednn_.add_logical_tensor(ret, desc.out_data_type);
+            auto add = dnnl::graph::op(ret, dnnl::graph::op::kind::Add, { onednn_out_temp, onednn_in_b }, { onednn_out });
+            onednn_.add_op_to_graph(add);
+            break;
+        }
+        }    
+        
+        return ret;
+    }
+
+    inference_engine::NodeID add_matmul(const inference_engine_matmul_desc_t& desc)
+    {
+        const auto ret = md_.add_matmul(desc);
+
+        auto onednn_in_a = onednn_.get_logical_tensor(desc.input_a);
+        auto onednn_in_b = onednn_.get_logical_tensor(desc.input_b);
+        auto onednn_out = onednn_.add_logical_tensor(ret, desc.out_data_type);
+        dnnl::graph::op onednn_matmul(ret, dnnl::graph::op::kind::MatMul, { onednn_in_a, onednn_in_b }, { onednn_out });
+        onednn_.add_op_to_graph(onednn_matmul);
+        return ret;
+    }
+
+    void add_input_mapping_and_data(inference_engine::NodeID port_id, const inference_engine::Tensor& tensor, const std::vector<std::uint8_t>& data)
+    {
+        inputs_[port_id] = tensor;
+        input_node_id_to_data_[port_id] = data;
+
+        onednn_.set_tensor(port_id, tensor);
+
+        node_id_to_resource_[port_id] = device_.allocate_resource(tensor.bytes_width());
+        device_.upload_data_to_resource<std::uint8_t>(node_id_to_resource_[port_id], data);
+    }    
+
+protected:
+    DeviceDX12 device_;
+    ContextDX12 ctx_;
+    inference_engine::ModelDescriptor md_{};
+    inference_engine::TensorMapping inputs_{};
+    std::unordered_map<inference_engine::NodeID, std::vector<std::uint8_t>> input_node_id_to_data_;
+    std::unordered_map<inference_engine::NodeID, std::vector<std::uint8_t>> output_node_id_to_data_;
+    std::unordered_map<inference_engine::NodeID, std::vector<std::uint8_t>> references_id_to_data_;
+    std::unordered_map<inference_engine::NodeID, ResourceDX12> node_id_to_resource_;
+
+    Onednn onednn_;
+    std::size_t onednn_unique_lt_id_ = 10000;
+    std::size_t onednn_unique_op_id_ = 10000;
+};
+
+class ModelTestGeneric : public ModelTest, public testing::Test {};
+
+TEST_F(ModelTestGeneric, Activation_0)
+{
+    auto port_id = add_port(inference_engine_port_desc_t{ INFERENCE_ENGINE_DATA_TYPE_FP32 });
+    auto out_node = add_activation(inference_engine_activation_desc_t{ port_id, INFERENCE_ENGINE_ACTIVATION_TYPE_RELU, INFERENCE_ENGINE_DATA_TYPE_FP32 });
+
+    const auto input_tensor = inference_engine::Tensor(INFERENCE_ENGINE_DATA_TYPE_FP32, { 1, 2, 4, 4 });
+    auto input_data = randomize_linear_container_float(input_tensor, -5.0f, 5.0f);
+    add_input_mapping_and_data(port_id, input_tensor, input_data);
+
+    run_test();
+    const auto outputs = get_output_data();
+    const auto outputs_reference = get_reference_data();
+    ASSERT_EQ(outputs.size(), 1);
+    ASSERT_EQ(outputs_reference.size(), 1);
+    ASSERT_EQ(outputs.at(out_node).size(), outputs_reference.at(out_node).size());
+    const auto* typed_data_out = reinterpret_cast<const float*>(outputs.at(out_node).data());
+    const auto* typed_data_out_ref = reinterpret_cast<const float*>(outputs_reference.at(out_node).data());
 
     // validate conformance
-    for (int i = 0; i < tensor_elements_count; i++)
+    for (int i = 0; i < outputs.at(out_node).size() / sizeof(float); i++)
     {
-        // relu activation reference
-        const auto reference = std::max(input_data_host[i], 0.0f);
-        const auto& real_data = data_out[i];
-        // for now switch it off so we have the test passing and result is not polluted with fake fail
+        const auto& real_data = typed_data_out[i];
+        const auto& reference = typed_data_out_ref[i];
         ASSERT_FLOAT_EQ(real_data, reference) << "idx: " << i;
     }
 }
 
-void test_fusion_activation_impl(int num_activations)
+
+class ModelTestMatMulMultipleActivations : public ModelTest, public testing::Test 
 {
-
-    DeviceDX12 device(G_DX12_ENGINE.d3d12_device);
-    StreamDX12 stream(G_DX12_ENGINE.command_list);
-    ContextDX12 ctx(device);
-
-    const auto data_type = INFERENCE_ENGINE_DATA_TYPE_FP32;
-    inference_engine::ModelDescriptor md{};
-    auto input_a = md.add_port(inference_engine_port_desc_t{ data_type });
-    auto input_b = md.add_port(inference_engine_port_desc_t{ data_type });
-    auto port_matmul_out = md.add_matmul(inference_engine_matmul_desc_t{ input_a, input_b });
-    std::vector<inference_engine::NodeID> activation_nodes;
-    inference_engine_activation_desc_t activation_desc{};
-    activation_desc.type = INFERENCE_ENGINE_ACTIVATION_TYPE_LINEAR;
-    activation_desc.params.linear.a = 2.0f;
-    activation_desc.params.linear.b = 0.5f;
-    for (int i = 0; i < num_activations; ++i)
+public:
+    void build_model_and_run(const std::int32_t& num_activations)
     {
-        activation_desc.input = i == 0 ? port_matmul_out : activation_nodes.back();
-        activation_nodes.push_back(md.add_activation(activation_desc));
+        const auto data_type = INFERENCE_ENGINE_DATA_TYPE_FP32;
+        auto input_a = add_port(inference_engine_port_desc_t{ data_type });
+        auto input_b = add_port(inference_engine_port_desc_t{ data_type });
+        auto port_matmul_out = add_matmul(inference_engine_matmul_desc_t{ input_a, input_b, data_type });
+
+        std::vector<inference_engine::NodeID> activation_nodes;
+        inference_engine_activation_desc_t activation_desc{};
+        activation_desc.type = INFERENCE_ENGINE_ACTIVATION_TYPE_LINEAR;
+        activation_desc.params.linear.a = 2.0f;
+        activation_desc.params.linear.b = 0.5f;
+        for (int i = 0; i < num_activations; ++i)
+        {
+            activation_desc.input = i == 0 ? port_matmul_out : activation_nodes.back();
+            activation_nodes.push_back(add_activation(activation_desc));
+        }
+
+        const auto input_a_tensor = inference_engine::Tensor(INFERENCE_ENGINE_DATA_TYPE_FP32, { 1, 1, 32, 32 });
+        auto input_a_data = randomize_linear_container_float(input_a_tensor, -1.0f, 1.0f);
+        add_input_mapping_and_data(input_a, input_a_tensor, input_a_data);
+
+        const auto input_b_tensor = inference_engine::Tensor(INFERENCE_ENGINE_DATA_TYPE_FP32, { 1, 1, 32, 32 });
+        auto input_b_data = randomize_linear_container_float(input_b_tensor, -1.0f, 1.0f);
+        add_input_mapping_and_data(input_b, input_b_tensor, input_b_data);
+
+        run_test();
+        const auto out_node = activation_nodes.back();
+        const auto out_ref_node = activation_nodes.back();
+        const auto outputs = get_output_data();
+        const auto outputs_reference = get_reference_data();
+        ASSERT_EQ(outputs.size(), 1);
+        ASSERT_NE(outputs.find(out_node), std::end(outputs));
+        ASSERT_EQ(outputs_reference.size(), 1);
+        ASSERT_EQ(outputs.at(out_node).size(), outputs_reference.at(out_ref_node).size());
+        const auto* typed_data_out = reinterpret_cast<const float*>(outputs.at(out_node).data());
+        const auto* typed_data_out_ref = reinterpret_cast<const float*>(outputs_reference.at(out_ref_node).data());
+
+        // validate conformance
+        for (int i = 0; i < outputs.at(out_node).size() / sizeof(float); i++)
+        {
+            const auto& real_data = typed_data_out[i];
+            const auto& reference = typed_data_out_ref[i];
+            ASSERT_NEAR(real_data, reference, 0.0001f) << "idx: " << i;
+        }
     }
+};
 
-    inference_engine::TensorMapping inputs{};
-    inputs[input_a] = inference_engine::Tensor(INFERENCE_ENGINE_DATA_TYPE_FP32, { 1, 1, 32, 32 });
-    inputs[input_b] = inference_engine::Tensor(INFERENCE_ENGINE_DATA_TYPE_FP32, { 1, 1, 32, 32 });
-
-    auto model = inference_engine::Model(ctx, stream, md, inputs);
-
-    const auto tensor_a_elements_count = accumulate_tensor_dims(inputs[input_a]);
-    const auto tensor_a_bytes_width = tensor_a_elements_count * sizeof(float);
-    const auto tensor_b_elements_count = accumulate_tensor_dims(inputs[input_b]);
-    const auto tensor_b_bytes_width = tensor_b_elements_count * sizeof(float);
-    std::vector<float> input_a_data_host(tensor_a_elements_count, 1.0f);
-    std::vector<float> input_b_data_host(tensor_b_bytes_width, 1.0f);
-
-    auto input_a_buffer = device.allocate_resource(tensor_a_bytes_width);
-    device.upload_data_to_resource<float>(input_a_buffer, input_a_data_host);
-    auto input_b_buffer = device.allocate_resource(tensor_b_bytes_width);
-    device.upload_data_to_resource<float>(input_b_buffer, input_b_data_host);
-
-    const auto outputs_mappings = model.get_outputs();
-    ASSERT_EQ(outputs_mappings.size(), 1);
-    ASSERT_NE(outputs_mappings.find(activation_nodes.back()), std::end(outputs_mappings));
-    const auto& output_mapping = outputs_mappings.at(activation_nodes.back());
-    ASSERT_EQ(output_mapping.data_type, data_type);
-    const std::vector<std::uint64_t> expected_output_size = { 1ull, 1ull, 32ull, 32ull };
-    ASSERT_EQ(output_mapping.dims, expected_output_size);
-
-    const auto output_tensor_elemenets_count = accumulate_tensor_dims(output_mapping);
-    const auto output_tensor_bytes_width = output_tensor_elemenets_count * sizeof(float);
-
-    auto output_buffer = device.allocate_resource(output_tensor_bytes_width);
-    // set resources
-    model.set_resource(input_a, input_a_buffer);
-    model.set_resource(input_b, input_b_buffer);
-    model.set_resource(outputs_mappings.begin()->first, output_buffer);
-
-    // finally execute model
-    model.execute(stream);
-
-    // readback data and wait for execution
-    const auto data_out = device.readback_data_from_resource<float>(output_buffer);
-
-
-    // validate conformance
-    for (int i = 0; i < data_out.size(); i++)
-    {
-        // relu activation reference
-        const auto matmul_result = 32.0f;
-        auto reference = matmul_result;
-        for (int j = 0; j < num_activations; ++j)
-            reference = activation_desc.params.linear.a * reference + activation_desc.params.linear.b;
-
-        const auto& real_data = data_out[i];
-        // for now switch it off so we have the test passing and result is not polluted with fake fail
-        ASSERT_FLOAT_EQ(real_data, reference) << "idx: " << i;
-    }
-}
-
-// we tried INSTANTIATE_TEST_SUITE_P(VariablePorts, ModelTestWithParams, ::testing::Values(1, 5));, but DX objectes caused the app to crash for some reason...
-
-TEST(ModelTest, MatMul_fused_activation_single)
+TEST_F(ModelTestMatMulMultipleActivations, fused_single)
 {
-    test_fusion_activation_impl(1); // no activation should be fused as it's the last one and the output node
+    build_model_and_run(1);
 }
 
-TEST(ModelTest, MatMul_fused_activation_two)
+TEST_F(ModelTestMatMulMultipleActivations, fused_two)
 {
-    test_fusion_activation_impl(2); // one activation should be fused, 
+    build_model_and_run(2);
 }
 
-TEST(ModelTest, MatMul_fused_activation_five)
+TEST_F(ModelTestMatMulMultipleActivations, fused_five)
 {
-    test_fusion_activation_impl(5);
+    build_model_and_run(5);
 }
 
-TEST(ModelTest, MatMul_6_nodes)
+TEST_F(ModelTestGeneric, MatMul_6_nodes)
 {
     // *   *  *
     //  \ /  /
@@ -167,41 +423,54 @@ TEST(ModelTest, MatMul_6_nodes)
     //    \/
     //     * // mat mul
 
-    DeviceDX12 device(G_DX12_ENGINE.d3d12_device);
-    StreamDX12 stream(G_DX12_ENGINE.command_list);
-    ContextDX12 ctx(device);
-
-    inference_engine::ModelDescriptor md{};
-
-    const auto data_type = inference_engine_data_type_t::INFERENCE_ENGINE_DATA_TYPE_FP16;
-
+    const auto data_type = inference_engine_data_type_t::INFERENCE_ENGINE_DATA_TYPE_FP32;
     inference_engine_port_desc_t input_desc{};
     input_desc.data_type = data_type;
-    auto input_a = md.add_port(input_desc);
-    auto input_b = md.add_port(input_desc);
-    auto input_c = md.add_port(input_desc);
+    // inputs
+    auto input_a = add_port(input_desc);
+    auto input_b = add_port(input_desc);
+    auto input_c = add_port(input_desc);
     // matmul
-    auto port_matmul_a = md.add_matmul(inference_engine_matmul_desc_t{ input_a, input_b });
+    auto port_matmul_a = add_matmul(inference_engine_matmul_desc_t{ input_a, input_b, data_type });
     // activation
-    auto port_activation = md.add_activation(inference_engine_activation_desc_t{ input_c, INFERENCE_ENGINE_ACTIVATION_TYPE_RELU });
+    auto port_activation = add_activation(inference_engine_activation_desc_t{ input_c, INFERENCE_ENGINE_ACTIVATION_TYPE_RELU, data_type });
     // MatMul final
-    auto port_matmul_out_final = md.add_matmul(inference_engine_matmul_desc_t{ port_matmul_a, port_activation });
+    auto port_matmul_out_final = add_matmul(inference_engine_matmul_desc_t{ port_matmul_a, port_activation, data_type });
 
-    inference_engine::TensorMapping inputs{};
-    inputs[input_a] = inference_engine::Tensor(data_type, { 1, 1, 8, 16 });
-    inputs[input_b] = inference_engine::Tensor(data_type, { 1, 2, 16, 32 });
-    inputs[input_c] = inference_engine::Tensor(data_type, { 1, 2, 32, 64 });
+    const auto input_a_tensor = inference_engine::Tensor(INFERENCE_ENGINE_DATA_TYPE_FP32, { 1, 1, 8, 16 });
+    auto input_a_data = randomize_linear_container_float(input_a_tensor, -1.0f, 1.0f);
+    add_input_mapping_and_data(input_a, input_a_tensor, input_a_data);
 
-    auto model = inference_engine::Model(ctx, stream, md, inputs);
-    const auto outputs_mappings = model.get_outputs();
-    ASSERT_EQ(outputs_mappings.size(), 1);
-    ASSERT_NE(outputs_mappings.find(port_matmul_out_final), std::end(outputs_mappings));
-    const auto& output_mapping = outputs_mappings.at(port_matmul_out_final);
-    ASSERT_EQ(output_mapping.data_type, data_type);
-    const std::vector<std::uint64_t> expected_output_size = { 1, 1, 8, 64 };
-    ASSERT_EQ(output_mapping.dims, expected_output_size);
+    const auto input_b_tensor = inference_engine::Tensor(INFERENCE_ENGINE_DATA_TYPE_FP32, { 1, 1, 16, 32 });
+    auto input_b_data = randomize_linear_container_float(input_b_tensor, -1.0f, 1.0f);
+    add_input_mapping_and_data(input_b, input_b_tensor, input_b_data);
+
+    const auto input_c_tensor = inference_engine::Tensor(INFERENCE_ENGINE_DATA_TYPE_FP32, { 1, 1, 32, 64 });
+    auto input_c_data = randomize_linear_container_float(input_c_tensor, -1.0f, 1.0f);
+    add_input_mapping_and_data(input_c, input_c_tensor, input_c_data);
+
+    run_test();
+    const auto out_node = port_matmul_out_final;
+    const auto out_ref_node = port_matmul_out_final;
+    const auto outputs = get_output_data();
+    const auto outputs_reference = get_reference_data();
+    ASSERT_EQ(outputs.size(), 1);
+    ASSERT_NE(outputs.find(out_node), std::end(outputs));
+    ASSERT_EQ(outputs_reference.size(), 1);
+    ASSERT_EQ(outputs.at(out_node).size(), outputs_reference.at(out_ref_node).size());
+    const auto* typed_data_out = reinterpret_cast<const float*>(outputs.at(out_node).data());
+    const auto* typed_data_out_ref = reinterpret_cast<const float*>(outputs_reference.at(out_ref_node).data());
+
+    // validate conformance
+    for (int i = 0; i < outputs.at(out_node).size() / sizeof(float); i++)
+    {
+        const auto& real_data = typed_data_out[i];
+        const auto& reference = typed_data_out_ref[i];
+        ASSERT_NEAR(real_data, reference, 0.0001f) << "idx: " << i;
+    }
 }
 
+//ToDo refactor this test to use ModelTestGeneric test suite once we have fully fledged convolution primitive
 TEST(ModelTest, ConvPlusAddFusion)
 {
     // *           * port, port
@@ -235,23 +504,24 @@ TEST(ModelTest, ConvPlusAddFusion)
     auto input_b = md.add_port(input_desc);
 
     // Conv left
-    auto port_conv_a = md.add_convolution(inference_engine_convolution_desc_t{ input_a }, "conv_a");
+    auto port_conv_a = md.add_convolution(inference_engine_convolution_desc_t{ input_a, data_type }, "conv_a");
 
     // Conv right
-    auto port_conv_b = md.add_convolution(inference_engine_convolution_desc_t{ input_b }, "conv_b");
+    auto port_conv_b = md.add_convolution(inference_engine_convolution_desc_t{ input_b, data_type }, "conv_b");
 
     // activation
-    auto activation = md.add_activation(inference_engine_activation_desc_t{port_conv_b, INFERENCE_ENGINE_ACTIVATION_TYPE_RELU });
+    auto activation = md.add_activation(inference_engine_activation_desc_t{port_conv_b, INFERENCE_ENGINE_ACTIVATION_TYPE_RELU, data_type });
 
     // elementwise_add
     inference_engine_elementwise_desc_t add_desc_final{};
     add_desc_final.type = inference_engine_elementwise_type_t::INFERENCE_ENGINE_ELEMENTWISE_TYPE_ADD;
     add_desc_final.input_a = port_conv_a;
     add_desc_final.input_b = activation;
-    auto port_add_final = md.add_elementwise(add_desc_final);
+    add_desc_final.out_data_type = data_type;
+    auto port_add_final = md.add_elementwise(add_desc_final, "elementwise");
 
     // activation final
-    auto final_activation = md.add_activation(inference_engine_activation_desc_t{port_add_final, INFERENCE_ENGINE_ACTIVATION_TYPE_RELU }, "final_activation");
+    auto final_activation = md.add_activation(inference_engine_activation_desc_t{port_add_final, INFERENCE_ENGINE_ACTIVATION_TYPE_RELU, data_type }, "final_activation");
 
     // define input mappings
     inference_engine::TensorMapping inputs{};

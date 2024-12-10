@@ -21,7 +21,7 @@ TEST(ApiTest, get_outputs_single_out)
 
     inference_engine::ModelDescriptor md{};
     auto input_node = md.add_port(inference_engine_port_desc_t{ INFERENCE_ENGINE_DATA_TYPE_FP16 });
-    auto out_node = md.add_activation(inference_engine_activation_desc_t{ input_node, INFERENCE_ENGINE_ACTIVATION_TYPE_RELU });
+    auto out_node = md.add_activation(inference_engine_activation_desc_t{ input_node, INFERENCE_ENGINE_ACTIVATION_TYPE_RELU, INFERENCE_ENGINE_DATA_TYPE_FP16 });
 
     inference_engine::TensorMapping input_mappings{};
     input_mappings[input_node] = inference_engine::Tensor(INFERENCE_ENGINE_DATA_TYPE_FP16, { 1, 1, 16, 32 });
@@ -50,7 +50,7 @@ TEST(ApiTest, get_outputs_multiple_outs)
     std::vector<inference_engine::NodeID> output_nodes{};
     for (auto i = 0; i < 6; i++)
     {
-        auto node = md.add_activation(inference_engine_activation_desc_t{ input_node, INFERENCE_ENGINE_ACTIVATION_TYPE_RELU });
+        auto node = md.add_activation(inference_engine_activation_desc_t{ input_node, INFERENCE_ENGINE_ACTIVATION_TYPE_RELU, INFERENCE_ENGINE_DATA_TYPE_FP16 });
         output_nodes.push_back(node);
     }
 
@@ -82,10 +82,22 @@ TEST(ApiTest, invalid_node_connection)
 {
     inference_engine::ModelDescriptor md{};
     const auto input = md.add_port(inference_engine_port_desc_t{ INFERENCE_ENGINE_DATA_TYPE_FP32 });
-    const auto invalid_node_id = input + 1331;
+    const auto invalid_node_id = input + 1331;  // very wrong node id
     
     // Point to invalid node id
-    const auto activation_desc = inference_engine_activation_desc_t{ invalid_node_id, INFERENCE_ENGINE_ACTIVATION_TYPE_RELU };
+    const auto activation_desc = inference_engine_activation_desc_t{ invalid_node_id, INFERENCE_ENGINE_ACTIVATION_TYPE_RELU, INFERENCE_ENGINE_DATA_TYPE_FP32 };
+    // Negative test, we expect it to throw.
+    ASSERT_THROW(md.add_activation(activation_desc), inference_engine::IEexception);
+}
+
+TEST(ApiTest, invalid_node_connection_node_loop_to_itself)
+{
+    inference_engine::ModelDescriptor md{};
+    const auto input = md.add_port(inference_engine_port_desc_t{ INFERENCE_ENGINE_DATA_TYPE_FP32 });
+    const auto invalid_node_id = input + 1;  // this ID would be assigned by next node added to the graph (which would create a loop which is invalid in current state of the inference engine library)
+
+    // Point to invalid node id (loop to itself)
+    const auto activation_desc = inference_engine_activation_desc_t{ invalid_node_id, INFERENCE_ENGINE_ACTIVATION_TYPE_RELU, INFERENCE_ENGINE_DATA_TYPE_FP32 };
     // Negative test, we expect it to throw.
     ASSERT_THROW(md.add_activation(activation_desc), inference_engine::IEexception);
 }
