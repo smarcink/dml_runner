@@ -38,6 +38,7 @@ template<typename Impl>
 class Resource
 {
 public:
+    const inference_engine_resource_t get() const { return handle_; }
     inference_engine_resource_t get() { return handle_; }
 
 protected:
