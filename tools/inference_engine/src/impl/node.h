@@ -16,36 +16,37 @@ namespace inference_engine
     class INode
     {
     public:
-        INode(std::size_t id, const std::vector<inference_engine_node_id_t>& inputs)
+        INode(std::size_t id, const std::vector<inference_engine_node_id_t>& inputs, std::string_view name)
             : id_(id)
             , inputs_(inputs)
+            , name_(name)
         {
             assert(id != INFERENCE_ENGINE_INVALID_NODE_ID);
         }
 
         INode(INode&& rhs) noexcept
         {
-            std::swap(inputs_, rhs.inputs_);
+            swap(*this, rhs);
         }
 
         INode& operator=(INode&& rhs) noexcept
         {
-            if (this != &rhs)
-            {
-                std::swap(inputs_, rhs.inputs_);
-            }
+            swap(*this, rhs);
             return *this;
         }
 
         virtual ~INode() = default;
 
-        virtual const std::vector<inference_engine_node_id_t>& inputs() const {
-            return inputs_;
+        friend void swap(INode& first, INode& second) noexcept
+        {
+            using std::swap;
+            swap(first.id_, second.id_);
+            swap(first.inputs_, second.inputs_);
+            swap(first.name_, second.name_);
         }
 
-        void set_name(std::string_view name)
-        {
-            name_ = name;
+        virtual const std::vector<inference_engine_node_id_t>& inputs() const {
+            return inputs_;
         }
 
         virtual std::unique_ptr<GpuNode> create_gpu_node(const std::vector<GpuNode*>& inputs) = 0;

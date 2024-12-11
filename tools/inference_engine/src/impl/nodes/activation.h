@@ -47,8 +47,8 @@ namespace inference_engine
     class Activation : public INode
     {
     public:
-        Activation(const inference_engine_activation_desc_t& desc, std::size_t id)
-            : INode(id, { desc.input })
+        Activation(const inference_engine_activation_desc_t& desc, std::size_t id, std::string_view name)
+            : INode(id, { desc.input }, name)
             , desc_(desc)
         {
         }

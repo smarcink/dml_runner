@@ -33,8 +33,8 @@ namespace inference_engine
     class Convolution : public INode
     {
     public:
-        Convolution(const inference_engine_convolution_desc_t& desc, std::size_t id)
-            : INode(id, { desc.input })
+        Convolution(const inference_engine_convolution_desc_t& desc, std::size_t id, std::string_view name)
+            : INode(id, { desc.input }, name)
             , desc_(desc)
         {
         }

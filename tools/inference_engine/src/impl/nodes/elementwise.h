@@ -29,8 +29,8 @@ namespace inference_engine
     class Elementwise : public INode
     {
     public:
-        Elementwise(const inference_engine_elementwise_desc_t& desc, std::size_t id)
-            : INode(id, { desc.input_a, desc.input_b })
+        Elementwise(const inference_engine_elementwise_desc_t& desc, std::size_t id, std::string_view name)
+            : INode(id, { desc.input_a, desc.input_b }, name)
             , desc_(desc)
         {
         }

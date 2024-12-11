@@ -24,11 +24,11 @@ public:
     DAG();
 
     template<typename T, typename TDesc>
-    std::size_t add_node(const TDesc& desc)
+    std::size_t add_node(const TDesc& desc, std::string_view name)
     {  
         // add node
         auto id = nodes_.size();
-        nodes_.push_back(std::make_unique<T>(desc, id));
+        nodes_.push_back(std::make_unique<T>(desc, id, name));
         
         // Early validation: valid it's inputs
         const auto& inputs = nodes_.back()->inputs();
@@ -41,11 +41,6 @@ public:
             }
         }
         return id;
-    }
-
-    void set_name(size_t id, std::string_view name)
-    {
-        nodes_.at(id)->set_name(name);
     }
 
 public:
@@ -87,14 +82,9 @@ public:
     ~ModelDescriptor();
 
     template<typename T, typename TDesc>
-    std::size_t add_node(const TDesc& desc)
+    std::size_t add_node(const TDesc& desc, std::string_view name)
     {
-        return dag_.add_node<T>(desc);
-    }
-
-    void set_name(size_t id, std::string_view name)
-    {
-        dag_.set_name(id, name);
+        return dag_.add_node<T>(desc, name);
     }
 
     ExecutableModel compile(GpuContext& ctx, GpuStream& stream, std::span<TensorMapping> input_mappings);
