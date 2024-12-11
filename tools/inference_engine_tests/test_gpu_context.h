@@ -442,7 +442,7 @@ public:
     }
 
     template<typename T>
-    void upload_data_to_resource(ResourceDX12& dst, std::span<T> data)
+    void upload_data_to_resource(ResourceDX12& dst, std::span<const T> data)
     {
         auto upload_buffer = create_buffer(G_DX12_ENGINE.d3d12_device.Get(), data.size_bytes(), D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_COPY_SOURCE);
         std::byte* upload_mapped_ptr = nullptr;

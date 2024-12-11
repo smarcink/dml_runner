@@ -10,15 +10,10 @@
 #include <oneapi/dnnl/dnnl_graph.hpp>
 #include <oneapi/dnnl/dnnl.hpp>
 
-inline dnnl::graph::logical_tensor to_onednn_logical_tensor(std::size_t onednn_logical_tensor_id, const inference_engine::Tensor& tensor)
+inline dnnl::graph::logical_tensor::data_type to_onednn_data_type(inference_engine_data_type_t dt)
 {
-    dnnl::graph::logical_tensor::dims dims{};
-    for (const auto& d : tensor.dims)
-    {
-        dims.push_back(static_cast<dnnl::graph::logical_tensor::dim>(d));
-    }
     dnnl::graph::logical_tensor::data_type data_type = dnnl::graph::logical_tensor::data_type::undef;
-    switch (tensor.data_type)
+    switch (dt)
     {
     case inference_engine_data_type_t::INFERENCE_ENGINE_DATA_TYPE_FP32:
     {
@@ -33,13 +28,208 @@ inline dnnl::graph::logical_tensor to_onednn_logical_tensor(std::size_t onednn_l
     default:
         assert(!"add more data types support to to_onednn_logical_tensor() function");
     }
-    return dnnl::graph::logical_tensor(onednn_logical_tensor_id, data_type, dims, dnnl::graph::logical_tensor::layout_type::strided);
+    return data_type;
 }
 
-inline dnnl::graph::tensor onednn_allocate_graph_mem(const dnnl::graph::logical_tensor& lt, void* data_buffer, const dnnl::engine& eng) 
+inline dnnl::graph::logical_tensor to_onednn_logical_tensor(std::size_t onednn_logical_tensor_id, const inference_engine::Tensor& tensor)
 {
+    dnnl::graph::logical_tensor::dims dims{};
+    for (const auto& d : tensor.dims)
+    {
+        dims.push_back(static_cast<dnnl::graph::logical_tensor::dim>(d));
+    }
+
+    return dnnl::graph::logical_tensor(onednn_logical_tensor_id, to_onednn_data_type(tensor.data_type), dims, dnnl::graph::logical_tensor::layout_type::strided);
+}
+
+inline dnnl::graph::tensor onednn_get_or_allocate_graph_mem(const dnnl::graph::logical_tensor& lt, std::unordered_map<inference_engine::NodeID, std::vector<std::uint8_t>>& data_buffer, const dnnl::engine& eng)
+{
+    const auto id = lt.get_id();
     const auto mem_size = lt.get_mem_size();
-    return dnnl::graph::tensor{ lt, eng, data_buffer };
+    if (data_buffer.find(id) == std::end(data_buffer))
+    {
+        data_buffer[id] = std::vector<std::uint8_t>(mem_size);
+    }
+    return dnnl::graph::tensor{ lt, eng, data_buffer[id].data() };
+}
+
+class Onednn
+{
+public:
+    Onednn()
+        : engine_(dnnl::engine::kind::cpu, 0)
+        , graph_(dnnl::engine::kind::cpu)
+    {
+
+    }
+
+    std::vector<std::uint8_t> get_results(inference_engine::NodeID output_node, const std::unordered_map<inference_engine::NodeID, std::vector<std::uint8_t>>& input_host_data)
+    {
+        dnnl::stream stream(engine_);
+
+        graph_.finalize();
+        auto partitions = graph_.get_partitions();
+
+        // copy input host data, this will be extended with output and intermidate data
+        std::unordered_map<inference_engine::NodeID, std::vector<std::uint8_t>> host_data;
+
+        std::vector<dnnl::graph::compiled_partition> cps;
+        cps.reserve(partitions.size());
+        for (auto& p : partitions)
+        {
+            std::vector<dnnl::graph::logical_tensor> onednn_inputs = p.get_input_ports();
+            std::vector<dnnl::graph::logical_tensor> onednn_outputs = p.get_output_ports();
+
+            // Update input logical tensors with concrete shape and layout
+            for (auto& input : onednn_inputs) 
+            {
+                const auto id = input.get_id();
+                // If the tensor is an output of another partition, use the cached logical tensor
+                if (id_to_queried_logical_tensors_.find(id) != id_to_queried_logical_tensors_.end())
+                {
+                    input = id_to_queried_logical_tensors_[id];
+                }
+                else
+                {
+                    // ToDo:
+                    //input = onednn_input;
+                }
+            }
+
+            // Update output logical tensors with concrete shape and layout
+            for (auto& output : onednn_outputs)
+            {
+                const auto id = output.get_id();
+                output = dnnl::graph::logical_tensor{ id, output.get_data_type(), DNNL_GRAPH_UNKNOWN_NDIMS, dnnl::graph::logical_tensor::layout_type::strided };
+            }
+
+            // compile partition
+            cps.push_back(p.compile(onednn_inputs, onednn_outputs, engine_));
+
+            // Update output logical tensors with queried one
+            for (auto& output : onednn_outputs) 
+            {
+                const auto id = output.get_id();
+                output = cps.back().query_logical_tensor(id);
+                id_to_queried_logical_tensors_[id] = output;
+            }
+
+            // Allocate memory for the partition, and bind the data buffers with
+            // input and output logical tensors
+            std::vector<dnnl::graph::tensor> inputs_ts;
+            for (auto i = 0; i < onednn_inputs.size(); i++)
+            {
+                inputs_ts.push_back(onednn_get_or_allocate_graph_mem(onednn_inputs[i], host_data, engine_));
+            }
+            std::vector<dnnl::graph::tensor> outputs_ts;
+            for (auto i = 0; i < onednn_outputs.size(); i++)
+            {
+                outputs_ts.push_back(onednn_get_or_allocate_graph_mem(onednn_outputs[i], host_data, engine_));
+            }
+            cps.back().execute(stream, inputs_ts, outputs_ts);
+        }
+        stream.wait();
+        return host_data.at(output_node);
+    }
+
+    void add_op_to_graph(const dnnl::graph::op& op)
+    {
+        graph_.add_op(op);
+    }
+
+    dnnl::graph::logical_tensor& get_logical_tensor(std::size_t id)
+    {
+        return id_to_queried_logical_tensors_.at(id);
+    }
+
+    const dnnl::graph::logical_tensor& get_logical_tensor(std::size_t id) const
+    {
+        return id_to_queried_logical_tensors_.at(id);
+    }
+
+    const dnnl::graph::logical_tensor& add_logical_tensor(std::size_t id, inference_engine_data_type_t dt)
+    {
+        id_to_queried_logical_tensors_[id] = dnnl::graph::logical_tensor(id, to_onednn_data_type(dt));
+        return get_logical_tensor(id);
+    }
+
+private:
+    dnnl::engine engine_;
+    dnnl::graph::graph graph_;
+    std::unordered_map<std::size_t, dnnl::graph::logical_tensor> id_to_queried_logical_tensors_;
+};
+
+
+class ModelTest : public testing::Test
+{
+
+
+protected:
+    ModelTest() 
+        : device_(G_DX12_ENGINE.d3d12_device)
+        , ctx_(device_)
+    {
+    }
+
+    ~ModelTest() override {
+        // You can do clean-up work that doesn't throw exceptions here.
+    }
+
+protected:
+    void run_test()
+    {
+        StreamDX12 stream(G_DX12_ENGINE.command_list);
+        auto model = inference_engine::Model(ctx_, stream, md_, inputs_);
+    }
+
+    inference_engine::NodeID add_port(const inference_engine_port_desc_t& desc)
+    {
+        const auto ret = md_.add_port(desc);
+        onednn_.add_logical_tensor(ret, desc.data_type);
+        return ret;
+    }
+
+    inference_engine::NodeID add_activation(const inference_engine_activation_desc_t& desc)
+    {
+        const auto ret = md_.add_activation(desc);
+
+        auto onednn_in = onednn_.get_logical_tensor(desc.input);
+        auto onednn_out = onednn_.add_logical_tensor(ret, desc.out_data_type);
+        dnnl::graph::op onednn_activ(0, dnnl::graph::op::kind::ReLU, { onednn_in }, { onednn_out });
+        onednn_.add_op_to_graph(onednn_activ);
+        return ret;
+    }
+
+    void add_input_mapping_and_data(inference_engine::NodeID port_id, const inference_engine::Tensor& tensor, const std::vector<std::uint8_t>& data)
+    {
+        inputs_[port_id] = tensor;
+        node_id_to_data_[port_id] = data;
+
+        auto buffer = device_.allocate_resource(accumulate_tensor_dims(tensor));
+        device_.upload_data_to_resource<std::uint8_t>(buffer, data);
+    }    
+
+protected:
+    DeviceDX12 device_;
+    ContextDX12 ctx_;
+    inference_engine::ModelDescriptor md_{};
+    inference_engine::TensorMapping inputs_{};
+    std::unordered_map<inference_engine::NodeID, std::vector<std::uint8_t>> node_id_to_data_;
+    std::unordered_map<inference_engine::NodeID, DeviceDX12> node_id_to_resource_;
+
+    Onednn onednn_;
+};
+
+TEST_F(ModelTest, Activation_basic)
+{
+    auto port_id = add_port(inference_engine_port_desc_t{ INFERENCE_ENGINE_DATA_TYPE_FP32 });
+    auto out_node = add_activation(inference_engine_activation_desc_t{ port_id, INFERENCE_ENGINE_ACTIVATION_TYPE_RELU, INFERENCE_ENGINE_DATA_TYPE_FP32 });
+
+    const auto input_tensor = inference_engine::Tensor(INFERENCE_ENGINE_DATA_TYPE_FP32, { 1, 2, 4, 4 });
+    auto input_data = randomize_linear_container_float(input_tensor, -5.0f, 5.0f);
+    add_input_mapping_and_data(port_id, input_tensor, input_data);
+
+    run_test();
 }
 
 TEST(ModelTest, Activation_0)
@@ -49,6 +239,7 @@ TEST(ModelTest, Activation_0)
     ContextDX12 ctx(device);
 
     inference_engine::ModelDescriptor md{};
+
     auto port_id = md.add_port(inference_engine_port_desc_t{ INFERENCE_ENGINE_DATA_TYPE_FP32 });
     auto out_node = md.add_activation(inference_engine_activation_desc_t{ port_id, INFERENCE_ENGINE_ACTIVATION_TYPE_RELU });
 
@@ -146,12 +337,12 @@ TEST(ModelTest, Activation_0)
             std::vector<dnnl::graph::tensor> inputs_ts;
             for (auto i = 0; i < inputs.size(); i++)
             {
-                inputs_ts.push_back(onednn_allocate_graph_mem(onednn_inputs[i], input_data_host.data(), onednn_engine));
+                //inputs_ts.push_back(onednn_allocate_graph_mem(onednn_inputs[i], input_data_host.data(), onednn_engine));
             }
             std::vector<dnnl::graph::tensor> outputs_ts;
             for (auto i = 0; i < inputs.size(); i++)
             {
-                outputs_ts.push_back(onednn_allocate_graph_mem(onednn_outputs[i], data_out_ref.data(), onednn_engine));
+                //outputs_ts.push_back(onednn_allocate_graph_mem(onednn_outputs[i], data_out_ref.data(), onednn_engine));
             }
 
             cps.back().execute(onednn_stream, inputs_ts, outputs_ts);
