@@ -243,6 +243,7 @@ inline Dx12Engine G_DX12_ENGINE{};
 class ResourceDX12 : public inference_engine::Resource<ResourceDX12>
 {
 public:
+    ResourceDX12() = default;
     ResourceDX12(ComPtr<ID3D12Resource> resource)
         : rsc_(resource)
     {
@@ -250,6 +251,7 @@ public:
 
     ID3D12Resource* get_dx12_rsc()
     {
+        assert(rsc_);
         return rsc_.Get();
     }
 
@@ -426,6 +428,7 @@ private:
 class DeviceDX12 : public inference_engine::Device<DeviceDX12>
 {
 public:
+
     DeviceDX12(ComPtr<ID3D12Device> device)
         : device_(device)
     {}

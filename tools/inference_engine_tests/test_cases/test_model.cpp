@@ -63,7 +63,7 @@ public:
 
     }
 
-    std::vector<std::uint8_t> get_results(inference_engine::NodeID output_node, const std::unordered_map<inference_engine::NodeID, std::vector<std::uint8_t>>& input_host_data)
+    std::unordered_map<inference_engine::NodeID, std::vector<std::uint8_t>> get_results(const std::unordered_map<inference_engine::NodeID, std::vector<std::uint8_t>>& input_host_data)
     {
         dnnl::stream stream(engine_);
 
@@ -129,7 +129,15 @@ public:
             cps.back().execute(stream, inputs_ts, outputs_ts);
         }
         stream.wait();
-        return host_data.at(output_node);
+
+        std::unordered_map<inference_engine::NodeID, std::vector<std::uint8_t>> return_data{};
+        for (const auto& op : partitions.back().get_output_ports())
+        {
+            const auto id = op.get_id();
+            return_data[id] = host_data.at(id);
+        }
+
+        return return_data;
     }
 
     void add_op_to_graph(const dnnl::graph::op& op)
@@ -180,7 +188,42 @@ protected:
     {
         StreamDX12 stream(G_DX12_ENGINE.command_list);
         auto model = inference_engine::Model(ctx_, stream, md_, inputs_);
+
+        // allocate resources for the model outputs
+        auto outputs = model.get_outputs();
+        for (const auto& [id, tensor] : outputs)
+        {
+            node_id_to_resource_[id] = device_.allocate_resource(accumulate_tensor_dims(tensor));
+        }
+
+        // set resources to the model
+        for (const auto& [id, resource] : node_id_to_resource_)
+        {
+            model.set_resource(id, resource);
+        }
+
+        // execute model
+        model.execute(stream);
+
+        // readback outputs
+        for (const auto& [id, tensor] : outputs)
+        {
+            output_node_id_to_data_[id] = device_.readback_data_from_resource<std::uint8_t>(node_id_to_resource_[id]);
+        }
+        // compute references
+        references_id_to_data_ = onednn_.get_results(input_node_id_to_data_);
     }
+
+    const std::unordered_map<inference_engine::NodeID, std::vector<std::uint8_t>>& get_output_data()
+    {
+        return output_node_id_to_data_;
+    }
+
+    const std::unordered_map<inference_engine::NodeID, std::vector<std::uint8_t>>& get_reference_data()
+    {
+        return references_id_to_data_;
+    }
+
 
     inference_engine::NodeID add_port(const inference_engine_port_desc_t& desc)
     {
@@ -203,10 +246,10 @@ protected:
     void add_input_mapping_and_data(inference_engine::NodeID port_id, const inference_engine::Tensor& tensor, const std::vector<std::uint8_t>& data)
     {
         inputs_[port_id] = tensor;
-        node_id_to_data_[port_id] = data;
+        input_node_id_to_data_[port_id] = data;
 
-        auto buffer = device_.allocate_resource(accumulate_tensor_dims(tensor));
-        device_.upload_data_to_resource<std::uint8_t>(buffer, data);
+        node_id_to_resource_[port_id] = device_.allocate_resource(accumulate_tensor_dims(tensor));
+        device_.upload_data_to_resource<std::uint8_t>(node_id_to_resource_[port_id], data);
     }    
 
 protected:
@@ -214,8 +257,10 @@ protected:
     ContextDX12 ctx_;
     inference_engine::ModelDescriptor md_{};
     inference_engine::TensorMapping inputs_{};
-    std::unordered_map<inference_engine::NodeID, std::vector<std::uint8_t>> node_id_to_data_;
-    std::unordered_map<inference_engine::NodeID, DeviceDX12> node_id_to_resource_;
+    std::unordered_map<inference_engine::NodeID, std::vector<std::uint8_t>> input_node_id_to_data_;
+    std::unordered_map<inference_engine::NodeID, std::vector<std::uint8_t>> output_node_id_to_data_;
+    std::unordered_map<inference_engine::NodeID, std::vector<std::uint8_t>> references_id_to_data_;
+    std::unordered_map<inference_engine::NodeID, ResourceDX12> node_id_to_resource_;
 
     Onednn onednn_;
 };
@@ -230,6 +275,20 @@ TEST_F(ModelTest, Activation_basic)
     add_input_mapping_and_data(port_id, input_tensor, input_data);
 
     run_test();
+    const auto outputs = get_output_data();
+    const auto outputs_reference = get_reference_data();
+    ASSERT_EQ(outputs.size(), 1);
+    ASSERT_EQ(outputs_reference.size(), 1);
+    const auto* typed_data_out = reinterpret_cast<const float*>(outputs.end()->second.data());
+    const auto* typed_data_out_ref = reinterpret_cast<const float*>(outputs_reference.end()->second.data());
+
+    // validate conformance
+    for (int i = 0; i < outputs.end()->second.size() / sizeof(float); i++)
+    {
+        const auto& real_data = typed_data_out[i];
+        const auto& reference = typed_data_out_ref[i];
+        ASSERT_FLOAT_EQ(real_data, reference) << "idx: " << i;
+    }
 }
 
 TEST(ModelTest, Activation_0)
