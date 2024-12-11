@@ -91,7 +91,7 @@ TEST(ModelTest, Activation_0)
     {
         dnnl::engine onednn_engine(dnnl::engine::kind::cpu, 0);
         dnnl::stream onednn_stream{ onednn_engine };
-        dnnl::set_verbose(2);
+        //dnnl::set_verbose(2);
 
         dnnl::graph::logical_tensor onednn_input = to_onednn_logical_tensor(0, inputs[port_id]);
         dnnl::graph::logical_tensor onednn_output(1, dnnl::graph::logical_tensor::data_type::f32);
