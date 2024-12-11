@@ -26,22 +26,24 @@ namespace inference_engine
 
         INode(INode&& rhs) noexcept
         {
-            std::swap(inputs_, rhs.inputs_);
-            std::swap(name_, rhs.name_);
-            // what about id?
+            swap(*this, rhs);
         }
 
         INode& operator=(INode&& rhs) noexcept
         {
-            if (this != &rhs)
-            {
-                std::swap(inputs_, rhs.inputs_);
-                std::swap(name_, rhs.name_);
-            }
+            swap(*this, rhs);
             return *this;
         }
 
         virtual ~INode() = default;
+
+        friend void swap(INode& first, INode& second) noexcept
+        {
+            using std::swap;
+            swap(first.id_, second.id_);
+            swap(first.inputs_, second.inputs_);
+            swap(first.name_, second.name_);
+        }
 
         virtual const std::vector<inference_engine_node_id_t>& inputs() const {
             return inputs_;
