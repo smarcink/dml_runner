@@ -7,6 +7,40 @@
 #include <vector>
 #include <array>
 
+#include <oneapi/dnnl/dnnl_graph.hpp>
+
+inline dnnl::graph::logical_tensor to_onednn_logical_tensor(std::size_t onednn_logical_tensor_id, const inference_engine::Tensor& tensor)
+{
+    dnnl::graph::logical_tensor::dims dims{};
+    for (const auto& d : tensor.dims)
+    {
+        dims.push_back(static_cast<dnnl::graph::logical_tensor::dim>(d));
+    }
+    dnnl::graph::logical_tensor::data_type data_type = dnnl::graph::logical_tensor::data_type::undef;
+    switch (tensor.data_type)
+    {
+    case inference_engine_data_type_t::INFERENCE_ENGINE_DATA_TYPE_FP32:
+    {
+        data_type = dnnl::graph::logical_tensor::data_type::f32;
+        break;
+    }
+    case inference_engine_data_type_t::INFERENCE_ENGINE_DATA_TYPE_FP16:
+    {
+        data_type = dnnl::graph::logical_tensor::data_type::f16;
+        break;
+    }
+    default:
+        assert(!"add more data types support to to_onednn_logical_tensor() function");
+    }
+    return dnnl::graph::logical_tensor(onednn_logical_tensor_id, data_type, dims, dnnl::graph::logical_tensor::layout_type::strided);
+}
+
+inline dnnl::graph::tensor onednn_allocate_graph_mem(const dnnl::graph::logical_tensor& lt, void* data_buffer, const dnnl::engine& eng) 
+{
+    const auto mem_size = lt.get_mem_size();
+    return dnnl::graph::tensor{ lt, eng, data_buffer };
+}
+
 TEST(ModelTest, Activation_0)
 {
     DeviceDX12 device(G_DX12_ENGINE.d3d12_device);
@@ -50,7 +84,56 @@ TEST(ModelTest, Activation_0)
 
     // readback data and wait for execution
     const auto data_out = device.readback_data_from_resource<float>(output_buffer);
+    std::vector<float> data_out_ref(data_out.size(), 0.0f);
 
+    // conformance with OneDNN
+    {
+        dnnl::engine onednn_engine(dnnl::engine::kind::gpu, 0);
+        dnnl::stream onednn_stream{ onednn_engine };
+
+        dnnl::graph::logical_tensor onednn_input = to_onednn_logical_tensor(0, inputs[port_id]);
+        dnnl::graph::logical_tensor onednn_output(1, dnnl::graph::logical_tensor::data_type::f32);
+        dnnl::graph::op onednn_activ(0, dnnl::graph::op::kind::ReLU, { onednn_input }, { onednn_output });
+
+        dnnl::graph::graph g(dnnl::engine::kind::gpu);
+        g.add_op(onednn_activ);
+        g.finalize();
+        auto partitions = g.get_partitions();
+
+        std::unordered_map<size_t, dnnl::graph::logical_tensor> id_to_queried_logical_tensors;
+        std::vector<dnnl::graph::compiled_partition> cps;
+        cps.reserve(partitions.size());
+        for (auto& p : partitions)
+        {
+            std::vector<dnnl::graph::logical_tensor> inputs = p.get_input_ports();
+            std::vector<dnnl::graph::logical_tensor> outputs = p.get_output_ports();
+            cps.push_back(p.compile(inputs, outputs, onednn_engine));
+            // Update output logical tensors with queried one
+            for (auto& output : outputs) {
+                const auto id = output.get_id();
+                output = cps.back().query_logical_tensor(id);
+                id_to_queried_logical_tensors[id] = output;
+            }
+            // Allocate memory for the partition, and bind the data buffers with
+            // input and output logical tensors
+            std::vector<dnnl::graph::tensor> inputs_ts;
+            for (auto i = 0; i < inputs.size(); i++)
+            {
+                inputs_ts.push_back(onednn_allocate_graph_mem(inputs[i], input_data_host.data(), onednn_engine));
+            }
+            std::vector<dnnl::graph::tensor> outputs_ts;
+            for (auto i = 0; i < inputs.size(); i++)
+            {
+                outputs_ts.push_back(onednn_allocate_graph_mem(outputs[i], data_out_ref.data(), onednn_engine));
+            }
+            //allocate_graph_mem(inputs_ts, inputs, data_buffer,
+            //    global_outputs_ts_map, eng, /*is partition input=*/true);
+            //allocate_graph_mem(outputs_ts, outputs, data_buffer,
+            //    global_outputs_ts_map, eng, /*is partition input=*/false);
+
+            //cps.back().execute(onednn_stream, );
+        }
+    }
     // validate conformance
     for (int i = 0; i < tensor_elements_count; i++)
     {
