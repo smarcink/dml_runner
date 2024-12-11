@@ -8,6 +8,7 @@
 #include <array>
 
 #include <oneapi/dnnl/dnnl_graph.hpp>
+#include <oneapi/dnnl/dnnl.hpp>
 
 inline dnnl::graph::logical_tensor to_onednn_logical_tensor(std::size_t onednn_logical_tensor_id, const inference_engine::Tensor& tensor)
 {
@@ -88,14 +89,15 @@ TEST(ModelTest, Activation_0)
 
     // conformance with OneDNN
     {
-        dnnl::engine onednn_engine(dnnl::engine::kind::gpu, 0);
+        dnnl::engine onednn_engine(dnnl::engine::kind::cpu, 0);
         dnnl::stream onednn_stream{ onednn_engine };
+        dnnl::set_verbose(2);
 
         dnnl::graph::logical_tensor onednn_input = to_onednn_logical_tensor(0, inputs[port_id]);
         dnnl::graph::logical_tensor onednn_output(1, dnnl::graph::logical_tensor::data_type::f32);
         dnnl::graph::op onednn_activ(0, dnnl::graph::op::kind::ReLU, { onednn_input }, { onednn_output });
 
-        dnnl::graph::graph g(dnnl::engine::kind::gpu);
+        dnnl::graph::graph g(dnnl::engine::kind::cpu);
         g.add_op(onednn_activ);
         g.finalize();
         auto partitions = g.get_partitions();
@@ -105,40 +107,61 @@ TEST(ModelTest, Activation_0)
         cps.reserve(partitions.size());
         for (auto& p : partitions)
         {
-            std::vector<dnnl::graph::logical_tensor> inputs = p.get_input_ports();
-            std::vector<dnnl::graph::logical_tensor> outputs = p.get_output_ports();
-            cps.push_back(p.compile(inputs, outputs, onednn_engine));
+            std::vector<dnnl::graph::logical_tensor> onednn_inputs = p.get_input_ports();
+            std::vector<dnnl::graph::logical_tensor> onednn_outputs = p.get_output_ports();
+ 
+            // Update input logical tensors with concrete shape and layout
+            for (auto& input : onednn_inputs) {
+                const auto id = input.get_id();
+                // If the tensor is an output of another partition, use the cached logical tensor
+                if (id_to_queried_logical_tensors.find(id) != id_to_queried_logical_tensors.end())
+                {
+                    input = id_to_queried_logical_tensors[id];
+                }
+                else
+                {
+                    input = onednn_input;
+                }
+            }
+
+            // Update output logical tensors with concrete shape and layout
+            for (auto& output : onednn_outputs)
+            {
+                const auto id = output.get_id();
+                output = dnnl::graph::logical_tensor{ id, output.get_data_type(), DNNL_GRAPH_UNKNOWN_NDIMS, dnnl::graph::logical_tensor::layout_type::strided };
+            }
+
+            // compile partition
+            cps.push_back(p.compile(onednn_inputs, onednn_outputs, onednn_engine));
+
             // Update output logical tensors with queried one
-            for (auto& output : outputs) {
+            for (auto& output : onednn_outputs) {
                 const auto id = output.get_id();
                 output = cps.back().query_logical_tensor(id);
                 id_to_queried_logical_tensors[id] = output;
             }
+
             // Allocate memory for the partition, and bind the data buffers with
             // input and output logical tensors
             std::vector<dnnl::graph::tensor> inputs_ts;
             for (auto i = 0; i < inputs.size(); i++)
             {
-                inputs_ts.push_back(onednn_allocate_graph_mem(inputs[i], input_data_host.data(), onednn_engine));
+                inputs_ts.push_back(onednn_allocate_graph_mem(onednn_inputs[i], input_data_host.data(), onednn_engine));
             }
             std::vector<dnnl::graph::tensor> outputs_ts;
             for (auto i = 0; i < inputs.size(); i++)
             {
-                outputs_ts.push_back(onednn_allocate_graph_mem(outputs[i], data_out_ref.data(), onednn_engine));
+                outputs_ts.push_back(onednn_allocate_graph_mem(onednn_outputs[i], data_out_ref.data(), onednn_engine));
             }
-            //allocate_graph_mem(inputs_ts, inputs, data_buffer,
-            //    global_outputs_ts_map, eng, /*is partition input=*/true);
-            //allocate_graph_mem(outputs_ts, outputs, data_buffer,
-            //    global_outputs_ts_map, eng, /*is partition input=*/false);
 
-            //cps.back().execute(onednn_stream, );
+            cps.back().execute(onednn_stream, inputs_ts, outputs_ts);
         }
     }
     // validate conformance
     for (int i = 0; i < tensor_elements_count; i++)
     {
         // relu activation reference
-        const auto reference = std::max(input_data_host[i], 0.0f);
+        const auto& reference = data_out_ref[i];
         const auto& real_data = data_out[i];
         // for now switch it off so we have the test passing and result is not polluted with fake fail
         ASSERT_FLOAT_EQ(real_data, reference) << "idx: " << i;

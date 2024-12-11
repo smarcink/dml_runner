@@ -11,7 +11,7 @@ target_include_directories(dmlx INTERFACE "dmlx")
 #one dnll
 set(CMAKE_POLICY_DEFAULT_CMP0077 NEW)  # so we can set options here
 set(ONEDNN_LIBRARY_TYPE SHARED)
-set(ONEDNN_CPU_RUNTIME NONE)
+#set(ONEDNN_CPU_RUNTIME NONE)
 set(ONEDNN_GPU_RUNTIME IUMD)
 set(ONEDNN_BUILD_WITH_MOCK_OPENCL OFF)  # for driver integration this has to be "ON" - no OCL depdencies allowed!
 set(ONEDNN_BUILD_EXAMPLES OFF)
