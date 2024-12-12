@@ -71,7 +71,7 @@ public:
         auto partitions = graph_.get_partitions();
 
         // copy input host data, this will be extended with output and intermidate data
-        std::unordered_map<inference_engine::NodeID, std::vector<std::uint8_t>> host_data;
+        std::unordered_map<inference_engine::NodeID, std::vector<std::uint8_t>> host_data = input_host_data;
 
         std::vector<dnnl::graph::compiled_partition> cps;
         cps.reserve(partitions.size());
@@ -255,7 +255,7 @@ protected:
 
         onednn_.set_tensor(port_id, tensor);
 
-        node_id_to_resource_[port_id] = device_.allocate_resource(accumulate_tensor_dims(tensor));
+        node_id_to_resource_[port_id] = device_.allocate_resource(tensor.bytes_width());
         device_.upload_data_to_resource<std::uint8_t>(node_id_to_resource_[port_id], data);
     }    
 
@@ -295,7 +295,7 @@ TEST_F(ModelTestGeneric, Activation_basic)
     {
         const auto& real_data = typed_data_out[i];
         const auto& reference = typed_data_out_ref[i];
-        ASSERT_FLOAT_EQ(real_data, reference) << "idx: " << i;
+        EXPECT_FLOAT_EQ(real_data, reference) << "idx: " << i;
     }
 }
 
