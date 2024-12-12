@@ -297,7 +297,7 @@ public:
         }
     }
 
-    ID3D12MetaCommand* get() { return mc_.Get(); }
+    ID3D12MetaCommand* get_mc() { return mc_.Get(); }
 
     void set_arg(std::uint32_t idx, ResourceDX12* rsc, std::size_t offset = 0)
     {
