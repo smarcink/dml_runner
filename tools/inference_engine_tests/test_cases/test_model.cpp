@@ -168,18 +168,18 @@ private:
 };
 
 
-class ModelTest : public testing::Test
+class ModelTestGeneric : public testing::Test
 {
 
 
 protected:
-    ModelTest() 
+    ModelTestGeneric()
         : device_(G_DX12_ENGINE.d3d12_device)
         , ctx_(device_)
     {
     }
 
-    ~ModelTest() override {
+    ~ModelTestGeneric() override {
         // You can do clean-up work that doesn't throw exceptions here.
     }
 
@@ -197,7 +197,7 @@ protected:
         }
 
         // set resources to the model
-        for (const auto& [id, resource] : node_id_to_resource_)
+        for (auto& [id, resource] : node_id_to_resource_)
         {
             model.set_resource(id, resource);
         }
@@ -265,7 +265,7 @@ protected:
     Onednn onednn_;
 };
 
-TEST_F(ModelTest, Activation_basic)
+TEST_F(ModelTestGeneric, Activation_basic)
 {
     auto port_id = add_port(inference_engine_port_desc_t{ INFERENCE_ENGINE_DATA_TYPE_FP32 });
     auto out_node = add_activation(inference_engine_activation_desc_t{ port_id, INFERENCE_ENGINE_ACTIVATION_TYPE_RELU, INFERENCE_ENGINE_DATA_TYPE_FP32 });

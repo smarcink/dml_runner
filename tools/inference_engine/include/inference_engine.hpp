@@ -38,17 +38,19 @@ template<typename Impl>
 class Resource
 {
 public:
-    const inference_engine_resource_t get() const { return handle_; }
-    inference_engine_resource_t get() { return handle_; }
-
-protected:
-    Resource()
-        : handle_(reinterpret_cast<inference_engine_resource_t>(this))
-    {
+    const inference_engine_resource_t get() const 
+    { 
+        const Impl& derived = static_cast<const Impl&>(*this);
+        return reinterpret_cast<const inference_engine_resource_t>(&derived);
+    }
+    inference_engine_resource_t get()
+    { 
+        Impl& derived = static_cast<Impl&>(*this);
+        return reinterpret_cast<inference_engine_resource_t>(&derived);
     }
 
-private:
-    inference_engine_resource_t handle_;
+protected:
+    Resource() = default;
 };
 
 template<typename Impl>

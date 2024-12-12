@@ -164,7 +164,7 @@ namespace inference_engine
         }
 
         template<typename ResourceT>
-        void set_resource(NodeID node_id, const ResourceT& rsc)
+        void set_resource(NodeID node_id, ResourceT& rsc)
         {
             assert(handle_);
             auto result = inferenceEngineModelSetResource(handle_, node_id, rsc.get());

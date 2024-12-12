@@ -256,7 +256,7 @@ public:
     }
 
 private:
-    ComPtr<ID3D12Resource> rsc_;
+    ComPtr<ID3D12Resource> rsc_ = nullptr;
 };
 
 
