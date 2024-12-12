@@ -31,6 +31,11 @@ namespace inference_engine
             }
         }
 
+        bool operator==(const Tensor& other) const
+        {
+            return data_type == other.data_type && dims == other.dims && strides == other.strides;
+        }
+
         operator inference_engine_tensor_t() const
         {
             inference_engine_tensor_t ret{};
@@ -62,4 +67,11 @@ namespace inference_engine
             return 1;
         }
     };
+
+    struct IdToTensor
+    {
+        std::size_t id;
+        Tensor tensor;
+    };
+
 }  // namespace inference_engine

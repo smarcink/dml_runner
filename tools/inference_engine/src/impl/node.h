@@ -1,7 +1,7 @@
 #pragma once
 #include "inference_engine_operators.h"
 
-#include "tensor.h"
+#include "inference_engine_tensor.hpp"
 #include "gpu_context.h"
 #include <string>
 #include <variant>

@@ -39,7 +39,7 @@ INFERENCE_ENGINE_API inference_engine_model_t inferenceEngineCompileModelDescrip
             std::cout << "Wrong param input_mapping_list is nullptr or input_mapping_size is 0 " << std::endl;
             return nullptr;
         }
-        std::vector<inference_engine::TensorMapping> im{};
+        std::vector<inference_engine::IdToTensor> im{};
         for (auto i = 0; i < input_mapping_size; i++)
         {
             im.push_back({ input_mapping_list[i].id, inference_engine::Tensor(input_mapping_list[i].tensor) });
