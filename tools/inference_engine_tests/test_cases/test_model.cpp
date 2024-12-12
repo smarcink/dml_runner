@@ -161,6 +161,11 @@ public:
         return get_logical_tensor(id);
     }
 
+    void set_tensor(std::size_t id, const inference_engine::Tensor& tensor)
+    {
+        id_to_queried_logical_tensors_.at(id) = to_onednn_logical_tensor(id, tensor);
+    }
+
 private:
     dnnl::engine engine_;
     dnnl::graph::graph graph_;
@@ -193,7 +198,7 @@ protected:
         auto outputs = model.get_outputs();
         for (const auto& [id, tensor] : outputs)
         {
-            node_id_to_resource_[id] = device_.allocate_resource(accumulate_tensor_dims(tensor));
+            node_id_to_resource_[id] = device_.allocate_resource(tensor.bytes_width());
         }
 
         // set resources to the model
@@ -248,6 +253,8 @@ protected:
         inputs_[port_id] = tensor;
         input_node_id_to_data_[port_id] = data;
 
+        onednn_.set_tensor(port_id, tensor);
+
         node_id_to_resource_[port_id] = device_.allocate_resource(accumulate_tensor_dims(tensor));
         device_.upload_data_to_resource<std::uint8_t>(node_id_to_resource_[port_id], data);
     }    
@@ -279,11 +286,12 @@ TEST_F(ModelTestGeneric, Activation_basic)
     const auto outputs_reference = get_reference_data();
     ASSERT_EQ(outputs.size(), 1);
     ASSERT_EQ(outputs_reference.size(), 1);
-    const auto* typed_data_out = reinterpret_cast<const float*>(outputs.end()->second.data());
-    const auto* typed_data_out_ref = reinterpret_cast<const float*>(outputs_reference.end()->second.data());
+    ASSERT_EQ(outputs.at(out_node).size(), outputs_reference.at(out_node).size());
+    const auto* typed_data_out = reinterpret_cast<const float*>(outputs.at(out_node).data());
+    const auto* typed_data_out_ref = reinterpret_cast<const float*>(outputs_reference.at(out_node).data());
 
     // validate conformance
-    for (int i = 0; i < outputs.end()->second.size() / sizeof(float); i++)
+    for (int i = 0; i < outputs.at(out_node).size() / sizeof(float); i++)
     {
         const auto& real_data = typed_data_out[i];
         const auto& reference = typed_data_out_ref[i];
