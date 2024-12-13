@@ -188,7 +188,7 @@ Tensor MatMul::compute_output_tensor(const Tensor& input_a, const Tensor& input_
     assert(input_a.dims.size() == input_b.dims.size());
     assert(input_a.dims.size() == 4);
     Tensor ret{};
-    ret.data_type = input_a.data_type;
+    ret.data_type = desc_.out_data_type;
     ret.dims.push_back(input_a.dims[0]);
     ret.dims.push_back(input_a.dims[1]);
     ret.dims.push_back(input_a.dims[2]);

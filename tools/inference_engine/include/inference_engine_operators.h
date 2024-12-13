@@ -23,6 +23,8 @@ typedef struct _inference_engine_matmul_desc_t
     inference_engine_node_id_t input_a;
     inference_engine_node_id_t input_b;
     // params..
+
+    inference_engine_data_type_t out_data_type;
 } inference_engine_matmul_desc_t;
 
 
@@ -44,7 +46,8 @@ typedef struct _inference_engine_activation_desc_t
 {
     inference_engine_node_id_t input;
     inference_engine_activation_type_t type;
-    
+    inference_engine_data_type_t out_data_type;
+
     union
     {
         inference_engine_activation_linear_params_t linear;
@@ -65,6 +68,8 @@ typedef struct _inference_engine_elementwise_desc_t
     inference_engine_node_id_t input_b;
     inference_engine_elementwise_type_t type;
     // params..
+
+    inference_engine_data_type_t out_data_type;
 } inference_engine_elementwise_desc_t;
 
 typedef struct _inference_engine_convolution_desc_t
@@ -72,6 +77,8 @@ typedef struct _inference_engine_convolution_desc_t
     inference_engine_node_id_t input;
     // filter params...
     // params...
+
+    inference_engine_data_type_t out_data_type;
 } inference_engine_convolution_desc_t;
 
 #ifdef __cplusplus

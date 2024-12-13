@@ -47,3 +47,26 @@ inline void randomize_linear_container_float(std::mt19937& gen, std::uniform_rea
         container[i] = dist(gen);
     }
 }
+
+inline void randomize_linear_container_float(std::mt19937& gen, std::uniform_real_distribution<float>& dist, std::span<std::uint8_t> container)
+{
+    using Dt = float;
+    auto* ptr = reinterpret_cast<Dt*>(container.data());
+    for (auto i = 0; i < container.size() / sizeof(Dt); i++)
+    {
+        ptr[i] = static_cast<Dt>(dist(gen));
+    }
+}
+
+inline std::vector<std::uint8_t> randomize_linear_container_float(const inference_engine::Tensor& tensor, float random_min, float random_max)
+{
+    const auto tensor_elements_count = accumulate_tensor_dims(tensor);
+    const auto tensor_size_bytes = tensor_elements_count * sizeof(float);
+    std::vector<std::uint8_t> data(tensor_size_bytes);
+
+    // randomize data
+    std::mt19937 random_generator(42); // static, create it once!
+    std::uniform_real_distribution<float> uniform_distribution(random_min, random_max);
+    randomize_linear_container_float(random_generator, uniform_distribution, data);
+    return data;
+}
