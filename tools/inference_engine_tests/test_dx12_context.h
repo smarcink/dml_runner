@@ -433,6 +433,10 @@ public:
         : device_(device)
     {}
 
+    DeviceDX12()
+        : device_(G_DX12_ENGINE.d3d12_device)
+    {}
+
     KernelDX12 create_kernel(const char* kernel_name, const void* kernel_code, size_t kernel_code_size, const char* build_options, inference_engine_kernel_language_t language)
     {
         return KernelDX12(device_.Get(), kernel_name, kernel_code, kernel_code_size, build_options, language);
@@ -444,8 +448,13 @@ public:
             D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS));
     }
 
+    StreamDX12 create_stream(bool profiling_enabled = false) const
+    {
+        return StreamDX12(G_DX12_ENGINE.command_list);
+    }
+
     template<typename T>
-    void upload_data_to_resource(ResourceDX12& dst, std::span<const T> data)
+    void upload_data_to_resource(StreamDX12&, ResourceDX12& dst, std::span<const T> data)
     {
         auto upload_buffer = create_buffer(G_DX12_ENGINE.d3d12_device.Get(), data.size_bytes(), D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_COPY_SOURCE);
         std::byte* upload_mapped_ptr = nullptr;
@@ -463,7 +472,7 @@ public:
     }
 
     template<typename T>
-    std::vector<T> readback_data_from_resource(ResourceDX12& src)
+    std::vector<T> readback_data_from_resource(StreamDX12&, ResourceDX12& src)
     {
         const auto bytes_size = src.get_dx12_rsc()->GetDesc().Width;
         std::vector<T> data_out(bytes_size / sizeof(T));

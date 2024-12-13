@@ -1,5 +1,5 @@
 #include "utils.h"
-#include "test_gpu_context.h"
+#include "test_dx12_context.h"
 #include "inference_engine_model.hpp"
 #include "inference_engine.hpp"
 

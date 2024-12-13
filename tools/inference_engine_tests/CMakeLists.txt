@@ -9,8 +9,11 @@ set(MAIN_SOURCES
     main.cpp
     utils.h
     
-    test_gpu_context.h
-    test_gpu_context.cpp
+    test_dx12_context.h
+    test_dx12_context.cpp
+    
+    test_ocl_context.h
+    test_ocl_context.cpp
 )
 
 # add the test cases

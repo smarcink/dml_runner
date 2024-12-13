@@ -1,4 +1,5 @@
-#include "test_gpu_context.h"
+#include "test_dx12_context.h"
+#include "test_ocl_context.h"
 #include "inference_engine.hpp"
 #include "inference_engine_model.hpp"
 #include "utils.h"
@@ -62,7 +63,8 @@ public:
         : engine_(dnnl::engine::kind::cpu, 0)
         , graph_(dnnl::engine::kind::cpu)
     {
-
+        // disable cache due to it not working correctly (ToDo: double check after some OneDNN rebase).
+        dnnl::graph::set_compiled_partition_cache_capacity(0);
     }
 
     std::unordered_map<inference_engine::NodeID, std::vector<std::uint8_t>> get_results(const std::unordered_map<inference_engine::NodeID, std::vector<std::uint8_t>>& input_host_data)
@@ -175,11 +177,12 @@ private:
 };
 
 
+template<typename ContextT>
 class ModelTest
 {
 protected:
     ModelTest()
-        : device_(G_DX12_ENGINE.d3d12_device)
+        : device_()
         , ctx_(device_)
     {
     }
@@ -189,8 +192,14 @@ protected:
 protected:
     void run_test()
     {
-        StreamDX12 stream(G_DX12_ENGINE.command_list);
+        auto stream = device_.create_stream();
         auto model = inference_engine::Model(ctx_, stream, md_, inputs_);
+
+        // allocate and upload inputs
+        for (auto& [id, resource] : node_id_to_resource_)
+        {
+            device_.upload_data_to_resource<std::uint8_t>(stream, resource, input_node_id_to_data_[id]);
+        }
 
         // allocate resources for the model outputs
         auto outputs = model.get_outputs();
@@ -211,7 +220,7 @@ protected:
         // readback outputs
         for (const auto& [id, tensor] : outputs)
         {
-            output_node_id_to_data_[id] = device_.readback_data_from_resource<std::uint8_t>(node_id_to_resource_[id]);
+            output_node_id_to_data_[id] = device_.readback_data_from_resource<std::uint8_t>(stream, node_id_to_resource_[id]);
         }
         // compute references
         references_id_to_data_ = onednn_.get_results(input_node_id_to_data_);
@@ -301,38 +310,45 @@ protected:
         onednn_.set_tensor(port_id, tensor);
 
         node_id_to_resource_[port_id] = device_.allocate_resource(tensor.bytes_width());
-        device_.upload_data_to_resource<std::uint8_t>(node_id_to_resource_[port_id], data);
     }    
 
 protected:
-    DeviceDX12 device_;
-    ContextDX12 ctx_;
+    ContextT::DeviceT device_;
+    ContextT ctx_;
+
     inference_engine::ModelDescriptor md_{};
     inference_engine::TensorMapping inputs_{};
     std::unordered_map<inference_engine::NodeID, std::vector<std::uint8_t>> input_node_id_to_data_;
     std::unordered_map<inference_engine::NodeID, std::vector<std::uint8_t>> output_node_id_to_data_;
     std::unordered_map<inference_engine::NodeID, std::vector<std::uint8_t>> references_id_to_data_;
-    std::unordered_map<inference_engine::NodeID, ResourceDX12> node_id_to_resource_;
+    std::unordered_map<inference_engine::NodeID, typename ContextT::ResourceT> node_id_to_resource_;
 
     Onednn onednn_;
     std::size_t onednn_unique_lt_id_ = 10000;
     std::size_t onednn_unique_op_id_ = 10000;
 };
 
-class ModelTestGeneric : public ModelTest, public testing::Test {};
+template<typename T>
+class ModelTestGeneric : public ModelTest<T>, public testing::Test {};  // undefined context
+class ModelTestGenericOCL : public ModelTest<ContextOCL>, public testing::Test {};  // OCL context
+class ModelTestGenericDX12 : public ModelTest<ContextDX12>, public testing::Test {};  // DX12 context
 
-TEST_F(ModelTestGeneric, Activation_0)
+using TestContextTypes = testing::Types<ContextOCL, ContextDX12>;
+TYPED_TEST_SUITE(ModelTestGeneric, TestContextTypes);
+
+// This test will run for each context (currently OCL and DX12).
+TYPED_TEST(ModelTestGeneric, Activation_0)
 {
-    auto port_id = add_port(inference_engine_port_desc_t{ INFERENCE_ENGINE_DATA_TYPE_FP32 });
-    auto out_node = add_activation(inference_engine_activation_desc_t{ port_id, INFERENCE_ENGINE_ACTIVATION_TYPE_RELU, INFERENCE_ENGINE_DATA_TYPE_FP32 });
+    auto port_id = this->add_port(inference_engine_port_desc_t{ INFERENCE_ENGINE_DATA_TYPE_FP32 });
+    auto out_node = this->add_activation(inference_engine_activation_desc_t{ port_id, INFERENCE_ENGINE_ACTIVATION_TYPE_RELU, INFERENCE_ENGINE_DATA_TYPE_FP32 });
 
     const auto input_tensor = inference_engine::Tensor(INFERENCE_ENGINE_DATA_TYPE_FP32, { 1, 2, 4, 4 });
     auto input_data = randomize_linear_container_float(input_tensor, -5.0f, 5.0f);
-    add_input_mapping_and_data(port_id, input_tensor, input_data);
+    this->add_input_mapping_and_data(port_id, input_tensor, input_data);
 
-    run_test();
-    const auto outputs = get_output_data();
-    const auto outputs_reference = get_reference_data();
+    this->run_test();
+    const auto outputs = this->get_output_data();
+    const auto outputs_reference = this->get_reference_data();
     ASSERT_EQ(outputs.size(), 1);
     ASSERT_EQ(outputs_reference.size(), 1);
     ASSERT_EQ(outputs.at(out_node).size(), outputs_reference.at(out_node).size());
@@ -349,7 +365,7 @@ TEST_F(ModelTestGeneric, Activation_0)
 }
 
 
-class ModelTestMatMulMultipleActivations : public ModelTest, public testing::Test 
+class ModelTestMatMulMultipleActivations : public ModelTestGenericOCL
 {
 public:
     void build_model_and_run(const std::int32_t& num_activations)
@@ -415,7 +431,7 @@ TEST_F(ModelTestMatMulMultipleActivations, fused_five)
     build_model_and_run(5);
 }
 
-TEST_F(ModelTestGeneric, MatMul_6_nodes)
+TEST_F(ModelTestGenericOCL, MatMul_6_nodes)
 {
     // *   *  *
     //  \ /  /
