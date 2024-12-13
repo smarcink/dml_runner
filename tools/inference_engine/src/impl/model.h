@@ -1,8 +1,7 @@
 #pragma once
 #include "gpu_context.h"
-#include "inference_engine_tensor.h"
 #include "inference_engine_operators.h"
-#include "tensor.h"
+#include "inference_engine_tensor.hpp"
 #include "node.h"
 
 #include <vector>
@@ -49,7 +48,7 @@ public:
     }
 
 public:
-    std::vector<std::unique_ptr<GpuNode>> compile(std::span<TensorMapping> input_mappings);
+    std::vector<std::unique_ptr<GpuNode>> compile(std::span<IdToTensor> input_mappings);
 
 
 private:
@@ -73,11 +72,11 @@ public:
     void execute(GpuStream& stream);
     void set_resource(inference_engine_node_id_t id, GpuResource::Ptr rsc);
 
-    const std::vector<TensorMapping>& get_outputs() const;
+    const std::vector<IdToTensor>& get_outputs() const;
 
 private:
     const std::vector<std::unique_ptr<GpuNode>> nodes_;
-    const std::vector<TensorMapping> output_mappings_;
+    const std::vector<IdToTensor> output_mappings_;
 };
 
 class ModelDescriptor
@@ -92,7 +91,7 @@ public:
         return dag_.add_node<T>(desc, name);
     }
 
-    ExecutableModel compile(GpuContext& ctx, GpuStream& stream, std::span<TensorMapping> input_mappings);
+    ExecutableModel compile(GpuContext& ctx, GpuStream& stream, std::span<IdToTensor> input_mappings);
 
 private:
     DAG dag_;

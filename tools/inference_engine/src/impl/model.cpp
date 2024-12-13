@@ -14,9 +14,9 @@ namespace inference_engine
 {
     namespace
     {
-        std::vector<TensorMapping> build_output_mapping(const std::vector<std::unique_ptr<GpuNode>>& nodes)
+        std::vector<IdToTensor> build_output_mapping(const std::vector<std::unique_ptr<GpuNode>>& nodes)
         {
-            std::vector<TensorMapping> ret{};
+            std::vector<IdToTensor> ret{};
             for (const auto& n : nodes)
             {
                 if (n->get_outputs().empty())
@@ -34,7 +34,7 @@ namespace inference_engine
         nodes_.reserve(1024);
     }
 
-    std::vector<std::unique_ptr<inference_engine::GpuNode>> DAG::compile(std::span<TensorMapping> input_mappings)
+    std::vector<std::unique_ptr<inference_engine::GpuNode>> DAG::compile(std::span<IdToTensor> input_mappings)
     {
         create_adjacency_list();
 
@@ -62,7 +62,7 @@ namespace inference_engine
 
             // maybe we can move it to a separate function?
             // set input tensor if this is port (important: we have topological sorted, so we assume here that all inputs are traversed first)!
-            auto it = std::find_if(std::begin(input_mappings), std::end(input_mappings), [&](const TensorMapping& im)
+            auto it = std::find_if(std::begin(input_mappings), std::end(input_mappings), [&](const IdToTensor& im)
                 {
                     return im.id == ret[i]->get_id();
                 });
@@ -172,7 +172,7 @@ void ExecutableModel::set_resource(inference_engine_node_id_t id, GpuResource::P
     }
     }
 
-const std::vector<inference_engine::TensorMapping>& ExecutableModel::get_outputs() const
+const std::vector<inference_engine::IdToTensor>& ExecutableModel::get_outputs() const
 {
     return output_mappings_;
 }
@@ -268,7 +268,7 @@ public:
     }
 };
 
-inference_engine::ExecutableModel ModelDescriptor::compile(GpuContext& ctx, GpuStream& stream, std::span<TensorMapping> input_mappings)
+inference_engine::ExecutableModel ModelDescriptor::compile(GpuContext& ctx, GpuStream& stream, std::span<IdToTensor> input_mappings)
 {
     //ToDo: we need some data structure to represent graph (random order of example features below)
     // 1) Sorting graph
