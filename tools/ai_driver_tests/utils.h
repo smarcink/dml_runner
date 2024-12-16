@@ -17,7 +17,7 @@ inline std::size_t accumulate_tensor_dims(const ai_driver_tensor_t& tensor)
     std::size_t ret = 1;
     for (int i = 0; i < AI_DRIVER_MAX_TENSOR_DIMS; i++)
     {
-        const auto& d = tensor.dims[i];
+        const auto& d = tensor.dims.v[i];
         if (d != 0)
         {
             ret *= d;

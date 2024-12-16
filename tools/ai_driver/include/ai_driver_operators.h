@@ -82,9 +82,14 @@ typedef struct _ai_driver_elementwise_desc_t
 typedef struct _ai_driver_convolution_desc_t
 {
     ai_driver_node_id_t input;
-    // filter params...
-    // params...
-
+    ai_driver_node_id_t filter;
+    ai_driver_node_id_t* bias; // optional, pass nullptr if op is not using bias 
+    ai_driver_tensor_array_t strides;
+    ai_driver_tensor_array_t dilations;
+    ai_driver_tensor_array_t start_padding;
+    ai_driver_tensor_array_t end_padding;
+    ai_driver_tensor_array_t output_padding;
+    uint32_t group_count;
     ai_driver_data_type_t out_data_type;
 } ai_driver_convolution_desc_t;
 

@@ -24,10 +24,10 @@ namespace ai_driver
         Tensor(const ai_driver_tensor_t& tensor_desc)
             : data_type(tensor_desc.data_type)
         {
-            for (int i = 0; i < AI_DRIVER_MAX_TENSOR_DIMS && tensor_desc.dims[i] != 0; ++i)
+            for (int i = 0; i < AI_DRIVER_MAX_TENSOR_DIMS && tensor_desc.dims.v[i] != 0; ++i)
             {
-                dims.push_back(tensor_desc.dims[i]);
-                strides.push_back(tensor_desc.strides[i]);
+                dims.push_back(tensor_desc.dims.v[i]);
+                strides.push_back(tensor_desc.strides.v[i]);
             }
         }
 
@@ -42,8 +42,8 @@ namespace ai_driver
             ret.data_type = data_type;
             for (auto i = 0; i < dims.size(); i++)
             {
-                ret.dims[i] = dims[i];
-                ret.strides[i] = strides[i];
+                ret.dims.v[i] = dims[i];
+                ret.strides.v[i] = strides[i];
             }
             return ret;
         }
