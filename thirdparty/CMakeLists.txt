@@ -21,6 +21,11 @@ set(ONEDNN_BUILD_GRAPH ON)
 set(DNNL_EXPERIMENTAL_PROFILING ON)
 add_subdirectory(drivers.gpu.compute.ai.dnnlpluginnext)
 
+#intel opencl 
+add_library(intel_ocl_icd STATIC IMPORTED GLOBAL)
+set_property(TARGET intel_ocl_icd PROPERTY INTERFACE_INCLUDE_DIRECTORIES ${CMAKE_CURRENT_SOURCE_DIR}/intel_ocl_icd/6.3/windows/include)
+set_property(TARGET intel_ocl_icd PROPERTY IMPORTED_LOCATION ${CMAKE_CURRENT_SOURCE_DIR}/intel_ocl_icd/6.3/windows/Debug/lib/x64/OpenCL.lib)
+
 #igdext
 add_library(cfgmgr UNKNOWN IMPORTED)
 set_property(TARGET cfgmgr PROPERTY IMPORTED_LOCATION ${CMAKE_CURRENT_SOURCE_DIR}/igdext/lib/cfgmgr32.lib)
