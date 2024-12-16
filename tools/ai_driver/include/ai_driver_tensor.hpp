@@ -6,6 +6,15 @@
 
 namespace ai_driver
 {
+
+    enum class DataType
+    {
+        fp32 = AI_DRIVER_DATA_TYPE_FP32,
+        fp16 = AI_DRIVER_DATA_TYPE_FP16,
+
+        unknown = AI_DRIVER_DATA_TYPE_UNKNOWN
+    };
+
     struct Tensor
     {
         ai_driver_data_type_t data_type = AI_DRIVER_DATA_TYPE_UNKNOWN;

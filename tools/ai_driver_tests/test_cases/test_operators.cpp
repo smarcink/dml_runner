@@ -36,10 +36,11 @@ TEST(OperatorTest, Constant_port_model_descriptor_0)
     StreamDX12 stream(G_DX12_ENGINE.command_list);
     ContextDX12 ctx(device);
 
+    ai_driver::Tensor resource_tensor(ai_driver::DataType::fp32, {32, 8, 3, 3}, {});
     auto resource = device.allocate_resource(1024);
 
     ai_driver::ModelDescriptor md{};
-    md.add(ai_driver::ConstantPortDesc(ai_driver::DataType::fp32, resource));
+    md.add(ai_driver::ConstantPortDesc(resource_tensor, resource));
 }
 
 TEST(OperatorTest, Activation_model_descriptor_0)

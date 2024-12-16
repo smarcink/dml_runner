@@ -20,7 +20,7 @@ typedef struct _ai_driver_port_desc_t
 
 typedef struct _ai_driver_constant_port_desc_t
 {
-    ai_driver_data_type_t data_type;
+    ai_driver_tensor_array_t tensor;
     ai_driver_resource_t resource;
 } ai_driver_constant_port_desc_t;
 
