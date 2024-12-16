@@ -42,7 +42,7 @@ include_directories(
 # Tests executable.
 add_executable(${PROJECT_NAME} ${ALL_SOURCES})
 target_compile_features(${PROJECT_NAME} PRIVATE cxx_std_20)
-target_link_libraries(${PROJECT_NAME} PRIVATE ai_driver gtest_main d3d12 dnnl dxgi dxguid d3d12x igdext)
+target_link_libraries(${PROJECT_NAME} PRIVATE ai_driver gtest_main intel_ocl_icd d3d12 dnnl dxgi dxguid d3d12x igdext)
 
 if(MSVC)
   target_compile_options(${PROJECT_NAME} PRIVATE /W1 /MP)
