@@ -1,4 +1,4 @@
-#include "test_gpu_context.h"
+#include "test_dx12_context.h"
 
 void initalize_d3d12(ComPtr<ID3D12Device>& d3D12_device, ComPtr<ID3D12CommandQueue>& command_queue, ComPtr<ID3D12CommandAllocator>& command_allocator, ComPtr<ID3D12GraphicsCommandList>& command_list, bool use_rcs)
 {

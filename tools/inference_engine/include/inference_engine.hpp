@@ -112,9 +112,14 @@ protected:
     Device() = default;
 };
 
-template<typename DeviceT, typename StreamT, typename ResourceT, typename KernelT>
+template<typename DeviceTT, typename StreamTT, typename ResourceTT, typename KernelTT>
 class Context
 {
+public:
+    using DeviceT = DeviceTT;
+    using StreamT = StreamTT;
+    using ResourceT = ResourceTT;
+    using KernelT = KernelTT;
 public:
     Context(DeviceT& device)
         : device_(device)
