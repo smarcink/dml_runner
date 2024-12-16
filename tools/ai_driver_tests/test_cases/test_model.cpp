@@ -13,17 +13,17 @@
 #include <oneapi/dnnl/dnnl_graph.hpp>
 #include <oneapi/dnnl/dnnl.hpp>
 
-inline dnnl::graph::logical_tensor::data_type to_onednn_data_type(ai_driver_data_type_t dt)
+inline dnnl::graph::logical_tensor::data_type to_onednn_data_type(ai_driver::DataType dt)
 {
     dnnl::graph::logical_tensor::data_type data_type = dnnl::graph::logical_tensor::data_type::undef;
     switch (dt)
     {
-    case ai_driver_data_type_t::AI_DRIVER_DATA_TYPE_FP32:
+    case ai_driver::DataType::fp32:
     {
         data_type = dnnl::graph::logical_tensor::data_type::f32;
         break;
     }
-    case ai_driver_data_type_t::AI_DRIVER_DATA_TYPE_FP16:
+    case ai_driver::DataType::fp16:
     {
         data_type = dnnl::graph::logical_tensor::data_type::f16;
         break;
@@ -159,7 +159,7 @@ public:
         return id_to_queried_logical_tensors_.at(id);
     }
 
-    const dnnl::graph::logical_tensor& add_logical_tensor(std::size_t id, ai_driver_data_type_t dt)
+    const dnnl::graph::logical_tensor& add_logical_tensor(std::size_t id, ai_driver::DataType dt)
     {
         id_to_queried_logical_tensors_[id] = dnnl::graph::logical_tensor(id, to_onednn_data_type(dt));
         return get_logical_tensor(id);
@@ -237,50 +237,50 @@ protected:
     }
 
 
-    ai_driver::NodeID add_port(const ai_driver_port_desc_t& desc)
+    ai_driver::NodeID add_port(const ai_driver::PortDesc& desc)
     {
-        const auto ret = md_.add_port(desc);
-        onednn_.add_logical_tensor(ret, desc.data_type);
+        const auto ret = md_.add(desc);
+        onednn_.add_logical_tensor(ret, static_cast<ai_driver::DataType>(desc.data_type));
         return ret;
     }
 
-    ai_driver::NodeID add_activation(const ai_driver_activation_desc_t& desc)
+    ai_driver::NodeID add_activation(const ai_driver::ActivationDesc& desc)
     {
-        const auto ret = md_.add_activation(desc);
+        const auto ret = md_.add(desc);
 
         auto onednn_in = onednn_.get_logical_tensor(desc.input);
-
+        const auto dt = static_cast<ai_driver::DataType>(desc.out_data_type);
 
         switch (desc.type)
         {
         case ai_driver_activation_type_t::AI_DRIVER_ACTIVATION_TYPE_RELU:
         {
-            auto onednn_out = onednn_.add_logical_tensor(ret, desc.out_data_type);
+            auto onednn_out = onednn_.add_logical_tensor(ret, dt);
             auto onednn_activ = dnnl::graph::op(ret, dnnl::graph::op::kind::ReLU, { onednn_in }, { onednn_out });
             onednn_.add_op_to_graph(onednn_activ);
             break;
         }
         case ai_driver_activation_type_t::AI_DRIVER_ACTIVATION_TYPE_LINEAR:
         {
-            auto onednn_in_a = onednn_.add_logical_tensor(onednn_unique_lt_id_, desc.out_data_type);
-            onednn_.set_tensor(onednn_in_a.get_id(), ai_driver::Tensor(desc.out_data_type, { 1, 1, 1, 1 }));
+            auto onednn_in_a = onednn_.add_logical_tensor(onednn_unique_lt_id_, dt);
+            onednn_.set_tensor(onednn_in_a.get_id(), ai_driver::Tensor(ai_driver::DataType::fp32, { 1, 1, 1, 1 }));
             input_node_id_to_data_[onednn_unique_lt_id_].resize(4);
             auto in_a = reinterpret_cast<float*>(input_node_id_to_data_[onednn_unique_lt_id_].data());
             *in_a = desc.params.linear.a;
             onednn_unique_lt_id_++;
-            auto onednn_out_temp = onednn_.add_logical_tensor(onednn_unique_lt_id_, desc.out_data_type);
+            auto onednn_out_temp = onednn_.add_logical_tensor(onednn_unique_lt_id_, dt);
             onednn_unique_lt_id_++;
             auto mult = dnnl::graph::op(onednn_unique_op_id_, dnnl::graph::op::kind::Multiply, { onednn_in, onednn_in_a }, { onednn_out_temp });
             onednn_unique_op_id_++;
             onednn_.add_op_to_graph(mult);
 
-            auto onednn_in_b = onednn_.add_logical_tensor(onednn_unique_lt_id_, desc.out_data_type);
-            onednn_.set_tensor(onednn_in_b.get_id(), ai_driver::Tensor(desc.out_data_type, { 1, 1, 1, 1 }));
+            auto onednn_in_b = onednn_.add_logical_tensor(onednn_unique_lt_id_, dt);
+            onednn_.set_tensor(onednn_in_b.get_id(), ai_driver::Tensor(ai_driver::DataType::fp32, { 1, 1, 1, 1 }));
             input_node_id_to_data_[onednn_unique_lt_id_].resize(4);
             auto in_b = reinterpret_cast<float*>(input_node_id_to_data_[onednn_unique_lt_id_].data());
             *in_b = desc.params.linear.b;
             onednn_unique_lt_id_++;
-            auto onednn_out = onednn_.add_logical_tensor(ret, desc.out_data_type);
+            auto onednn_out = onednn_.add_logical_tensor(ret, dt);
             auto add = dnnl::graph::op(ret, dnnl::graph::op::kind::Add, { onednn_out_temp, onednn_in_b }, { onednn_out });
             onednn_.add_op_to_graph(add);
             break;
@@ -290,13 +290,13 @@ protected:
         return ret;
     }
 
-    ai_driver::NodeID add_matmul(const ai_driver_matmul_desc_t& desc)
+    ai_driver::NodeID add_matmul(const ai_driver::MatMulDesc& desc)
     {
-        const auto ret = md_.add_matmul(desc);
+        const auto ret = md_.add(desc);
 
         auto onednn_in_a = onednn_.get_logical_tensor(desc.input_a);
         auto onednn_in_b = onednn_.get_logical_tensor(desc.input_b);
-        auto onednn_out = onednn_.add_logical_tensor(ret, desc.out_data_type);
+        auto onednn_out = onednn_.add_logical_tensor(ret, static_cast<ai_driver::DataType>(desc.out_data_type));
         dnnl::graph::op onednn_matmul(ret, dnnl::graph::op::kind::MatMul, { onednn_in_a, onednn_in_b }, { onednn_out });
         onednn_.add_op_to_graph(onednn_matmul);
         return ret;
@@ -339,10 +339,11 @@ TYPED_TEST_SUITE(ModelTestGeneric, TestContextTypes);
 // This test will run for each context (currently OCL and DX12).
 TYPED_TEST(ModelTestGeneric, Activation_0)
 {
-    auto port_id = this->add_port(ai_driver_port_desc_t{ AI_DRIVER_DATA_TYPE_FP32 });
-    auto out_node = this->add_activation(ai_driver_activation_desc_t{ port_id, AI_DRIVER_ACTIVATION_TYPE_RELU, AI_DRIVER_DATA_TYPE_FP32 });
+    const auto data_type = ai_driver::DataType::fp32;
+    auto port_id = this->add_port(ai_driver::PortDesc(data_type));
+    auto out_node = this->add_activation(ai_driver::ActivationDesc::relu(port_id, data_type));
 
-    const auto input_tensor = ai_driver::Tensor(AI_DRIVER_DATA_TYPE_FP32, { 1, 2, 4, 4 });
+    const auto input_tensor = ai_driver::Tensor(data_type, { 1, 2, 4, 4 });
     auto input_data = randomize_linear_container_float(input_tensor, -5.0f, 5.0f);
     this->add_input_mapping_and_data(port_id, input_tensor, input_data);
 
@@ -370,27 +371,24 @@ class ModelTestMatMulMultipleActivations : public ModelTestGenericOCL
 public:
     void build_model_and_run(const std::int32_t& num_activations)
     {
-        const auto data_type = AI_DRIVER_DATA_TYPE_FP32;
-        auto input_a = add_port(ai_driver_port_desc_t{ data_type });
-        auto input_b = add_port(ai_driver_port_desc_t{ data_type });
-        auto port_matmul_out = add_matmul(ai_driver_matmul_desc_t{ input_a, input_b, data_type });
+        const auto data_type = ai_driver::DataType::fp32;
+        auto input_a = add_port(ai_driver::PortDesc(data_type));
+        auto input_b = add_port(ai_driver::PortDesc(data_type));
+        auto port_matmul_out = add_matmul(ai_driver::MatMulDesc(input_a, input_b, data_type));
 
         std::vector<ai_driver::NodeID> activation_nodes;
-        ai_driver_activation_desc_t activation_desc{};
-        activation_desc.type = AI_DRIVER_ACTIVATION_TYPE_LINEAR;
-        activation_desc.params.linear.a = 2.0f;
-        activation_desc.params.linear.b = 0.5f;
+        ai_driver::ActivationDesc activation_desc = ai_driver::ActivationDesc::linear(ai_driver::INVALID_NODE_ID, 2.0f, 0.5f, data_type);
         for (int i = 0; i < num_activations; ++i)
         {
             activation_desc.input = i == 0 ? port_matmul_out : activation_nodes.back();
             activation_nodes.push_back(add_activation(activation_desc));
         }
 
-        const auto input_a_tensor = ai_driver::Tensor(AI_DRIVER_DATA_TYPE_FP32, { 1, 1, 32, 32 });
+        const auto input_a_tensor = ai_driver::Tensor(data_type, { 1, 1, 32, 32 });
         auto input_a_data = randomize_linear_container_float(input_a_tensor, -1.0f, 1.0f);
         add_input_mapping_and_data(input_a, input_a_tensor, input_a_data);
 
-        const auto input_b_tensor = ai_driver::Tensor(AI_DRIVER_DATA_TYPE_FP32, { 1, 1, 32, 32 });
+        const auto input_b_tensor = ai_driver::Tensor(data_type, { 1, 1, 32, 32 });
         auto input_b_data = randomize_linear_container_float(input_b_tensor, -1.0f, 1.0f);
         add_input_mapping_and_data(input_b, input_b_tensor, input_b_data);
 
@@ -439,29 +437,28 @@ TEST_F(ModelTestGenericOCL, MatMul_6_nodes)
     //    \/
     //     * // mat mul
 
-    const auto data_type = ai_driver_data_type_t::AI_DRIVER_DATA_TYPE_FP32;
-    ai_driver_port_desc_t input_desc{};
-    input_desc.data_type = data_type;
+    const auto data_type = ai_driver::DataType::fp32;
+    ai_driver::PortDesc input_desc(data_type);
     // inputs
     auto input_a = add_port(input_desc);
     auto input_b = add_port(input_desc);
     auto input_c = add_port(input_desc);
     // matmul
-    auto port_matmul_a = add_matmul(ai_driver_matmul_desc_t{ input_a, input_b, data_type });
+    auto port_matmul_a = add_matmul(ai_driver::MatMulDesc(input_a, input_b, data_type));
     // activation
-    auto port_activation = add_activation(ai_driver_activation_desc_t{ input_c, AI_DRIVER_ACTIVATION_TYPE_RELU, data_type });
+    auto port_activation = add_activation(ai_driver::ActivationDesc::relu(input_c, data_type));
     // MatMul final
-    auto port_matmul_out_final = add_matmul(ai_driver_matmul_desc_t{ port_matmul_a, port_activation, data_type });
+    auto port_matmul_out_final = add_matmul(ai_driver::MatMulDesc(port_matmul_a, port_activation, data_type));
 
-    const auto input_a_tensor = ai_driver::Tensor(AI_DRIVER_DATA_TYPE_FP32, { 1, 1, 8, 16 });
+    const auto input_a_tensor = ai_driver::Tensor(data_type, { 1, 1, 8, 16 });
     auto input_a_data = randomize_linear_container_float(input_a_tensor, -1.0f, 1.0f);
     add_input_mapping_and_data(input_a, input_a_tensor, input_a_data);
 
-    const auto input_b_tensor = ai_driver::Tensor(AI_DRIVER_DATA_TYPE_FP32, { 1, 1, 16, 32 });
+    const auto input_b_tensor = ai_driver::Tensor(data_type, { 1, 1, 16, 32 });
     auto input_b_data = randomize_linear_container_float(input_b_tensor, -1.0f, 1.0f);
     add_input_mapping_and_data(input_b, input_b_tensor, input_b_data);
 
-    const auto input_c_tensor = ai_driver::Tensor(AI_DRIVER_DATA_TYPE_FP32, { 1, 1, 32, 64 });
+    const auto input_c_tensor = ai_driver::Tensor(data_type, { 1, 1, 32, 64 });
     auto input_c_data = randomize_linear_container_float(input_c_tensor, -1.0f, 1.0f);
     add_input_mapping_and_data(input_c, input_c_tensor, input_c_data);
 
@@ -510,34 +507,28 @@ TEST(ModelTest, ConvPlusAddFusion)
     DeviceDX12 device(G_DX12_ENGINE.d3d12_device);
     StreamDX12 stream(G_DX12_ENGINE.command_list);
     ContextDX12 ctx(device);
-    const auto data_type = ai_driver_data_type_t::AI_DRIVER_DATA_TYPE_FP16;
+    const auto data_type = ai_driver::DataType::fp16;
 
     ai_driver::ModelDescriptor md{};
 
-    ai_driver_port_desc_t input_desc{};
-    input_desc.data_type = data_type;
-    auto input_a = md.add_port(input_desc);
-    auto input_b = md.add_port(input_desc);
+    ai_driver::PortDesc input_desc(data_type);
+    auto input_a = md.add(input_desc);
+    auto input_b = md.add(input_desc);
 
     // Conv left
-    auto port_conv_a = md.add_convolution(ai_driver_convolution_desc_t{ input_a, data_type }, "conv_a");
+    auto port_conv_a = md.add(ai_driver::ConvolutionDesc(input_a, data_type), "conv_a");
 
     // Conv right
-    auto port_conv_b = md.add_convolution(ai_driver_convolution_desc_t{ input_b, data_type }, "conv_b");
+    auto port_conv_b = md.add(ai_driver::ConvolutionDesc(input_b, data_type), "conv_b");
 
     // activation
-    auto activation = md.add_activation(ai_driver_activation_desc_t{port_conv_b, AI_DRIVER_ACTIVATION_TYPE_RELU, data_type });
+    auto activation = md.add(ai_driver::ActivationDesc::relu(port_conv_b, data_type), "middle_activation");
 
     // elementwise_add
-    ai_driver_elementwise_desc_t add_desc_final{};
-    add_desc_final.type = ai_driver_elementwise_type_t::AI_DRIVER_ELEMENTWISE_TYPE_ADD;
-    add_desc_final.input_a = port_conv_a;
-    add_desc_final.input_b = activation;
-    add_desc_final.out_data_type = data_type;
-    auto port_add_final = md.add_elementwise(add_desc_final, "elementwise");
+    auto port_add_final = md.add(ai_driver::ElementwiseDesc::add(port_conv_a, activation, data_type), "elementwise");
 
     // activation final
-    auto final_activation = md.add_activation(ai_driver_activation_desc_t{port_add_final, AI_DRIVER_ACTIVATION_TYPE_RELU, data_type }, "final_activation");
+    auto final_activation = md.add(ai_driver::ActivationDesc::relu(port_add_final, data_type), "final_activation");
 
     // define input mappings
     ai_driver::TensorMapping inputs{};

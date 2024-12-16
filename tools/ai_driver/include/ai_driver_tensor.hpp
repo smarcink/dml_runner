@@ -17,12 +17,12 @@ namespace ai_driver
 
     struct Tensor
     {
-        ai_driver_data_type_t data_type = AI_DRIVER_DATA_TYPE_UNKNOWN;
+        DataType data_type = DataType::unknown;
         std::vector<std::uint64_t> dims;
         std::vector<std::uint64_t> strides;
 
         Tensor() = default;
-        Tensor(ai_driver_data_type_t dt, std::vector<std::uint64_t>&& dimensions)
+        Tensor(DataType dt, std::vector<std::uint64_t>&& dimensions)
             : data_type(dt)
             , dims(std::move(dimensions))
         {
@@ -31,7 +31,7 @@ namespace ai_driver
             strides.resize(dims.size());
         }
         Tensor(const ai_driver_tensor_t& tensor_desc)
-            : data_type(tensor_desc.data_type)
+            : data_type(static_cast<DataType>(tensor_desc.data_type))
         {
             for (int i = 0; i < AI_DRIVER_MAX_TENSOR_DIMS && tensor_desc.dims.v[i] != 0; ++i)
             {
@@ -48,7 +48,7 @@ namespace ai_driver
         operator ai_driver_tensor_t() const
         {
             ai_driver_tensor_t ret{};
-            ret.data_type = data_type;
+            ret.data_type = static_cast<ai_driver_data_type_t>(data_type);
             for (auto i = 0; i < dims.size(); i++)
             {
                 ret.dims.v[i] = dims[i];
@@ -66,9 +66,9 @@ namespace ai_driver
             }
             switch (data_type)
             {
-            case ai_driver_data_type_t::AI_DRIVER_DATA_TYPE_FP32:
+            case DataType::fp32:
                 return size * sizeof(float);
-            case ai_driver_data_type_t::AI_DRIVER_DATA_TYPE_FP16:
+            case DataType::fp16:
                 return size * sizeof(std::uint16_t);
             default:
                 assert(!"unsupported");

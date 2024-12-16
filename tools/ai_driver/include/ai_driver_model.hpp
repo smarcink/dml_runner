@@ -49,7 +49,7 @@ namespace ai_driver
 
 
     public:
-        NodeID add_port(const ai_driver_port_desc_t& desc, const char* name = "")
+        NodeID add(const PortDesc& desc, const char* name = "")
         {
             return add_node(desc, aiDriverModelDescriptorAddPortNamed, name);
         }
@@ -58,19 +58,19 @@ namespace ai_driver
         {
             return add_node(desc, aiDriverModelDescriptorAddConstantPortNamed, name);
         }
-        NodeID add_matmul(const ai_driver_matmul_desc_t& desc, const char* name = "")
+        NodeID add(const ai_driver::MatMulDesc& desc, const char* name = "")
         {
             return add_node(desc, aiDriverModelDescriptorAddMatMulNamed, name);
         }
-        NodeID add_activation(const ai_driver_activation_desc_t& desc, const char* name = "")
+        NodeID add(const ActivationDesc& desc, const char* name = "")
         {
             return add_node(desc, aiDriverModelDescriptorAddActivationNamed, name);
         }
-        NodeID add_elementwise(const ai_driver_elementwise_desc_t& desc, const char* name = "")
+        NodeID add(const ElementwiseDesc& desc, const char* name = "")
         {
             return add_node(desc, aiDriverModelDescriptorAddElementwiseNamed, name);
         }
-        NodeID add_convolution(const ai_driver_convolution_desc_t& desc, const char* name = "")
+        NodeID add(const ConvolutionDesc& desc, const char* name = "")
         {
             return add_node(desc, aiDriverModelDescriptorAddConvolutionNamed, name);
         }

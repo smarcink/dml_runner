@@ -56,7 +56,7 @@ namespace ai_driver
             assert(input_a.dims.size() == input_b.dims.size());
             assert(input_a.dims.size() == 4);
             Tensor ret{};
-            ret.data_type = desc_.out_data_type;
+            ret.data_type = static_cast<DataType>(desc_.out_data_type);
             ret.dims = input_a.dims;
             ret.strides.assign({ 0,0,0,0 });
             return ret;

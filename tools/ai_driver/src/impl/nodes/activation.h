@@ -10,7 +10,7 @@ namespace ai_driver
             : GpuNode(user_id, input->get_output_tensor(), { input }, name)
             , desc_(desc)
         {
-            output_tensor_.data_type = desc_.out_data_type;
+            output_tensor_.data_type = static_cast<DataType>(desc_.out_data_type);
         }
 
         GpuActivation(GpuActivation&& rhs) noexcept

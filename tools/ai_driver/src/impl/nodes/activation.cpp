@@ -24,9 +24,9 @@ void ai_driver::GpuActivation::compile(GpuContext& ctx)
     const std::string dt = [](const auto dt) {
         switch (dt)
         {
-        case AI_DRIVER_DATA_TYPE_FP16:
+        case DataType::fp16:
             return "half";
-        case AI_DRIVER_DATA_TYPE_FP32:
+        case DataType::fp32:
             return "float";
         default:
             assert(!"unsupported");

@@ -20,7 +20,7 @@ namespace ai_driver
 
         void set_tensor(const Tensor& tensor)
         {
-            if (desc_.data_type != tensor.data_type)
+            if (desc_.data_type != static_cast<ai_driver_data_type_t>(tensor.data_type))
             {
                 throw std::runtime_error("Cant set tensor for port. It was created with different data type.");
             }

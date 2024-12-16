@@ -45,9 +45,9 @@ void GpuMatMul::compile(GpuContext& ctx)
         {
             switch (dt)
             {
-            case AI_DRIVER_DATA_TYPE_FP16:
+            case DataType::fp16:
                 return "half";
-            case AI_DRIVER_DATA_TYPE_FP32:
+            case DataType::fp32:
                 return "float";
             default:
                 assert(!"unsupported");
@@ -188,7 +188,7 @@ Tensor MatMul::compute_output_tensor(const Tensor& input_a, const Tensor& input_
     assert(input_a.dims.size() == input_b.dims.size());
     assert(input_a.dims.size() == 4);
     Tensor ret{};
-    ret.data_type = desc_.out_data_type;
+    ret.data_type = static_cast<DataType>(desc_.out_data_type);
     ret.dims.push_back(input_a.dims[0]);
     ret.dims.push_back(input_a.dims[1]);
     ret.dims.push_back(input_a.dims[2]);
