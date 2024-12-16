@@ -3,6 +3,7 @@
 #include "impl/model.h"
 
 #include "impl/nodes/port.h"
+#include "impl/nodes/constant_port.h"
 #include "impl/nodes/activation.h"
 #include "impl/nodes/matmul.h"
 #include "impl/nodes/elementwise.h"
@@ -42,6 +43,21 @@ AI_DRIVER_API ai_driver_node_id_t aiDriverModelDescriptorAddPortNamed(ai_driver_
         return typed_md->add_node<ai_driver::Port>(desc, name);
         });
 }
+
+AI_DRIVER_API ai_driver_node_id_t aiDriverModelDescriptorAddConstantPort(ai_driver_model_descriptor_t model_desc, ai_driver_constant_port_desc_t desc)
+{
+    return aiDriverModelDescriptorAddConstantPortNamed(model_desc, desc, "");
+}
+
+AI_DRIVER_API ai_driver_node_id_t aiDriverModelDescriptorAddConstantPortNamed(ai_driver_model_descriptor_t model_desc, ai_driver_constant_port_desc_t desc, const char* name)
+{
+    return handle_exceptions([&]() {
+        std::cout << "Created Constant Port " << name << std::endl;
+        auto typed_md = reinterpret_cast<ai_driver::ModelDescriptorDAG*>(model_desc);
+        return typed_md->add_node<ai_driver::ConstantPort>(desc, name);
+        });
+}
+
 
 AI_DRIVER_API ai_driver_node_id_t aiDriverModelDescriptorAddMatMul(ai_driver_model_descriptor_t model_desc, ai_driver_matmul_desc_t desc)
 {

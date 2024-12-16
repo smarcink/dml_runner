@@ -29,6 +29,24 @@ TEST(OperatorTest, Port_mismatch_data_type)
     ASSERT_THROW(ai_driver::Model(ctx, stream, md, input_mappings), ai_driver::IEexception);
 }
 
+TEST(OperatorTest, Constant_port_no_resource)
+{
+    ai_driver::ModelDescriptor md{};
+    ASSERT_THROW(md.add_constant_port(ai_driver_constant_port_desc_t{ AI_DRIVER_DATA_TYPE_FP16, nullptr }), ai_driver::IEexception);
+}
+
+TEST(OperatorTest, Constant_port_model_descriptor_0)
+{
+    DeviceDX12 device(G_DX12_ENGINE.d3d12_device);
+    StreamDX12 stream(G_DX12_ENGINE.command_list);
+    ContextDX12 ctx(device);
+
+    auto resource = device.allocate_resource(1024);
+
+    ai_driver::ModelDescriptor md{};
+    md.add_constant_port(ai_driver_constant_port_desc_t{ AI_DRIVER_DATA_TYPE_FP16, reinterpret_cast<ai_driver_resource_t>(&resource)});
+}
+
 TEST(OperatorTest, Activation_model_descriptor_0)
 {
     ai_driver::ModelDescriptor md{};

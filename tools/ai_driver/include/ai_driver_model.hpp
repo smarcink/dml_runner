@@ -53,6 +53,10 @@ namespace ai_driver
         {
             return add_node(desc, aiDriverModelDescriptorAddPortNamed, name);
         }
+        NodeID add_constant_port(const ai_driver_constant_port_desc_t& desc, const char* name = "")
+        {
+            return add_node(desc, aiDriverModelDescriptorAddConstantPortNamed, name);
+        }
         NodeID add_matmul(const ai_driver_matmul_desc_t& desc, const char* name = "")
         {
             return add_node(desc, aiDriverModelDescriptorAddMatMulNamed, name);
