@@ -13,9 +13,16 @@ extern "C" {
 #endif
 typedef uint64_t ai_driver_node_id_t;
 
+typedef enum _ai_driver_port_flag_t
+{
+    AI_DRIVER_PORT_FLAG_NONE = 0x000,
+    AI_DRIVER_PORT_FLAG_AI_DRIVER_MANAGED = 0x0001
+} ai_driver_port_flag_t;
+
 typedef struct _ai_driver_port_desc_t
 {
     ai_driver_data_type_t data_type;
+    ai_driver_port_flag_t flags;
 } ai_driver_port_desc_t;
 
 typedef struct _ai_driver_matmul_desc_t
