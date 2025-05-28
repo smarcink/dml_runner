@@ -145,11 +145,16 @@ iumd::custom_metacommand::UmdD3d12Device::UmdD3d12Device(ID3D12Device* device, I
 
     switch(sku_.igfx)
     {
+        /*
+        l3_cache_size = l3_bank_count * l3_bank_size
+        l3_bank_count == DSS count
+        l3_bank_size = 1024k bytes
+        */
     case UMD_IGFX::eARLH:
         sku_.l3_cache_size = 8192 * 1024;
         break;
     default:
-        break;  // to-do - add more cases
+        break;  // to-do - add for more platforms
     }
 
 }
