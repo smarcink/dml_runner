@@ -31,7 +31,7 @@ In case of CMake errors, especially those related to finding the OpenCL installa
 - If you encounter issues with CMake finding OpenCL, you can specify the paths to the OpenCL headers and library using the following command line (adjust the paths to match your OpenCL SDK installation):
 
 ```bash
-cmake . -Bbuild -G "Visual Studio 17 2022" -DOpenCL_INCLUDE_DIR="C:\path\to\OpenCL\include" -DOpenCL_LIBRARY="C:\path\to\OpenCL\lib\opencl.lib"
+cmake . -Bbuild -G "Visual Studio 17 2022" -DOpenCL_INCLUDE_DIR="C:\Users\yarudu\Documents\project\third-party\OpenCL-SDK-v2024.05.08-Win-x64\include" -DOpenCL_LIBRARY="C:\Users\yarudu\Documents\project\third-party\OpenCL-SDK-v2024.05.08-Win-x64\lib\opencl.lib"
 
 cd build
 # the default build was Debug version

@@ -138,6 +138,11 @@ namespace custom_metacommand
             return sku_.threads_per_eu * sku_.eu_per_dss * sku_.hw_simd_size;
         };
 
+        std::uint32_t get_l3_cache_size() const override
+        {
+            return sku_.l3_cache_size;
+        };
+
         UMD_IGFX get_umd_igfx() const override
         {
             return sku_.igfx;
@@ -189,6 +194,7 @@ namespace custom_metacommand
             std::uint32_t eu_per_dss = 0;
             std::uint32_t max_simd_size = 0;
             std::uint32_t hw_simd_size = 0;
+            std::uint32_t l3_cache_size = 0;
             UMD_IGFX igfx = UMD_IGFX::eUNKNOWN;
         };
 

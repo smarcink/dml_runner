@@ -86,7 +86,7 @@ iumd::custom_metacommand::UmdD3d12Device::UmdD3d12Device(ID3D12Device* device, I
     sku_.name = std::string(wstr_name.length(), 0);  // not ideal, enough for now
     std::transform(wstr_name.begin(), wstr_name.end(), sku_.name.begin(), [](wchar_t ch) {return (char)ch; }); // good enough for latin characters...
     sku_.eu_count = extension_info.IntelDeviceInfo.EUCount;
-    sku_.igfx = [](const auto name)
+    sku_.igfx = [](const auto name, int eu_count)
     {
         if (std::wcscmp(name, L"Tigerlake") == 0)
         {
@@ -110,12 +110,18 @@ iumd::custom_metacommand::UmdD3d12Device::UmdD3d12Device(ID3D12Device* device, I
         }
         else if (std::wcscmp(name, L"Arrowlake") == 0)
         {
-            std::cout << "Fix arrow lake path." << std::endl;
-            assert(false);
-            return UMD_IGFX::eUNKNOWN;
+            //reference: https://gfxspecs.intel.com/Predator/Home/Index/55414
+            if (eu_count == 128)
+            {
+				return UMD_IGFX::eARLH;
+			}
+            if (eu_count == 64)
+			{
+				return UMD_IGFX::eARLS;
+			}
         }
         return UMD_IGFX::eUNKNOWN;
-    }(extension_info.IntelDeviceInfo.GTGenerationName);
+    }(extension_info.IntelDeviceInfo.GTGenerationName, sku_.eu_count);
 
     if (sku_.igfx == UMD_IGFX::eDG2 || sku_.igfx == UMD_IGFX::eMETEORLAKE || sku_.igfx == UMD_IGFX::eARLH || sku_.igfx == UMD_IGFX::eARLS)
     {
@@ -136,6 +142,21 @@ iumd::custom_metacommand::UmdD3d12Device::UmdD3d12Device(ID3D12Device* device, I
         sku_.threads_per_eu = 8;
         sku_.hw_simd_size = 16;
     }
+
+    switch(sku_.igfx)
+    {
+        /*
+        l3_cache_size = l3_bank_count * l3_bank_size
+        l3_bank_count == DSS count
+        l3_bank_size = 1024k bytes
+        */
+    case UMD_IGFX::eARLH:
+        sku_.l3_cache_size = 8192 * 1024;
+        break;
+    default:
+        break;  // to-do - add for more platforms
+    }
+
 }
 
 
